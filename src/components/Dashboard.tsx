@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LineChart,
   Line,
@@ -9,9 +9,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { api, formatCoin, ScannerEvent, SnapshotRow } from "../api";
+import ChartScreenshotActions from "./ChartScreenshotActions";
 
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
+  const chartRef = useRef<HTMLDivElement>(null);
   const live = event?.live ?? null;
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             live?.run_active
               ? live.run_type === "tournament"
                 ? "Tournament"
-                : "Active"
+                : "Farming"
               : "None"
           }
           badge={live?.run_type === "tournament"}
@@ -56,8 +58,14 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         </span>
       </div>
 
-      <div className="chart-card">
-        <h3>Coin/min vs Wave (current run)</h3>
+      <div className="chart-card" ref={chartRef}>
+        <div className="chart-card-header">
+          <h3>Avg coin/min vs Wave (current run)</h3>
+          <ChartScreenshotActions
+            targetRef={chartRef}
+            disabled={data.length === 0}
+          />
+        </div>
         {data.length === 0 ? (
           <p className="muted">
             No data yet. Start the scanner and let a run reach wave 1.

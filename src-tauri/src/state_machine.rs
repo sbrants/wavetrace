@@ -21,14 +21,14 @@ pub enum GameMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunType {
-    Normal,
+    Farming,
     Tournament,
 }
 
 impl RunType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            RunType::Normal => "normal",
+            RunType::Farming => "farming",
             RunType::Tournament => "tournament",
         }
     }
@@ -90,6 +90,8 @@ struct ActiveRun {
     run_type: RunType,
     last_saved_wave: u32,
     peak_tier: Option<u32>,
+    accumulating_for_wave: Option<u32>,
+    coin_samples: Vec<f64>,
 }
 
 /// Debounce: a value must be seen on `DEBOUNCE` consecutive polls to be
@@ -265,9 +267,14 @@ impl RunStateMachine {
     /// wave starts a fresh one regardless of value.
     pub fn manual_new_run(&mut self) -> Vec<Action> {
         let mut actions = Vec::new();
-        if let Some(run) = self.run.take() {
+        if let Some(mut run) = self.run.take() {
+            let tier = self.tier.confirmed.or(self.last_seen_tier);
+            actions.extend(flush_pending_wave(&mut run, tier));
+            let final_wave = run
+                .last_saved_wave
+                .max(run.accumulating_for_wave.unwrap_or(0));
             actions.push(Action::EndRun {
-                final_wave: run.last_saved_wave,
+                final_wave,
                 peak_tier: run.peak_tier,
             });
         }
@@ -276,13 +283,9 @@ impl RunStateMachine {
         self.wave = Debounced::default();
         self.tournament_seen = false;
         actions.push(Action::StartRun {
-            run_type: RunType::Normal,
+            run_type: RunType::Farming,
         });
-        self.run = Some(ActiveRun {
-            run_type: RunType::Normal,
-            last_saved_wave: 0,
-            peak_tier: None,
-        });
+        self.run = Some(new_active_run(RunType::Farming));
         actions
     }
 
@@ -321,9 +324,14 @@ impl RunStateMachine {
 
         // End-of-run screen takes priority over everything else.
         if input.mode == GameMode::EndOfRun {
-            if let Some(run) = self.run.take() {
+            if let Some(mut run) = self.run.take() {
+                let tier = self.tier.confirmed.or(self.last_seen_tier);
+                actions.extend(flush_pending_wave(&mut run, tier));
+                let final_wave = run
+                    .last_saved_wave
+                    .max(run.accumulating_for_wave.unwrap_or(0));
                 actions.push(Action::EndRun {
-                    final_wave: run.last_saved_wave,
+                    final_wave,
                     peak_tier: run.peak_tier,
                 });
             }
@@ -336,76 +344,128 @@ impl RunStateMachine {
 
         let confirmed_tier = self.tier.feed(input.tier);
         let prev_wave = self.wave.confirmed;
-        let Some(wave) = self.wave.feed(input.wave) else {
-            return actions;
-        };
-        if prev_wave == Some(wave) {
-            return actions; // no confirmed change
+        let confirmed_wave = self.wave.feed(input.wave);
+
+        if let Some(wave) = confirmed_wave {
+            if prev_wave != Some(wave) {
+                if let Some(run) = self.run.as_mut() {
+                    if let Some(prev) = prev_wave {
+                        if prev >= 1 {
+                            actions.extend(flush_completed_wave(run, prev, confirmed_tier));
+                        }
+                    }
+                }
+
+                match self.run.as_mut() {
+                    None => {
+                        // A run starts when wave 1 is confirmed (Goal.md run lifecycle).
+                        if wave == 1 {
+                            let run_type = if self.tournament_seen {
+                                RunType::Tournament
+                            } else {
+                                RunType::Farming
+                            };
+                            actions.push(Action::StartRun { run_type });
+                            self.run = Some(new_active_run(run_type));
+                        }
+                    }
+                    Some(run) => {
+                        if wave == 1 && run.last_saved_wave > 1 {
+                            // Wave reset: close the run and immediately start the next.
+                            let mut ended = self.run.take().unwrap();
+                            actions.extend(flush_pending_wave(&mut ended, confirmed_tier));
+                            let final_wave = ended
+                                .last_saved_wave
+                                .max(ended.accumulating_for_wave.unwrap_or(0));
+                            actions.push(Action::EndRun {
+                                final_wave,
+                                peak_tier: ended.peak_tier,
+                            });
+                            let run_type = if self.tournament_seen {
+                                RunType::Tournament
+                            } else {
+                                RunType::Farming
+                            };
+                            self.tournament_seen = run_type == RunType::Tournament;
+                            actions.push(Action::StartRun { run_type });
+                            self.run = Some(new_active_run(run_type));
+                        }
+                        // Confirmed decreases (other than reset to 1) are ignored as
+                        // misreads; debounce already filtered single-frame glitches.
+                    }
+                }
+            }
         }
 
-        match &mut self.run {
-            None => {
-                // A run starts when wave 1 is confirmed (Goal.md run lifecycle).
-                if wave == 1 {
-                    let run_type = if self.tournament_seen {
-                        RunType::Tournament
-                    } else {
-                        RunType::Normal
-                    };
-                    actions.push(Action::StartRun { run_type });
-                    self.run = Some(ActiveRun {
-                        run_type,
-                        last_saved_wave: 0,
-                        peak_tier: None,
-                    });
-                    actions.extend(self.snapshot(wave, confirmed_tier));
-                }
-            }
-            Some(run) => {
-                if wave == 1 && run.last_saved_wave > 1 {
-                    // Wave reset: close the run and immediately start the next.
-                    let ended = self.run.take().unwrap();
-                    actions.push(Action::EndRun {
-                        final_wave: ended.last_saved_wave,
-                        peak_tier: ended.peak_tier,
-                    });
-                    let run_type = if self.tournament_seen {
-                        RunType::Tournament
-                    } else {
-                        RunType::Normal
-                    };
-                    self.tournament_seen = run_type == RunType::Tournament;
-                    actions.push(Action::StartRun { run_type });
-                    self.run = Some(ActiveRun {
-                        run_type,
-                        last_saved_wave: 0,
-                        peak_tier: None,
-                    });
-                    actions.extend(self.snapshot(wave, confirmed_tier));
-                } else if wave > run.last_saved_wave {
-                    // Goal.md says "increases by exactly 1"; we accept any
-                    // confirmed increase because at high game speed the wave
-                    // can advance more than once between polls.
-                    actions.extend(self.snapshot(wave, confirmed_tier));
-                }
-                // Confirmed decreases (other than reset to 1) are ignored as
-                // misreads; debounce already filtered single-frame glitches.
-            }
+        if let Some(run) = self.run.as_mut() {
+            accumulate_coin_sample(
+                run,
+                self.wave.confirmed,
+                self.last_coin_rate,
+            );
         }
+
         actions
     }
+}
 
-    fn snapshot(&mut self, wave: u32, tier: Option<u32>) -> Vec<Action> {
-        let run = self.run.as_mut().expect("snapshot requires active run");
-        run.last_saved_wave = wave;
-        if let Some(t) = tier {
-            run.peak_tier = Some(run.peak_tier.map_or(t, |p| p.max(t)));
-        }
-        vec![Action::Snapshot {
-            wave,
-            tier,
-            coin_per_minute: self.last_coin_rate,
-        }]
+fn accumulate_coin_sample(
+    run: &mut ActiveRun,
+    confirmed_wave: Option<u32>,
+    coin_rate: Option<f64>,
+) {
+    let Some(wave) = confirmed_wave else {
+        return;
+    };
+    if run.accumulating_for_wave != Some(wave) {
+        run.accumulating_for_wave = Some(wave);
+        run.coin_samples.clear();
+    }
+    if let Some(rate) = coin_rate {
+        run.coin_samples.push(rate);
+    }
+}
+
+fn new_active_run(run_type: RunType) -> ActiveRun {
+    ActiveRun {
+        run_type,
+        last_saved_wave: 0,
+        peak_tier: None,
+        accumulating_for_wave: None,
+        coin_samples: Vec::new(),
+    }
+}
+
+fn flush_completed_wave(run: &mut ActiveRun, wave: u32, tier: Option<u32>) -> Vec<Action> {
+    if wave <= run.last_saved_wave {
+        return vec![];
+    }
+    let coin_per_minute = average_coin_samples(&run.coin_samples);
+    run.coin_samples.clear();
+    run.accumulating_for_wave = None;
+    run.last_saved_wave = wave;
+    if let Some(t) = tier {
+        run.peak_tier = Some(run.peak_tier.map_or(t, |p| p.max(t)));
+    }
+    vec![Action::Snapshot {
+        wave,
+        tier,
+        coin_per_minute,
+    }]
+}
+
+fn flush_pending_wave(run: &mut ActiveRun, tier: Option<u32>) -> Vec<Action> {
+    let Some(wave) = run.accumulating_for_wave else {
+        return vec![];
+    };
+    flush_completed_wave(run, wave, tier)
+}
+
+fn average_coin_samples(samples: &[f64]) -> Option<f64> {
+    if samples.is_empty() {
+        None
+    } else {
+        Some(samples.iter().sum::<f64>() / samples.len() as f64)
     }
 }
 
@@ -442,21 +502,46 @@ mod tests {
     #[test]
     fn run_starts_at_wave_1_and_snapshots_increments() {
         let mut sm = RunStateMachine::new();
-        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0)));
-        assert!(actions.contains(&Action::StartRun { run_type: RunType::Normal }));
+        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(150.0)));
+        assert!(actions.contains(&Action::StartRun { run_type: RunType::Farming }));
+        assert!(!actions.iter().any(|a| matches!(a, Action::Snapshot { .. })));
+
+        // Wave 1 is snapshotted when wave 2 is confirmed.
+        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)));
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
             tier: Some(12),
-            coin_per_minute: Some(100.0)
+            coin_per_minute: Some(150.0)
         }));
 
-        // Coin rate is debounced — need two matching reads for 150.
+        // Collect more samples on wave 2 before advancing.
         feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)));
         let actions = feed2(&mut sm, p(GameMode::Normal, 12, 3, CoinReading::Rate(150.0)));
         assert!(actions.iter().any(|a| matches!(
             a,
-            Action::Snapshot { wave: 3, coin_per_minute: Some(150.0), .. }
+            Action::Snapshot { wave: 2, coin_per_minute: Some(150.0), .. }
         )));
+    }
+
+    #[test]
+    fn snapshot_averages_coin_rate_while_on_wave() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0)));
+        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(200.0)));
+        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(200.0)));
+        let avg = actions.iter().find_map(|a| match a {
+            Action::Snapshot {
+                wave: 1,
+                coin_per_minute,
+                ..
+            } => *coin_per_minute,
+            _ => None,
+        });
+        let avg = avg.expect("wave 1 snapshot");
+        assert!(
+            avg > 100.0 && avg < 200.0,
+            "expected blend of 100 and 200 while on wave 1, got {avg}"
+        );
     }
 
     #[test]
@@ -504,7 +589,7 @@ mod tests {
         assert!(a.is_empty(), "single misread frame must produce nothing");
         let a = feed2(&mut sm, p(GameMode::Normal, 12, 4322, CoinReading::Rate(1.0)));
         assert!(a.contains(&Action::Snapshot {
-            wave: 4322,
+            wave: 4321,
             tier: Some(12),
             coin_per_minute: Some(1.0)
         }));
@@ -520,9 +605,9 @@ mod tests {
             p(GameMode::TotalCoin, 14, 2, CoinReading::Total(27.46e15)),
         );
         assert!(actions.contains(&Action::Snapshot {
-            wave: 2,
+            wave: 1,
             tier: Some(14),
-            coin_per_minute: Some(500.0) // last confirmed rate, not the total
+            coin_per_minute: Some(500.0) // average while on wave 1, not the total balance
         }));
         // feed2 above is two polls — warning should be on for sustained total_coin.
         assert!(sm.live_state().total_coin_warning);
@@ -551,9 +636,13 @@ mod tests {
     #[test]
     fn total_coin_with_no_prior_rate_stores_null() {
         let mut sm = RunStateMachine::new();
-        let actions = feed2(
+        feed2(
             &mut sm,
             p(GameMode::TotalCoin, 14, 1, CoinReading::Total(1e15)),
+        );
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::TotalCoin, 14, 2, CoinReading::Total(1e15)),
         );
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
@@ -589,10 +678,17 @@ mod tests {
         });
         assert_eq!(
             actions,
-            vec![Action::EndRun {
-                final_wave: 2,
-                peak_tier: Some(11)
-            }]
+            vec![
+                Action::Snapshot {
+                    wave: 2,
+                    tier: Some(11),
+                    coin_per_minute: Some(10.0)
+                },
+                Action::EndRun {
+                    final_wave: 2,
+                    peak_tier: Some(11)
+                }
+            ]
         );
         assert!(sm.run.is_none());
 
@@ -601,7 +697,7 @@ mod tests {
         assert!(a.is_empty());
         // ...but wave 1 starts the next one.
         let a = feed2(&mut sm, p(GameMode::Normal, 11, 1, CoinReading::Rate(1.0)));
-        assert!(a.contains(&Action::StartRun { run_type: RunType::Normal }));
+        assert!(a.contains(&Action::StartRun { run_type: RunType::Farming }));
     }
 
     #[test]
@@ -614,7 +710,7 @@ mod tests {
             final_wave: 450,
             peak_tier: Some(14)
         }));
-        assert!(actions.contains(&Action::StartRun { run_type: RunType::Normal }));
+        assert!(actions.contains(&Action::StartRun { run_type: RunType::Farming }));
     }
 
     #[test]
@@ -631,10 +727,17 @@ mod tests {
         });
         assert_eq!(
             actions,
-            vec![Action::EndRun {
-                final_wave: 3,
-                peak_tier: Some(14)
-            }]
+            vec![
+                Action::Snapshot {
+                    wave: 3,
+                    tier: Some(13),
+                    coin_per_minute: Some(1.0)
+                },
+                Action::EndRun {
+                    final_wave: 3,
+                    peak_tier: Some(14)
+                }
+            ]
         );
     }
 }

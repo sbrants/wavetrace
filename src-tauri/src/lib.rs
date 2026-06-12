@@ -3,6 +3,7 @@ pub mod capture;
 pub mod classify;
 pub mod commands;
 pub mod db;
+pub mod field_regions;
 pub mod fields;
 pub mod fixture_capture;
 pub mod fixture_corpus;
@@ -35,6 +36,7 @@ pub fn run() {
             commands::list_runs,
             commands::set_run_comment,
             commands::delete_runs,
+            commands::combine_runs,
             commands::run_snapshots,
             commands::current_run_snapshots,
             commands::export_csv,

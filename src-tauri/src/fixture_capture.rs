@@ -7,7 +7,7 @@ use std::time::Duration;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use crate::{capture, classify, fields, parser::CoinReading, state_machine::GameMode};
+use crate::{capture, fields, parser::CoinReading, state_machine::GameMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureExpect {
@@ -137,7 +137,7 @@ fn game_mode_label(mode: GameMode) -> String {
 
 pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
     let fields = fields::ocr_all_fields(frame);
-    let input = classify::classify(&fields.all_lines);
+    let input = fields::poll_input_from_fields(&fields);
     let (coin_reading, coin_per_minute, coin_rate_detected) = coin_reading_label(input.coin);
 
     CaptureEntry {

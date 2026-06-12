@@ -1,5 +1,7 @@
 //! Window enumeration and capture via xcap.
 
+use std::sync::Mutex;
+
 use image::RgbaImage;
 use serde::Serialize;
 
@@ -14,6 +16,15 @@ pub struct CaptureProbe {
     pub width: u32,
     pub height: u32,
     pub method: &'static str,
+}
+
+/// Cached target window id — avoids re-scoring every window each poll.
+static WINDOW_CACHE: Mutex<Option<(String, u32)>> = Mutex::new(None);
+
+pub fn clear_window_cache() {
+    if let Ok(mut guard) = WINDOW_CACHE.lock() {
+        *guard = None;
+    }
 }
 
 pub fn list_windows() -> Vec<WindowInfo> {
@@ -103,6 +114,41 @@ fn capture_window_via_monitor(w: &xcap::Window) -> Option<RgbaImage> {
     Some(crop_region(&mon_img, rel_x, rel_y, w, h))
 }
 
+fn try_capture_window(w: &xcap::Window) -> Option<RgbaImage> {
+    if w.is_minimized().unwrap_or(true) {
+        return None;
+    }
+    capture_window_image(w).map(|(img, _)| img)
+}
+
+fn cache_window_id(title_substring: &str, window_id: u32) {
+    if let Ok(mut guard) = WINDOW_CACHE.lock() {
+        *guard = Some((title_substring.to_string(), window_id));
+    }
+}
+
+fn capture_from_cached_id(windows: &[xcap::Window], title_substring: &str) -> Option<RgbaImage> {
+    let cached_id = WINDOW_CACHE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().filter(|(t, _)| t == title_substring).map(|(_, id)| *id))?;
+
+    for w in windows {
+        if w.id().ok() != Some(cached_id) {
+            continue;
+        }
+        if let Some(img) = try_capture_window(w) {
+            let area = img.width().saturating_mul(img.height());
+            if area >= MIN_CAPTURE_AREA {
+                return Some(img);
+            }
+        }
+        break;
+    }
+    clear_window_cache();
+    None
+}
+
 /// Diagnostic capture for a single window title (exact match, not substring search).
 pub fn probe_window(title: &str) -> Option<CaptureProbe> {
     let windows = xcap::Window::all().ok()?;
@@ -125,10 +171,16 @@ pub fn probe_window(title: &str) -> Option<CaptureProbe> {
 
 /// Capture the largest non-minimized window whose title contains `title_substring`
 /// (case-insensitive). Prefers emulator-sized windows over narrow title-bar matches.
+/// Retains the matched window id between calls for faster subsequent captures.
 pub fn capture_by_title(title_substring: &str) -> Option<RgbaImage> {
     let needle = title_substring.to_lowercase();
     let windows = xcap::Window::all().ok()?;
-    let mut best: Option<(u32, RgbaImage, &'static str)> = None;
+
+    if let Some(img) = capture_from_cached_id(&windows, title_substring) {
+        return Some(img);
+    }
+
+    let mut best: Option<(u32, RgbaImage, u32)> = None;
     for w in &windows {
         let title = w.title().unwrap_or_default();
         if !title.to_lowercase().contains(&needle) {
@@ -149,15 +201,24 @@ pub fn capture_by_title(title_substring: &str) -> Option<RgbaImage> {
             continue;
         }
         let score = window_capture_score(&img, &app, &title);
+        let window_id = w.id().ok().unwrap_or(0);
         let replace = match &best {
             None => true,
             Some((best_score, _, _)) => score > *best_score,
         };
         if replace {
-            best = Some((score, img, _method));
+            best = Some((score, img, window_id));
         }
     }
-    best.map(|(_, img, _)| img)
+
+    if let Some((_, img, window_id)) = best {
+        if window_id != 0 {
+            cache_window_id(title_substring, window_id);
+        }
+        Some(img)
+    } else {
+        None
+    }
 }
 
 /// Crop a sub-region out of a captured frame. Coordinates are clamped to the

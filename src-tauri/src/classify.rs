@@ -19,7 +19,64 @@ fn find_int_after(line: &str, keyword: &str) -> Option<(u32, bool)> {
     Some((digits.parse().ok()?, plus))
 }
 
-/// Classify a full-frame Tesseract poll.
+/// Classify from pre-parsed region fields (anchor OCR path).
+pub fn classify_from_parts(
+    tier: Option<u32>,
+    wave: Option<u32>,
+    coin: CoinReading,
+    mode_lines: &[String],
+    tournament: bool,
+    mut end_of_run: bool,
+    mut intro_sprint: bool,
+) -> PollInput {
+    for line in mode_lines {
+        let lower = line.trim().to_lowercase();
+        if lower == "retry" || lower.contains("game stats") {
+            end_of_run = true;
+        }
+        if lower.contains("intro sprint") {
+            intro_sprint = true;
+        }
+    }
+
+    if tier.is_none() && wave.is_none() {
+        for line in mode_lines {
+            let lower = line.trim().to_lowercase();
+            if lower == "retry" || lower.contains("game stats") {
+                end_of_run = true;
+            }
+        }
+    }
+
+    let mode = if end_of_run {
+        GameMode::EndOfRun
+    } else if tournament {
+        GameMode::Tournament
+    } else if intro_sprint {
+        GameMode::IntroSprint
+    } else {
+        match coin {
+            CoinReading::Rate(_) => GameMode::Normal,
+            CoinReading::Total(_) => GameMode::TotalCoin,
+            CoinReading::Unreadable => {
+                if tier.is_some() || wave.is_some() {
+                    GameMode::Normal
+                } else {
+                    GameMode::Unknown
+                }
+            }
+        }
+    };
+
+    PollInput {
+        mode,
+        tier,
+        wave,
+        coin,
+    }
+}
+
+/// Classify a full-frame Windows OCR poll.
 ///
 /// * **Tier** — first number after the word `Tier` (case-insensitive).
 /// * **Wave** — first number after the word `Wave` (case-insensitive).
@@ -92,16 +149,37 @@ fn extract_wave(lines: &[String]) -> Option<u32> {
 }
 
 /// Second `/min` line wins (first is usually cash `$…/min`).
+/// Windows OCR often drops "/min" on the coin row (`@ 3.48T…`); fall back to `@` lines.
 fn extract_coin_second_min(lines: &[String]) -> CoinReading {
     let min_lines: Vec<&str> = lines
         .iter()
         .map(|s| s.as_str())
         .filter(|l| l.to_lowercase().contains("/min"))
         .collect();
-    if min_lines.len() < 2 {
-        return CoinReading::Unreadable;
+    if min_lines.len() >= 2 {
+        return parse_coin_line(min_lines[1].trim());
     }
-    parse_coin_line(min_lines[1].trim())
+
+    let at_lines: Vec<&str> = lines
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|l| {
+            let t = l.trim();
+            !t.contains('$')
+                && (t.starts_with('@')
+                    || t.starts_with("(Cc)")
+                    || t.starts_with("(CC)")
+                    || t.starts_with("(cc)"))
+        })
+        .collect();
+    if let Some(line) = at_lines.first() {
+        let reading = parse_coin_line(line.trim());
+        if matches!(reading, CoinReading::Rate(_)) {
+            return reading;
+        }
+    }
+
+    CoinReading::Unreadable
 }
 
 #[cfg(test)]
@@ -110,6 +188,19 @@ mod tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn windows_ocr_at_line_without_min_suffix() {
+        let input = classify(&s(&[
+            "$ 6.9M/9-",
+            "@ 3.48TVfnjn",
+            "Tier 12",
+            "Wave 4571",
+        ]));
+        assert_eq!(input.tier, Some(12));
+        assert_eq!(input.wave, Some(4571));
+        assert_eq!(input.coin, CoinReading::Rate(3.48e12));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::Scanner;
 use crate::settings::Settings;
 use crate::state_machine::{GameMode, LiveState};
-use crate::{capture, classify, fields, scanner, settings};
+use crate::{capture, fields, scanner, settings};
 use serde::Serialize;
 
 pub struct AppState {
@@ -31,6 +31,7 @@ pub fn get_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn save_settings(new_settings: Settings) -> Result<(), String> {
+    capture::clear_window_cache();
     settings::save(&conn()?, &new_settings).map_err(|e| e.to_string())
 }
 
@@ -88,6 +89,19 @@ pub fn delete_runs(run_ids: Vec<String>, state: State<AppState>) -> Result<usize
         *current = None;
     }
     Ok(n)
+}
+
+#[tauri::command]
+pub fn combine_runs(run_ids: Vec<String>, state: State<AppState>) -> Result<String, String> {
+    let new_id = db::combine_runs(&conn()?, &run_ids).map_err(|e| e.to_string())?;
+    let mut current = state.scanner.current_run_id.lock().unwrap();
+    if current
+        .as_ref()
+        .is_some_and(|id| run_ids.iter().any(|d| d == id))
+    {
+        *current = None;
+    }
+    Ok(new_id)
 }
 
 #[tauri::command]
@@ -238,7 +252,7 @@ fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
     let fields = fields::ocr_probe_fields(&img)?;
     let ocr_ms = ocr_started.elapsed().as_millis() as u64;
 
-    let input = classify::classify(&fields.all_lines);
+    let input = fields::poll_input_from_fields(&fields);
     let coin_per_minute = match input.coin {
         crate::parser::CoinReading::Rate(v) => Some(v),
         _ => None,

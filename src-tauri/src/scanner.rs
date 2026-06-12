@@ -8,7 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::state_machine::{Action, LiveState, RunStateMachine};
-use crate::{capture, classify, db, fields, settings};
+use crate::{capture, db, fields, settings};
 
 #[derive(Clone, Serialize)]
 pub struct ScannerEvent {
@@ -97,7 +97,9 @@ impl Scanner {
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
+                let capture_started = Instant::now();
                 let frame = capture::capture_by_title(&target.title_substring);
+                let capture_ms = capture_started.elapsed().as_millis();
                 let status = match frame {
                     None => {
                         emit(
@@ -112,20 +114,21 @@ impl Scanner {
                     }
                     Some(full) => {
                         let should_continue = || running.load(Ordering::SeqCst);
-                        let ocr_started = Instant::now();
-                        let fields = fields::ocr_all_fields_cancellable(&full, &should_continue);
-                        let ocr_ms = ocr_started.elapsed().as_millis();
+                        let fields =
+                            fields::ocr_all_fields_cancellable(&full, &should_continue);
                         if !should_continue() {
                             break;
                         }
-                        let input = classify::classify(&fields.all_lines);
+                        let input = fields::poll_input_from_fields(&fields);
                         log_line(
                             &log_path,
                             &format!(
-                                "poll {}x{} ocr_ms={} tier={:?} wave={:?} coin={:?} lines={:?}",
+                                "poll {}x{} capture_ms={} ocr_ms={} \
+                                 tier={:?} wave={:?} coin={:?} lines={:?}",
                                 full.width(),
                                 full.height(),
-                                ocr_ms,
+                                capture_ms,
+                                fields.ocr_ms,
                                 input.tier,
                                 input.wave,
                                 input.coin,
@@ -159,8 +162,12 @@ pub fn apply_actions(
 ) {
     for action in actions {
         let result = match action {
-            Action::StartRun { run_type } => db::start_run(conn, run_type.as_str())
-                .map(|id| *current_run_id.lock().unwrap() = Some(id)),
+            Action::StartRun { run_type } => {
+                // Drop stale tracking before start_run closes any open rows.
+                current_run_id.lock().unwrap().take();
+                db::start_run(conn, run_type.as_str())
+                    .map(|id| *current_run_id.lock().unwrap() = Some(id))
+            }
             Action::Snapshot {
                 wave,
                 tier,

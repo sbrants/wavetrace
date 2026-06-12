@@ -67,7 +67,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             id          TEXT PRIMARY KEY,
             started_at  TEXT NOT NULL,
             ended_at    TEXT,
-            run_type    TEXT NOT NULL DEFAULT 'normal',
+            run_type    TEXT NOT NULL DEFAULT 'farming',
             peak_tier   INTEGER,
             final_wave  INTEGER,
             comment     TEXT
@@ -87,10 +87,40 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         );",
     )?;
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN comment TEXT", []);
+    conn.execute(
+        "UPDATE runs SET run_type = 'farming' WHERE run_type = 'normal'",
+        [],
+    )?;
     Ok(())
 }
 
+/// Close every run that still has no `ended_at` (at most one should be open).
+/// Uses snapshot aggregates when explicit final stats were not supplied.
+pub fn end_open_runs(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT id FROM runs WHERE ended_at IS NULL")?;
+    let ids: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for id in ids {
+        let (final_wave, peak_tier) = snapshot_stats(conn, &id)?;
+        end_run(conn, &id, final_wave, peak_tier)?;
+    }
+    Ok(())
+}
+
+fn snapshot_stats(
+    conn: &Connection,
+    run_id: &str,
+) -> rusqlite::Result<(Option<i64>, Option<i64>)> {
+    conn.query_row(
+        "SELECT MAX(wave), MAX(tier) FROM snapshots WHERE run_id = ?1",
+        params![run_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+}
+
 pub fn start_run(conn: &Connection, run_type: &str) -> rusqlite::Result<String> {
+    end_open_runs(conn)?;
     let id = Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO runs (id, started_at, run_type) VALUES (?1, ?2, ?3)",
@@ -196,6 +226,169 @@ pub fn set_run_comment(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CombineRunsError {
+    TooFewRuns,
+    RunNotFound(String),
+    OpenRun(String),
+    WavesNotStrictlyIncreasing {
+        prev_wave: i64,
+        wave: i64,
+        run_index: usize,
+    },
+    NoSnapshots,
+}
+
+impl std::fmt::Display for CombineRunsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooFewRuns => write!(f, "Select at least two runs to combine"),
+            Self::RunNotFound(id) => write!(f, "Run not found: {id}"),
+            Self::OpenRun(id) => write!(f, "Cannot combine an ongoing run: {id}"),
+            Self::NoSnapshots => write!(f, "Selected runs have no snapshots to combine"),
+            Self::WavesNotStrictlyIncreasing {
+                prev_wave,
+                wave,
+                run_index,
+            } => write!(
+                f,
+                "Waves must be strictly increasing when runs are ordered by start time \
+                 (run {run_index}: wave {wave} follows wave {prev_wave})"
+            ),
+        }
+    }
+}
+
+struct SourceRun {
+    id: String,
+    started_at: String,
+    ended_at: String,
+    run_type: String,
+}
+
+/// Merge multiple ended runs into one when their snapshot waves form a strictly
+/// increasing sequence (runs ordered by `started_at`, snapshots by `wave` within each run).
+/// Source runs are deleted; returns the new run id.
+pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, CombineRunsError> {
+    let mut unique_ids: Vec<String> = Vec::new();
+    for id in run_ids {
+        if !unique_ids.iter().any(|existing| existing == id) {
+            unique_ids.push(id.clone());
+        }
+    }
+    if unique_ids.len() < 2 {
+        return Err(CombineRunsError::TooFewRuns);
+    }
+
+    let mut source_runs: Vec<SourceRun> = Vec::with_capacity(unique_ids.len());
+    for id in &unique_ids {
+        let row = conn
+            .query_row(
+                "SELECT id, started_at, ended_at, run_type FROM runs WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CombineRunsError::RunNotFound(id.clone()),
+                _ => CombineRunsError::RunNotFound(id.clone()),
+            })?;
+        let ended_at = row.2.ok_or_else(|| CombineRunsError::OpenRun(id.clone()))?;
+        source_runs.push(SourceRun {
+            id: row.0,
+            started_at: row.1,
+            ended_at,
+            run_type: row.3,
+        });
+    }
+
+    source_runs.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+
+    let mut combined_snapshots: Vec<SnapshotRow> = Vec::new();
+    for (run_index, run) in source_runs.iter().enumerate() {
+        let snaps = run_snapshots(conn, &run.id).map_err(|_| {
+            CombineRunsError::RunNotFound(run.id.clone())
+        })?;
+        for snap in snaps {
+            if let Some(prev) = combined_snapshots.last() {
+                if snap.wave <= prev.wave {
+                    return Err(CombineRunsError::WavesNotStrictlyIncreasing {
+                        prev_wave: prev.wave,
+                        wave: snap.wave,
+                        run_index: run_index + 1,
+                    });
+                }
+            }
+            combined_snapshots.push(snap);
+        }
+    }
+
+    if combined_snapshots.is_empty() {
+        return Err(CombineRunsError::NoSnapshots);
+    }
+
+    let started_at = source_runs.first().unwrap().started_at.clone();
+    let ended_at = source_runs
+        .iter()
+        .map(|r| r.ended_at.as_str())
+        .max()
+        .unwrap()
+        .to_string();
+    let run_type = if source_runs.iter().any(|r| r.run_type == "tournament") {
+        "tournament".to_string()
+    } else {
+        "farming".to_string()
+    };
+    let peak_tier = combined_snapshots.iter().filter_map(|s| s.tier).max();
+    let final_wave = combined_snapshots.last().map(|s| s.wave);
+
+    let new_id = Uuid::new_v4().to_string();
+    let tx = conn.unchecked_transaction().map_err(|e| {
+        CombineRunsError::RunNotFound(e.to_string())
+    })?;
+
+    tx.execute(
+        "INSERT INTO runs (id, started_at, ended_at, run_type, peak_tier, final_wave)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![new_id, started_at, ended_at, run_type, peak_tier, final_wave],
+    )
+    .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+
+    for snap in &combined_snapshots {
+        tx.execute(
+            "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                Uuid::new_v4().to_string(),
+                new_id,
+                snap.wave,
+                snap.tier,
+                snap.coin_per_minute,
+                snap.recorded_at,
+            ],
+        )
+        .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+    }
+
+    for run in &source_runs {
+        tx.execute("DELETE FROM snapshots WHERE run_id = ?1", params![run.id])
+            .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+        tx.execute("DELETE FROM runs WHERE id = ?1", params![run.id])
+            .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+    }
+
+    tx.commit()
+        .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+
+    Ok(new_id)
+}
+
 pub fn delete_runs(conn: &Connection, run_ids: &[String]) -> rusqlite::Result<usize> {
     let mut deleted = 0usize;
     for id in run_ids {
@@ -280,6 +473,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn start_run_ends_previous_open_run() {
+        let conn = open_in_memory().unwrap();
+        let id1 = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0)).unwrap();
+        insert_snapshot(&conn, &id1, 5, Some(12), Some(200.0)).unwrap();
+
+        let id2 = start_run(&conn, "farming").unwrap();
+        assert_ne!(id1, id2);
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        let run1 = runs.iter().find(|r| r.id == id1).unwrap();
+        let run2 = runs.iter().find(|r| r.id == id2).unwrap();
+        assert!(run1.ended_at.is_some());
+        assert_eq!(run1.final_wave, Some(5));
+        assert_eq!(run1.peak_tier, Some(12));
+        assert!(run2.ended_at.is_none());
+    }
+
+    #[test]
     fn run_lifecycle_roundtrip() {
         let conn = open_in_memory().unwrap();
         let id = start_run(&conn, "tournament").unwrap();
@@ -296,7 +508,7 @@ mod tests {
         let filtered = list_runs(
             &conn,
             &RunFilter {
-                run_type: Some("normal".into()),
+                run_type: Some("farming".into()),
                 ..Default::default()
             },
         )
@@ -314,7 +526,7 @@ mod tests {
     #[test]
     fn delete_runs_removes_snapshots() {
         let conn = open_in_memory().unwrap();
-        let id = start_run(&conn, "normal").unwrap();
+        let id = start_run(&conn, "farming").unwrap();
         insert_snapshot(&conn, &id, 1, Some(10), Some(100.0)).unwrap();
         delete_runs(&conn, &[id.clone()]).unwrap();
         assert!(list_runs(&conn, &RunFilter::default()).unwrap().is_empty());
@@ -324,7 +536,7 @@ mod tests {
     #[test]
     fn run_comment_roundtrip() {
         let conn = open_in_memory().unwrap();
-        let id = start_run(&conn, "normal").unwrap();
+        let id = start_run(&conn, "farming").unwrap();
         set_run_comment(&conn, &id, "  good run  ").unwrap();
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].comment.as_deref(), Some("good run"));
@@ -343,5 +555,182 @@ mod tests {
             get_setting(&conn, "poll_interval_ms").unwrap(),
             Some("500".into())
         );
+    }
+
+    fn insert_closed_run(
+        conn: &Connection,
+        started_at: &str,
+        ended_at: &str,
+        run_type: &str,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO runs (id, started_at, ended_at, run_type) VALUES (?1, ?2, ?3, ?4)",
+            params![id, started_at, ended_at, run_type],
+        )
+        .unwrap();
+        id
+    }
+
+    fn insert_snapshot_at(
+        conn: &Connection,
+        run_id: &str,
+        wave: i64,
+        tier: Option<i64>,
+        coin: Option<f64>,
+        recorded_at: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                Uuid::new_v4().to_string(),
+                run_id,
+                wave,
+                tier,
+                coin,
+                recorded_at
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn combine_runs_merges_increasing_waves() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        insert_snapshot_at(&conn, &id1, 2, Some(10), Some(120.0), "2024-01-01T10:02:00Z");
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 3, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(&conn, &id2, 4, Some(11), Some(160.0), "2024-01-01T11:02:00Z");
+
+        let combined_id = combine_runs(&conn, &[id2.clone(), id1.clone()]).unwrap();
+        assert_ne!(combined_id, id1);
+        assert_ne!(combined_id, id2);
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, combined_id);
+        assert_eq!(runs[0].started_at, "2024-01-01T10:00:00Z");
+        assert_eq!(runs[0].ended_at.as_deref(), Some("2024-01-01T11:30:00Z"));
+        assert_eq!(runs[0].peak_tier, Some(11));
+        assert_eq!(runs[0].final_wave, Some(4));
+        assert_eq!(runs[0].snapshot_count, 4);
+
+        let snaps = run_snapshots(&conn, &combined_id).unwrap();
+        assert_eq!(snaps.len(), 4);
+        assert_eq!(snaps[0].wave, 1);
+        assert_eq!(snaps[3].wave, 4);
+        assert_eq!(snaps[3].coin_per_minute, Some(160.0));
+    }
+
+    #[test]
+    fn combine_runs_rejects_wave_reset() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        insert_snapshot_at(&conn, &id1, 50, Some(12), Some(200.0), "2024-01-01T10:02:00Z");
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 1, Some(10), Some(100.0), "2024-01-01T11:01:00Z");
+
+        let err = combine_runs(&conn, &[id1, id2]).unwrap_err();
+        assert!(matches!(
+            err,
+            CombineRunsError::WavesNotStrictlyIncreasing { .. }
+        ));
+        assert_eq!(list_runs(&conn, &RunFilter::default()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn combine_runs_rejects_duplicate_waves() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        insert_snapshot_at(&conn, &id1, 5, Some(10), Some(120.0), "2024-01-01T10:02:00Z");
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 5, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+
+        assert!(matches!(
+            combine_runs(&conn, &[id1, id2]).unwrap_err(),
+            CombineRunsError::WavesNotStrictlyIncreasing { .. }
+        ));
+    }
+
+    #[test]
+    fn combine_runs_rejects_open_run() {
+        let conn = open_in_memory().unwrap();
+        let id1 = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0)).unwrap();
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 2, Some(10), Some(120.0), "2024-01-01T11:01:00Z");
+
+        assert!(matches!(
+            combine_runs(&conn, &[id1, id2]).unwrap_err(),
+            CombineRunsError::OpenRun(_)
+        ));
+    }
+
+    #[test]
+    fn combine_runs_uses_tournament_if_any_source_is_tournament() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(17), None, "2024-01-01T10:01:00Z");
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "tournament",
+        );
+        insert_snapshot_at(&conn, &id2, 2, Some(17), Some(500.0), "2024-01-01T11:01:00Z");
+
+        let combined_id = combine_runs(&conn, &[id1, id2]).unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].run_type, "tournament");
+        assert_eq!(run_snapshots(&conn, &combined_id).unwrap().len(), 2);
     }
 }

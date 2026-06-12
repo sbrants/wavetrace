@@ -15,7 +15,7 @@ export interface LiveState {
   wave: number | null;
   coin_per_minute: number | null;
   run_active: boolean;
-  run_type: "normal" | "tournament" | null;
+  run_type: "farming" | "tournament" | null;
   total_coin_warning: boolean;
 }
 
@@ -102,6 +102,8 @@ export const api = {
     invoke<void>("set_run_comment", { runId, comment }),
   deleteRuns: (runIds: string[]) =>
     invoke<number>("delete_runs", { runIds }),
+  combineRuns: (runIds: string[]) =>
+    invoke<string>("combine_runs", { runIds }),
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),

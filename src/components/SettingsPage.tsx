@@ -143,9 +143,9 @@ export default function SettingsPage() {
       <section>
         <h3>OCR diagnostic</h3>
         <p className="muted">
-          Runs Tesseract on the full capture. Coin uses the second line containing
+          Runs Windows OCR on the full capture. Coin uses the second line containing
           /min (first is usually cash). Tier/Wave are parsed from lines containing
-          those words. Requires Tesseract on PATH.
+          those words. Uses the built-in Windows 10+ OCR engine (no extra install).
         </p>
         <div className="row">
           <button

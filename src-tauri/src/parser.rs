@@ -38,7 +38,7 @@ pub fn suffix_multiplier(suffix: &str) -> Option<f64> {
 /// Coin-icon prefixes OCR'd from the in-game coin currency glyph.
 pub fn has_coin_icon_prefix(raw: &str) -> bool {
     let t = raw.trim();
-    ["@", "C ", "c ", "©", "G "]
+    ["@", "C ", "c ", "©", "G ", "(C)", "(c)", "(Cc)", "(cc)", "(CC)"]
         .iter()
         .any(|p| t.starts_with(p))
 }
@@ -88,11 +88,53 @@ fn is_plausible_rate(body: &str, raw: &str) -> bool {
     true
 }
 
+/// Fix common OCR confusions inside numeric coin bodies (e.g. `3A8T` -> `348T`).
+fn fix_digit_lookalikes(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let prev_digit = i > 0 && chars[i - 1].is_ascii_digit();
+        let next_digit = i + 1 < chars.len() && chars[i + 1].is_ascii_digit();
+        out.push(match c {
+            'A' | 'a' if prev_digit || next_digit => '4',
+            'O' | 'o' if prev_digit || next_digit => '0',
+            'l' | 'I' if prev_digit || next_digit => '1',
+            _ => c,
+        });
+    }
+    out
+}
+
+/// OCR may split decimals: "3 48T" or "3 A8T" -> "3.48T".
+fn fix_spaced_decimal(body: &str) -> String {
+    let trimmed = body.trim();
+    if let Some(space) = trimmed.find(' ') {
+        let (left, right) = trimmed.split_at(space);
+        let left = left.trim();
+        let right = fix_digit_lookalikes(right.trim_start().replace(' ', "").as_str());
+        if left.chars().all(|c| c.is_ascii_digit()) && !left.is_empty() && left.len() <= 2 {
+            if let Some(i) = right.find(|c: char| c.is_ascii_alphabetic()) {
+                let (num, suffix) = right.split_at(i);
+                if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                    return format!("{left}.{num}{suffix}");
+                }
+            }
+        }
+    }
+    fix_digit_lookalikes(&trimmed.replace(' ', ""))
+}
+
 /// Normalize common OCR mangling of the `/min` suffix on coin-rate lines.
 fn normalize_coin_rate_ocr(text: &str) -> String {
     let mut t = text.trim().to_string();
     if t.starts_with(['x', 'X']) {
         return t;
+    }
+    for prefix in ["(Cc)", "(CC)", "(cc)", "(C)", "(c)"] {
+        if let Some(rest) = t.strip_prefix(prefix) {
+            t = rest.trim_start().to_string();
+            break;
+        }
     }
     while let Some(first) = t.chars().next() {
         if first.is_ascii_digit()
@@ -106,6 +148,27 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
 
     if is_wave_progress_line(&t) {
         return t;
+    }
+
+    // OCR sometimes splits decimals: "3 48T/min" -> "3.48T/min"
+    if t.contains('/') {
+        let slash = t.find('/').unwrap();
+        let body = t[..slash].trim();
+        let fixed = fix_spaced_decimal(body);
+        if parse_number_with_suffix(&fixed).is_some() {
+            let suffix = &t[slash..];
+            let lower_suffix = suffix.to_lowercase();
+            // Keep well-formed /min lines; let junk suffixes fall through to fixups below.
+            if lower_suffix.starts_with("/min") {
+                return format!("{fixed}{suffix}");
+            }
+            if lower_suffix.starts_with("/mi") {
+                return format!("{fixed}/min");
+            }
+            if lower_suffix == "/m" {
+                return format!("{fixed}/min");
+            }
+        }
     }
 
     let lower = t.to_lowercase();
@@ -171,6 +234,30 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
         let body = t.split('/').next().unwrap_or("").trim();
         if body == "O" || body == ": O" || body.ends_with(" O") {
             return "0/min".to_string();
+        }
+    }
+    // Windows OCR: "/min" misread as glued junk after the unit suffix ("3.48TVfnjn").
+    if !t.contains('/') {
+        let mut body = t.as_str();
+        for prefix in ["(Cc) ", "(CC) ", "(cc) ", "@ ", "@", "C ", "c ", "© ", "G "] {
+            if let Some(rest) = body.strip_prefix(prefix) {
+                body = rest.trim_start();
+                break;
+            }
+        }
+        for ch in ['T', 'M', 'B', 'K', 'q', 'Q'] {
+            if let Some(pos) = body.rfind(ch) {
+                let after = &body[pos + 1..];
+                if after.is_empty() {
+                    continue;
+                }
+                if after.chars().all(|c| c.is_ascii_alphabetic()) {
+                    let stem = &body[..=pos];
+                    if parse_number_with_suffix(stem).is_some() {
+                        return format!("{stem}/min");
+                    }
+                }
+            }
         }
     }
     t
@@ -254,7 +341,7 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
     }
     let normalized = normalize_coin_rate_ocr(raw);
     let mut text = normalized.as_str();
-    for prefix in ["C ", "c ", "© ", "G ", "@ ", "@"] {
+    for prefix in ["(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@"] {
         if let Some(rest) = text.strip_prefix(prefix) {
             text = rest.trim_start();
             break;
@@ -263,16 +350,16 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
     let lower = text.to_lowercase();
     let min_pos = lower.rfind("min").and_then(|idx| {
         let sep = lower[..idx].chars().last()?;
-        matches!(sep, '/' | '(' | '\\' | '|' | ' ').then(|| idx - sep.len_utf8())
+        matches!(sep, '/' | '(' | '\\' | '|' | ' ' | '=').then(|| idx - sep.len_utf8())
     });
     if let Some(idx) = min_pos {
-        let body = &text[..idx];
-        if let Some((num, suffix)) = split_number_suffix(body) {
+        let body = fix_spaced_decimal(&text[..idx]);
+        if let Some((num, suffix)) = split_number_suffix(&body) {
             if is_balance_tier_suffix(&suffix) && num < 100.0 {
                 return CoinReading::Unreadable;
             }
         }
-        match parse_number_with_suffix(body) {
+        match parse_number_with_suffix(&body) {
             Some(v) => CoinReading::Rate(v),
             None => CoinReading::Unreadable,
         }
@@ -289,17 +376,14 @@ pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
     if is_wave_progress_line(raw) {
         return CoinReading::Unreadable;
     }
-    if !has_coin_icon_prefix(raw) {
-        if let CoinReading::Rate(v) = parse_coin_line(raw) {
-            return CoinReading::Rate(v);
-        }
-        return parse_coin_crop_rate(raw);
+    if let reading @ CoinReading::Rate(_) = parse_coin_crop_rate(raw) {
+        return reading;
     }
     if let CoinReading::Rate(v) = parse_coin_line(raw) {
         return CoinReading::Rate(v);
     }
     let mut text = raw.trim();
-    for prefix in ["C ", "c ", "© ", "G ", "@ ", "@"] {
+    for prefix in ["(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@"] {
         if let Some(rest) = text.strip_prefix(prefix) {
             text = rest.trim_start();
             break;
@@ -331,9 +415,24 @@ pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
 /// Parse a wave reading like "Wave 4321" or bare "4321".
 pub fn parse_wave(raw: &str) -> Option<u32> {
     let text = raw.trim();
-    let text = strip_prefix_ci(text, "wave").unwrap_or(text);
-    let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() || text.trim().chars().any(|c| c.is_ascii_alphabetic()) {
+    let lower = text.to_lowercase();
+    if lower.contains("tier") && !lower.contains("wave") {
+        return None;
+    }
+    let text = if let Some(idx) = lower.find("wave") {
+        text[idx + 4..].trim_start()
+    } else {
+        text
+    };
+    let mut digits = String::new();
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    if digits.is_empty() {
         return None;
     }
     digits.parse().ok()
@@ -343,28 +442,36 @@ pub fn parse_wave(raw: &str) -> Option<u32> {
 /// Returns (tier, is_tournament).
 pub fn parse_tier(raw: &str) -> Option<(u32, bool)> {
     let text = raw.trim();
+    let lower = text.to_lowercase();
+    let text = if let Some(idx) = lower.find("tier") {
+        text[idx..].trim_start()
+    } else {
+        text
+    };
     let text = strip_prefix_ci(text, "tier").unwrap_or(text).trim();
-    let tournament = text.ends_with('+');
-    let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
+    let tournament = text.contains('+');
+    let mut digits = String::new();
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if !digits.is_empty() {
+            break;
+        }
     }
-    let rest: String = text
-        .chars()
-        .filter(|c| !c.is_ascii_digit() && !c.is_whitespace() && *c != '+')
-        .collect();
-    if !rest.is_empty() {
+    if digits.is_empty() {
         return None;
     }
     Some((digits.parse().ok()?, tournament))
 }
 
 fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    if text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(text[prefix.len()..].trim_start())
-    } else {
-        None
+    if text.len() < prefix.len() {
+        return None;
     }
+    if !text.get(..prefix.len())?.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    Some(text.get(prefix.len()..)?.trim_start())
 }
 
 #[cfg(test)]
@@ -415,10 +522,16 @@ mod tests {
         assert_eq!(parse_coin_anchor_crop("E408T/mi"), CoinReading::Rate(408.0e12));
     }
 
-    /// Strings taken from live NoxPlayer scanner.log misses.
+    #[test]
+    fn coin_windows_ocr_glued_suffix() {
+        assert_eq!(parse_coin_line("@ 3.48TVfnjn"), CoinReading::Rate(3.48e12));
+        assert_eq!(parse_coin_line("3.48TVfnjn"), CoinReading::Rate(3.48e12));
+    }
+
     #[test]
     fn coin_live_ocr_quirks() {
         assert_eq!(parse_coin_anchor_crop("62.4T1mi"), CoinReading::Rate(62.4e12));
+        assert_eq!(parse_coin_anchor_crop("(Cc) 3 A8T /min="), CoinReading::Rate(3.48e12));
         assert_eq!(parse_coin_anchor_crop("70.6T/rtf"), CoinReading::Rate(70.6e12));
         assert_eq!(parse_coin_anchor_crop("542M/n'lin"), CoinReading::Rate(542.0e6));
         assert_eq!(parse_coin_anchor_crop("546M(min"), CoinReading::Rate(546.0e6));
@@ -501,6 +614,7 @@ mod tests {
         assert_eq!(parse_wave("Wave 650"), Some(650)); // intro_sprint.png
         assert_eq!(parse_wave("wave 865"), Some(865)); // tournament.png
         assert_eq!(parse_wave("4321"), Some(4321));
+        assert_eq!(parse_wave("Wave 4571 2.370"), Some(4571));
         assert_eq!(parse_wave("Wave"), None);
         assert_eq!(parse_wave("Tier 12"), None);
     }
@@ -508,6 +622,7 @@ mod tests {
     #[test]
     fn tier_parsing() {
         assert_eq!(parse_tier("Tier 12"), Some((12, false)));
+        assert_eq!(parse_tier("| Tier 12 160.52T"), Some((12, false)));
         assert_eq!(parse_tier("Tier 14"), Some((14, false))); // Wave_and_Tier.png
         // tournament.png: "Tier 17+" -> 17, tournament
         assert_eq!(parse_tier("Tier 17+"), Some((17, true)));

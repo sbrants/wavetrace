@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use image::RgbaImage;
 use serde::Deserialize;
 
-use crate::classify;
 use crate::fields;
 use crate::parser::CoinReading;
 
@@ -44,7 +43,7 @@ fn load_png(name: &str) -> RgbaImage {
 
 fn classify_fixture(img: &RgbaImage) -> crate::state_machine::PollInput {
     let ocr = fields::ocr_all_fields(img);
-    classify::classify(&ocr.all_lines)
+    fields::poll_input_from_fields(&ocr)
 }
 
 fn coin_value(coin: CoinReading) -> Option<f64> {
@@ -61,7 +60,7 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[ignore = "requires Tesseract installed on PATH"]
+    #[ignore = "requires Windows OCR"]
     fn expected_json_screenshots_have_ocr_pipeline() {
         let path = fixtures_dir().join("expected.json");
         let root: ExpectedRoot =
@@ -73,7 +72,7 @@ mod tests {
             }
             let img = load_png(&fx.file);
             let ocr = fields::ocr_all_fields(&img);
-            let input = classify::classify(&ocr.all_lines);
+            let input = fields::poll_input_from_fields(&ocr);
 
             if let Some(tier) = fx.expect.tier {
                 assert_eq!(input.tier, Some(tier), "tier in {}", fx.file);
@@ -158,7 +157,7 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[ignore = "requires Tesseract installed on PATH"]
+    #[ignore = "requires Windows OCR"]
     fn reanalyze_captured_frames_match_manifest() {
         let manifest = fixture_capture::load_manifest();
         let dir = fixture_capture::captured_dir();

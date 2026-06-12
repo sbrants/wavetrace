@@ -204,10 +204,76 @@ main {
   margin-top: 16px;
 }
 
-.chart-card h3 {
-  font-size: 14px;
+.chart-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
+}
+
+.chart-card-header h3 {
+  font-size: 14px;
   color: var(--muted);
+}
+
+.chart-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chart-screenshot-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+button.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+button.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.compare-card .compare-summary {
+  margin-bottom: 16px;
+  background: transparent;
+}
+
+.compare-card .compare-summary th {
+  cursor: default;
+  background: #1b2742;
+  font-size: 12px;
+}
+
+.compare-card .compare-summary td {
+  font-size: 12px;
+}
+
+.compare-card .compare-summary tbody tr {
+  cursor: default;
+}
+
+.compare-card .compare-summary tbody tr:hover {
+  background: transparent;
+}
+
+.compare-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
 }
 
 table {
@@ -244,6 +310,40 @@ tbody tr.selected {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.history-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-size-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.page-size-label select {
+  min-width: 72px;
+}
+
+.page-indicator {
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 7rem;
+  text-align: center;
 }
 
 .comment-col {

@@ -20,7 +20,16 @@ imageproc = "0.27.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-rusty-tesseract = "1.1.10"
 tauri = { version = "2", features = ["tray-icon"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 xcap = { version = "0.9.6", features = ["wgc"] }
+
+[target.'cfg(windows)'.dependencies]
+futures = "0.3.31"
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Win32_System_WinRT",
+] }

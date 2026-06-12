@@ -72,7 +72,7 @@
         "end_run": false,
         "update_coin_per_minute": true
       },
-      "expect_run_type": "normal",
+      "expect_run_type": "farming",
       "notes": "Baseline farming run — all three fields available; coin shows /min rate."
     },
     {
@@ -92,7 +92,7 @@
         "update_coin_per_minute": false,
         "warn_user": true
       },
-      "expect_run_type": "normal",
+      "expect_run_type": "farming",
       "notes": "Top bar shows total coin balance (27.46q), not a /min rate. Tier and Wave still track; reuse last known coin_per_minute in snapshots or store null. User warning banner should be shown."
     },
     {
