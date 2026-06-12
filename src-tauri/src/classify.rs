@@ -19,63 +19,6 @@ fn find_int_after(line: &str, keyword: &str) -> Option<(u32, bool)> {
     Some((digits.parse().ok()?, plus))
 }
 
-/// Classify from pre-parsed region fields (anchor OCR path).
-pub fn classify_from_parts(
-    tier: Option<u32>,
-    wave: Option<u32>,
-    coin: CoinReading,
-    mode_lines: &[String],
-    tournament: bool,
-    mut end_of_run: bool,
-    mut intro_sprint: bool,
-) -> PollInput {
-    for line in mode_lines {
-        let lower = line.trim().to_lowercase();
-        if lower == "retry" || lower.contains("game stats") {
-            end_of_run = true;
-        }
-        if lower.contains("intro sprint") {
-            intro_sprint = true;
-        }
-    }
-
-    if tier.is_none() && wave.is_none() {
-        for line in mode_lines {
-            let lower = line.trim().to_lowercase();
-            if lower == "retry" || lower.contains("game stats") {
-                end_of_run = true;
-            }
-        }
-    }
-
-    let mode = if end_of_run {
-        GameMode::EndOfRun
-    } else if tournament {
-        GameMode::Tournament
-    } else if intro_sprint {
-        GameMode::IntroSprint
-    } else {
-        match coin {
-            CoinReading::Rate(_) => GameMode::Normal,
-            CoinReading::Total(_) => GameMode::TotalCoin,
-            CoinReading::Unreadable => {
-                if tier.is_some() || wave.is_some() {
-                    GameMode::Normal
-                } else {
-                    GameMode::Unknown
-                }
-            }
-        }
-    };
-
-    PollInput {
-        mode,
-        tier,
-        wave,
-        coin,
-    }
-}
-
 /// Classify a full-frame Windows OCR poll.
 ///
 /// * **Tier** — first number after the word `Tier` (case-insensitive).

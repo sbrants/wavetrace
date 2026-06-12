@@ -10,7 +10,7 @@ Full product spec: [Goal.md](Goal.md). Test assets: [fixtures/](fixtures/).
 
 - **Tauri 2** — Rust native shell + embedded webview
 - **Rust backend** — window capture ([xcap](https://crates.io/crates/xcap)), Windows built-in OCR
-(Windows.Media.Ocr), template matching ([imageproc](https://crates.io/crates/imageproc)), SQLite ([rusqlite](https://crates.io/crates/rusqlite))
+(Windows.Media.Ocr), SQLite ([rusqlite](https://crates.io/crates/rusqlite))
 - **React + TypeScript + Vite** frontend, charts via Recharts
 
 ## Prerequisites (Windows 10+)
@@ -31,8 +31,8 @@ npm run tauri dev
 
 ```powershell
 cd src-tauri
-cargo test                 # parser, state machine, classifier, db, anchors
-cargo test -- --ignored    # manual OCR check against fixtures/ images
+cargo test --release       # parser, state machine, classifier, db (+ Windows OCR fixtures on Windows)
+cargo test --release -- --ignored   # optional manual/debug tests only
 ```
 
 ## Build a release bundle

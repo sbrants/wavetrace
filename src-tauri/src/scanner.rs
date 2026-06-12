@@ -74,6 +74,14 @@ impl Scanner {
         if let Ok(mut guard) = self.app.lock() {
             *guard = Some(app.clone());
         }
+
+        let log_path = db::app_data_dir().join("logs");
+        std::fs::create_dir_all(&log_path).ok();
+        let start_actions = self.machine.lock().unwrap().ensure_run_for_scanning();
+        if !start_actions.is_empty() {
+            apply_actions(&conn, &self.current_run_id, &start_actions, &log_path);
+        }
+
         let running = self.running.clone();
         let machine = self.machine.clone();
         let current_run_id = self.current_run_id.clone();

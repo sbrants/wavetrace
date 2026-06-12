@@ -4,7 +4,7 @@
 use std::ptr;
 #[cfg(windows)]
 use std::slice;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use image::{imageops, RgbaImage};
 
@@ -25,54 +25,8 @@ static WINRT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 #[cfg(windows)]
 static OCR_ENGINE: OnceLock<Result<OcrEngine, String>> = OnceLock::new();
 
-/// OCR a small HUD crop (single text line).
-pub fn ocr_region(img: &RgbaImage) -> Result<String, String> {
-    ocr_region_with_psm(img, 7)
-}
-
-pub fn ocr_region_with_psm(img: &RgbaImage, _psm: i32) -> Result<String, String> {
-    let prepped = preprocess_region(img);
-    recognize_dynamic(&prepped)
-}
-
-/// Coin-rate row: high-contrast preprocess (psm/whitelist are Tesseract-only; ignored here).
-pub fn ocr_coin_region(img: &RgbaImage) -> Result<String, String> {
-    let prepped = preprocess_coin_region(img);
-    recognize_dynamic(&prepped)
-}
-
-/// Run multiple OCR jobs in parallel threads (each calls the shared cached engine).
 #[cfg(windows)]
-pub fn ocr_parallel(tasks: Vec<(RgbaImage, i32, bool)>) -> Vec<Result<String, String>> {
-    if tasks.is_empty() {
-        return Vec::new();
-    }
-    if tasks.len() == 1 {
-        let (img, psm, coin) = &tasks[0];
-        return vec![run_ocr_job(img, *psm, *coin)];
-    }
-
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = tasks
-            .into_iter()
-            .map(|(img, psm, coin)| scope.spawn(move || run_ocr_job(&img, psm, coin)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    })
-}
-
-#[cfg(not(windows))]
-pub fn ocr_parallel(_tasks: Vec<(RgbaImage, i32, bool)>) -> Vec<Result<String, String>> {
-    vec![Err(windows_ocr_unavailable())]
-}
-
-fn run_ocr_job(img: &RgbaImage, psm: i32, coin: bool) -> Result<String, String> {
-    if coin {
-        ocr_coin_region(img)
-    } else {
-        ocr_region_with_psm(img, psm)
-    }
-}
+static OCR_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// OCR the entire capture and return every non-empty text line discovered.
 #[cfg(windows)]
@@ -111,17 +65,11 @@ fn ocr_engine() -> Result<&'static OcrEngine, String> {
 }
 
 #[cfg(windows)]
-fn recognize_dynamic(dynamic: &image::DynamicImage) -> Result<String, String> {
-    let rgba = dynamic.to_rgba8();
-    let result = recognize_rgba8(&rgba)?;
-    result
-        .Text()
-        .map(|s| s.to_string().trim().to_string())
-        .map_err(|e| format!("Windows OCR result text failed: {e}"))
-}
-
-#[cfg(windows)]
 fn recognize_rgba8(img: &RgbaImage) -> Result<OcrResult, String> {
+    let _guard = OCR_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|e| format!("OCR mutex poisoned: {e}"))?;
     init_winrt()?;
     let engine = ocr_engine()?;
     let bitmap = rgba_to_software_bitmap(img)?;
@@ -214,45 +162,8 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
 }
 
 #[cfg(not(windows))]
-fn recognize_dynamic(_dynamic: &image::DynamicImage) -> Result<String, String> {
-    Err(windows_ocr_unavailable())
-}
-
-#[cfg(not(windows))]
 fn windows_ocr_unavailable() -> String {
     "Windows OCR (Windows.Media.Ocr) is only available on Windows".into()
-}
-
-/// Grayscale + scale HUD crops for reliable single-line OCR.
-fn preprocess_region(img: &RgbaImage) -> image::DynamicImage {
-    const MIN_WIDTH: u32 = 400;
-    scale_to_min_width(img, MIN_WIDTH)
-}
-
-/// Coin row: grayscale, upscale, binarize white-on-dark text.
-fn preprocess_coin_region(img: &RgbaImage) -> image::DynamicImage {
-    const MIN_WIDTH: u32 = 520;
-    let scaled = scale_to_min_width(img, MIN_WIDTH);
-    let gray = scaled.to_luma8();
-    let (w, h) = gray.dimensions();
-    let mut out = RgbaImage::new(w, h);
-    for (x, y, p) in gray.enumerate_pixels() {
-        let v = if p[0] >= 145 { 255u8 } else { 0u8 };
-        out.put_pixel(x, y, image::Rgba([v, v, v, 255]));
-    }
-    image::DynamicImage::ImageRgba8(out)
-}
-
-fn scale_to_min_width(img: &RgbaImage, min_width: u32) -> image::DynamicImage {
-    let scale = if img.width() < min_width {
-        min_width as f32 / img.width() as f32
-    } else {
-        1.0
-    };
-    let new_w = ((img.width() as f32) * scale).round().max(1.0) as u32;
-    let new_h = ((img.height() as f32) * scale).round().max(1.0) as u32;
-    let rgba = imageops::resize(img, new_w, new_h, imageops::FilterType::CatmullRom);
-    image::DynamicImage::ImageRgba8(rgba)
 }
 
 /// Downscale large emulator frames so OCR stays responsive.

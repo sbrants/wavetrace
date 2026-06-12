@@ -289,6 +289,20 @@ impl RunStateMachine {
         actions
     }
 
+    /// When scanning starts with no active run, open one immediately so snapshots can persist.
+    pub fn ensure_run_for_scanning(&mut self) -> Vec<Action> {
+        if self.run.is_some() {
+            return Vec::new();
+        }
+        let run_type = if self.tournament_seen {
+            RunType::Tournament
+        } else {
+            RunType::Farming
+        };
+        self.run = Some(new_active_run(run_type));
+        vec![Action::StartRun { run_type }]
+    }
+
     pub fn poll(&mut self, input: PollInput) -> Vec<Action> {
         let mut actions = Vec::new();
         self.last_mode = input.mode;
@@ -497,6 +511,27 @@ mod tests {
         assert_eq!(live.tier, Some(14));
         assert_eq!(live.wave, Some(1918));
         assert_eq!(live.coin_per_minute, Some(70.0e12));
+    }
+
+    #[test]
+    fn ensure_run_for_scanning_starts_when_idle() {
+        let mut sm = RunStateMachine::new();
+        let actions = sm.ensure_run_for_scanning();
+        assert_eq!(
+            actions,
+            vec![Action::StartRun {
+                run_type: RunType::Farming
+            }]
+        );
+        assert!(sm.live_state().run_active);
+    }
+
+    #[test]
+    fn ensure_run_for_scanning_noop_when_run_active() {
+        let mut sm = RunStateMachine::new();
+        sm.manual_new_run();
+        let actions = sm.ensure_run_for_scanning();
+        assert!(actions.is_empty());
     }
 
     #[test]

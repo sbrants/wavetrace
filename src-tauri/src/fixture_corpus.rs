@@ -60,7 +60,6 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[ignore = "requires Windows OCR"]
     fn expected_json_screenshots_have_ocr_pipeline() {
         let path = fixtures_dir().join("expected.json");
         let root: ExpectedRoot =
@@ -157,7 +156,6 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[ignore = "requires Windows OCR"]
     fn reanalyze_captured_frames_match_manifest() {
         let manifest = fixture_capture::load_manifest();
         let dir = fixture_capture::captured_dir();
