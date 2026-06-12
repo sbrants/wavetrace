@@ -1,0 +1,542 @@
+# The Tower Run Performance tracker
+
+## Overview
+
+Build a cross-platform performance tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
+
+**Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop only**.
+
+### Platform matrix
+
+
+| Phase | Platforms             | Capture target                                               |
+| ----- | --------------------- | ------------------------------------------------------------ |
+| 1     | Windows 10+           | Emulator or game window                                      |
+| 1b    | macOS, Linux          | Same as Phase 1                                              |
+| 2     | All Phase 1 platforms | Richer filters, run comparison, background capture (stretch) |
+| 3+    | Android, iOS          | Direct app capture (separate implementation)                 |
+
+
+### Core components
+
+- **Scanner** — screenshots + OCR, anchor-based field detection
+- **Database** — local SQLite for MVP; cloud backend in Phase 3
+- **UI** — embedded web UI (PWA-style) reading from local DB; cloud-hosted in Phase 3
+
+---
+
+## Game context
+
+The game being tracked is **The Tower**. It runs on Android and iOS; on desktop, most users play via an emulator.
+
+### Phase 1 capture (Windows)
+
+- Capture the **emulator or game window** (not the full desktop)
+- No fixed game resolution — the tracker locates fields using bundled anchor images
+
+### Window targeting
+
+- User selects the target window once during setup via a **window picker** (shows window title + process name)
+- **Auto-preselect:** if no target window is saved yet and a listed window title contains `"The Tower"`, preselect it in Settings (case-insensitive)
+- Optionally save a window title substring for reconnection after restart (e.g. `"The Tower"`, `"BlueStacks"`)
+- If multiple windows match, prefer the most recently focused window
+- Scanner polls while the target window exists; pauses with status **game window not found** if it disappears
+
+### Background capture
+
+- **MVP:** the game/emulator window must be visible (not minimized)
+- **Stretch (Phase 2+):** attempt capture when another window is on top; document per-OS limitations
+
+### Future: mobile (Phase 3+)
+
+- Track the game app directly on Android and iOS
+- Request screen-capture permissions; user can scan the whole screen or just the app
+- Separate implementation from desktop Tauri MVP (mobile capture APIs differ)
+
+---
+
+## Architecture
+
+### MVP (Phase 1)
+
+- **Single Tauri 2.x app:** Rust native shell handles screenshots + OCR; embedded webview serves the UI
+- **Frontend:** agent may choose React or Svelte
+- **Local SQLite** at `{app_data}/towerrun.db`
+- **Future:** same UI talks to a cloud API instead of local DB
+
+```mermaid
+flowchart LR
+  subgraph capture [Capture]
+    WinPicker[WindowPicker]
+    WindowFrame[WindowCapture]
+  end
+  subgraph detect [Detection]
+    Anchors[AnchorMatch]
+    OCR[OCREngine]
+    Parser[ValueParser]
+  end
+  subgraph logic [Logic]
+    StateMachine[RunStateMachine]
+  end
+  subgraph storage [Storage]
+    SQLite[(SQLite)]
+  end
+  subgraph ui [UI]
+    Dashboard[LiveDashboard]
+    History[RunHistory]
+  end
+  WinPicker --> WindowFrame --> Anchors --> OCR --> Parser --> StateMachine
+  StateMachine --> SQLite
+  SQLite --> Dashboard
+  SQLite --> History
+  History --> Dashboard
+```
+
+
+
+---
+
+## Scanner calibration
+
+1. User selects the target window via the window picker
+2. For each tracked field (Tier, Coin/Minute, Wave), the app locates values via bundled reference crop images (anchors) within the captured window
+  - **Note:** Tier and Wave share a single anchor image (`Wave_and_Tier.png`); see [Test fixtures](#test-fixtures)
+3. Config is persisted in the SQLite `settings` table; field anchors are bundled with the app; optional JSON import/export for backup and sharing
+4. On each poll: capture window → locate field via anchor → OCR value → parse
+
+**Poll interval:** 1 second (configurable via `poll_interval_ms`)
+
+### Tracked fields (initial set)
+
+
+| Field       | Display format                      | Parsed type                      |
+| ----------- | ----------------------------------- | -------------------------------- |
+| Coin/Minute | `456/min`, `1.23K/min`, `85.8T/min` | REAL (normalized base units/min) |
+| Wave        | `Wave 4321`                         | INTEGER                          |
+| Tier        | `Tier 12`                           | INTEGER                          |
+
+
+---
+
+## OCR and field detection
+
+### OCR engine
+
+- **Recommended for MVP:** Tesseract via `tesseract-rs`
+- Agent may choose an equivalent engine (e.g. platform-native OCR) if benchmarks meet the latency target (< 500ms per poll cycle)
+
+### Anchor matching
+
+- Use **template matching** (normalized cross-correlation) with bundled reference crop images within the captured window
+- Match confidence threshold: **0.85** (configurable)
+- If confidence is below threshold, fall back to manual bounding box coordinates from config
+- Value text is OCR'd from a crop offset from the anchor match (see `field_config` shape below)
+
+### Failure behavior
+
+- **Anchor miss:** log warning to `{app_data}/logs/`; skip that field for the poll cycle; do not write a snapshot if wave cannot be confirmed
+- **OCR parse failure:** log raw OCR text; keep last known good value for live display only (do not persist)
+
+---
+
+## Game mode edge cases
+
+The game UI changes layout and labels depending on mode. The scanner must classify each poll into a **game mode** before parsing fields. Full-screenshot fixtures and expected behavior live in `[fixtures/expected.json](fixtures/expected.json)`.
+
+```mermaid
+flowchart TD
+  poll[Poll game window] --> endRun{Retry or GAME STATS?}
+  endRun -->|yes| modeEnd[game_mode: end_of_run]
+  endRun -->|no| coinLine[OCR coin line]
+  coinLine --> hasMin{Contains /min?}
+  hasMin -->|yes| modeNormal[game_mode: normal or intro_sprint]
+  hasMin -->|no| modeTotal[game_mode: total_coin or tournament]
+  modeNormal --> parseAll[Parse tier wave coin_per_minute]
+  modeTotal --> parsePartial[Parse tier wave; skip coin_per_minute]
+  modeEnd --> finishRun[End run; no snapshot]
+```
+
+
+
+### Mode reference
+
+
+| `game_mode`    | Fixture                        | How to detect                                                                   | Tier / Wave                                       | Coin/Minute                                                                                   |
+| -------------- | ------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `normal`       | `expected_state_full_game.png` | Coin line matches `/min`; no end-run or tournament UI                           | Parse and record                                  | Parse and record                                                                              |
+| `total_coin`   | `total_coin.png`               | Coin line is a balance (e.g. `27.46q`) with **no** `/min` suffix                | Parse and record                                  | **Do not update** — keep last known value for display; store last known or `null` in snapshot |
+| `intro_sprint` | `intro_sprint.png`             | Intro Sprint card visible (anchor or OCR text `Intro Sprint` / sprint card art) | Parse and record                                  | Parse if `/min` present (often `0/min` during sprint)                                         |
+| `tournament`   | `tournament.png`               | Tier shows `Tier N+` and/or trophy icon next to tier                            | Parse tier as integer `N` (strip `+`); parse wave | **Do not update** if coin line has no `/min` (tournament often shows total coins)             |
+| `end_of_run`   | `end_of_run.png`               | OCR finds `Retry` or `GAME STATS` in the captured window                        | Do not snapshot                                   | Do not snapshot                                                                               |
+
+
+### Per-mode handling rules
+
+#### `normal`
+
+Standard farming run. All anchors match, coin display includes `/min`. Record snapshots on wave increment using all three fields.
+
+#### `total_coin`
+
+Some screens replace the coin **rate** with **total coin balance** in the same top-bar slot (e.g. `27.46q` instead of `3.48T/min`).
+
+- Detect: OCR coin text does **not** end with `/min` and matches a numeric + suffix pattern
+- Still parse **Tier** and **Wave** from the Wave/Tier panel
+- **Do not** overwrite `coin_per_minute` with the total balance
+- For snapshots: use the **last confirmed** `coin_per_minute` from a prior `normal` poll, or store `null` if none exists yet
+- **Warn the user:** show a visible warning on the live dashboard while this mode is active (see [Live dashboard](#live-dashboard))
+
+#### `intro_sprint`
+
+The Intro Sprint card speeds up early waves. Gameplay UI remains similar to normal mode.
+
+- Detect: Intro Sprint card visible (template-match sprint card anchor if added, or OCR `Intro Sprint`)
+- Track Tier, Wave, and coin/min as in normal mode
+- Coin rate may read `0/min` — that is valid; record `0` if confirmed
+- Sprint does **not** end a run and does **not** block snapshots
+
+#### `tournament`
+
+Tournament mode uses different tier labeling and often shows total coins instead of coin/min.
+
+- Detect: tier OCR matches `Tier (\d+)\+` or trophy icon adjacent to tier text
+- Parse tier as the integer before `+` (e.g. `Tier 17+` → `17`)
+- Wave parses normally (`Wave 865` → `865`)
+- Apply `total_coin` coin rules when `/min` is absent
+- Set `runs.run_type = 'tournament'` when the run starts (see [Recording rules](#recording-rules))
+
+#### `end_of_run`
+
+End-of-run summary screen (GAME STATS) with **RETRY** and **HOME** buttons.
+
+- Detect: OCR finds `Retry` (or `GAME STATS`) — takes priority over other modes
+- **End the current run** immediately (set `ended_at`, `final_wave`, `peak_tier`)
+- **Do not** write a snapshot for this frame
+- Wait for wave `1` on a subsequent `normal` screen before auto-starting the next run
+- Coin totals on this screen (e.g. `total coins: 31.82T`) are run summary stats — **not** coin/min; ignore for `coin_per_minute`
+
+### Coin line detection (shared rule)
+
+```
+if coin text matches /min suffix → parse as coin_per_minute (game_mode normal or intro_sprint)
+else if coin text is numeric + suffix only → total_coin behavior (do not update coin_per_minute)
+else → OCR failure; keep last known coin/min for display
+```
+
+### Adding new edge cases
+
+When adding a fixture to `fixtures/`:
+
+1. Save the screenshot or anchor PNG
+2. Add an entry to `fixtures/expected.json` with `game_mode`, `expect`, and `behavior`
+3. Document detection and handling in the table above
+
+---
+
+## Value parsing
+
+All parsed values are stored in normalized form in SQLite.
+
+### Coin/Minute
+
+- Stored as **REAL** in `coin_per_minute` (base units per minute, no suffix)
+- Parsing steps:
+  1. Strip the `/min` suffix
+  2. Extract numeric portion and unit suffix letter(s)
+  3. Multiply numeric value by `10 ^ (suffix_index × 3)` using the suffix table below
+
+**Suffix exponent table** (ordered array — index × 3 = exponent):
+
+
+| Index | Suffix | Multiplier |
+| ----- | ------ | ---------- |
+| 0     | (none) | 1          |
+| 1     | K      | 10³        |
+| 2     | M      | 10⁶        |
+| 3     | B      | 10⁹        |
+| 4     | T      | 10¹²       |
+| 5     | q      | 10¹⁵       |
+| 6     | Q      | 10¹⁸       |
+| 7     | s      | 10²¹       |
+| 8     | S      | 10²⁴       |
+| 9     | O      | 10²⁷       |
+| 10    | N      | 10³⁰       |
+| 11    | D      | 10³³       |
+| 12    | aa     | 10³⁶       |
+| 13    | ab     | 10³⁹       |
+| 14    | ac     | 10⁴²       |
+
+
+For suffixes beyond `ac`, continue the pattern: each subsequent two-letter suffix increments the index by 1.
+
+**Examples:**
+
+
+| Raw OCR text | Stored `coin_per_minute` |
+| ------------ | ------------------------ |
+| `456/min`    | `456`                    |
+| `1.23K/min`  | `1230`                   |
+| `85.8T/min`  | `85800000000000`         |
+
+
+### Wave
+
+- Strip optional prefix `Wave` ; parse remaining text as integer
+
+### Tier
+
+- Strip optional prefix `Tier` ; parse remaining text as integer
+- Tournament variant: `Tier 17+` → strip trailing `+`; parse `17`
+
+---
+
+## Recording rules
+
+### Run lifecycle
+
+- **New run starts** when:
+  - (a) first `wave = 1` confirmed after app launch or after the previous run ended, OR
+  - (b) user clicks **New Run**
+- **Run type** is set once when the run starts:
+  - `tournament` if tournament mode is detected (`Tier N+` or trophy icon) on the first confirmed poll of the run
+  - `normal` otherwise
+  - `run_type` does not change mid-run
+- **Snapshot saved** when: confirmed wave increases by exactly 1 vs the last saved wave for the current run
+- Each snapshot stores: `run_id`, `wave`, `tier`, `coin_per_minute`, `recorded_at` (UTC ISO-8601)
+- **Run ends** when: `"Retry"` text is detected OR wave drops/resets to 1 (whichever comes first)
+- After run ends: persist run (`ended_at`, `final_wave`, `peak_tier`, `run_type`); wait for `wave = 1` before auto-starting the next run
+
+### OCR stability (debounce)
+
+- Require **2 consecutive poll cycles** with the same parsed value before accepting a wave or tier change
+- Ignore transient OCR misreads (e.g. 4321 → 432 → 4322): only accept monotonic wave +1
+
+### Retry detection
+
+- Search for the text `"Retry"` in the captured window via OCR
+- On Retry: save the current run immediately; do **not** save a snapshot for the Retry frame
+- Wait until wave starts at 1 to create a new run
+
+---
+
+## Data model (SQLite MVP)
+
+Database file: `{app_data}/towerrun.db`
+
+### runs
+
+
+| column     | type    | notes                                                 |
+| ---------- | ------- | ----------------------------------------------------- |
+| id         | TEXT PK | UUID                                                  |
+| started_at | TEXT    | UTC ISO-8601                                          |
+| ended_at   | TEXT    | nullable                                              |
+| run_type   | TEXT    | `normal` or `tournament`; set at run start, immutable |
+| peak_tier  | INTEGER | max tier seen during run                              |
+| final_wave | INTEGER | last wave before run ended                            |
+
+
+`run_type` distinguishes runs that share the same tier number — e.g. a farming run at Tier 17 (`normal`) vs a tournament run showing `Tier 17+` (`tournament`).
+
+### snapshots
+
+
+| column          | type    | notes                     |
+| --------------- | ------- | ------------------------- |
+| id              | TEXT PK | UUID                      |
+| run_id          | TEXT FK |                           |
+| wave            | INTEGER |                           |
+| tier            | INTEGER |                           |
+| coin_per_minute | REAL    | normalized base units/min |
+| recorded_at     | TEXT    | UTC ISO-8601              |
+
+
+### settings
+
+
+| key              | type    | notes                                              |
+| ---------------- | ------- | -------------------------------------------------- |
+| field_config     | JSON    | anchor images, offsets, parse rules (see below)    |
+| poll_interval_ms | INTEGER | default 1000                                       |
+| target_window    | JSON    | `{title_substring, process_name}` for reconnection |
+
+
+### field_config JSON shape
+
+```json
+{
+  "fields": [
+    {
+      "id": "tier",
+      "label": "Tier",
+      "anchor_image": "fixtures/Wave_and_Tier.png",
+      "value_offset": { "x": 0, "y": 0, "w": 80, "h": 24 },
+      "parse": { "type": "integer", "prefix": "Tier " }
+    },
+    {
+      "id": "wave",
+      "label": "Wave",
+      "anchor_image": "fixtures/Wave_and_Tier.png",
+      "value_offset": { "x": 0, "y": 28, "w": 100, "h": 32 },
+      "parse": { "type": "integer", "prefix": "Wave " }
+    },
+    {
+      "id": "coin_per_minute",
+      "label": "Coin/Minute",
+      "anchor_image": "fixtures/Coin_per_minute.png",
+      "value_offset": { "x": 40, "y": 0, "w": 80, "h": 24 },
+      "parse": { "type": "coin_per_minute" }
+    }
+  ]
+}
+```
+
+`value_offset` coordinates above are illustrative — calibrate exact offsets during setup. When two fields share an anchor image, template matching runs once per unique `anchor_image`; each field OCRs its own `value_offset` relative to the match origin.
+
+Import/export of this JSON is used for backup and sharing configs between machines.
+
+---
+
+## UI (MVP screens)
+
+### Live dashboard
+
+- Current run: tier, coin/min, wave (live-updating)
+- Run type badge when `run_type = tournament`
+- Line chart: X = wave, Y = coin/minute (points from snapshots in current run)
+- Status: scanning / paused / game window not found
+- **New Run** button to manually start a fresh run
+
+#### User warnings
+
+When `game_mode = total_coin`, show a **prominent warning banner** on the live dashboard until the mode clears:
+
+- **Message:** e.g. "Coin rate unavailable — game is showing total coins, not coins/min. Snapshots will not update coin/min until the rate display returns."
+- **Style:** visually distinct (warning color); non-blocking (does not pause scanning)
+- **Coin/min display:** show last known coin/min (grayed or labeled "last known") — do not display the total coin balance as coin/min
+- **Clear warning** when a subsequent poll detects `/min` again (`game_mode` returns to `normal` or `intro_sprint`)
+
+### Run history
+
+- Table: started_at, duration, run_type, peak_tier, final_wave, avg coin/min
+- Sort by: date, final_wave, peak_tier, avg coin/min
+- Filter by: date range, min wave, min tier, run_type (`normal` / `tournament` / all)
+- Select a run to view its chart
+
+### Settings
+
+- Select target window (window picker); auto-preselect a window whose title contains `"The Tower"` when none is saved yet
+- Preview captured window
+- Import/export field calibration config (JSON)
+- Export runs to CSV (includes `run_type`)
+
+---
+
+## Non-functional requirements
+
+- CPU usage while scanning: target < 5% on typical hardware
+- OCR latency: < 500ms per poll cycle
+- No network required for MVP
+- App data stored in OS-standard app data directory
+- Logs written to `{app_data}/logs/` for debugging OCR failures
+
+---
+
+## Phases
+
+### Phase 1 — MVP (build this first)
+
+- Tauri app on **Windows 10+**, local SQLite, 3 fields, wave-triggered snapshots
+- Live dashboard + run history table + basic chart
+- Window picker + bundled field anchors
+- CSV export
+
+### Phase 1b
+
+- macOS and Linux support (same feature set as Phase 1)
+
+### Phase 2
+
+- Richer filters, run comparison overlay on chart
+- Background capture when game is occluded (stretch; document per-OS limits)
+
+### Phase 3
+
+- Cloud sync backend, auth, multi-device
+- Android and iOS direct app capture
+
+---
+
+## Acceptance criteria (Phase 1)
+
+- User can select a target window and save it
+- User can calibrate Tier, Coin/Minute, and Wave from reference images
+- App detects wave increase and writes a snapshot with UTC timestamp
+- Tournament runs are stored with `run_type = tournament` and filterable in run history
+- App detects run end via Retry text or wave reset; auto-starts new run at wave 1
+- Dashboard shows live values and coin/min vs wave chart for the current run
+- User can browse past runs and open a run's chart
+- User can export runs to CSV
+- OCR/parser tests pass against all entries in `fixtures/expected.json`
+- Edge-case fixtures (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
+- Live dashboard shows a warning banner when `game_mode = total_coin`
+- Works on Windows 10+ (macOS/Linux in Phase 1b; mobile in Phase 3+)
+
+---
+
+## Test fixtures
+
+The `fixtures/` folder contains anchor crops and full screenshots for OCR calibration, game-mode detection, and unit tests. `**fixtures/expected.json`** is the source of truth for expected parse results and per-frame behavior.
+
+Agents should:
+
+1. Load `expected.json` and run parser tests against every fixture
+2. Implement game-mode detection per [Game mode edge cases](#game-mode-edge-cases)
+3. Integrate live capture only after fixture tests pass
+
+### Fixture inventory
+
+
+| File                           | Kind       | `game_mode`    | Purpose                              |
+| ------------------------------ | ---------- | -------------- | ------------------------------------ |
+| `Wave_and_Tier.png`            | anchor     | `normal`       | Shared Tier + Wave panel anchor      |
+| `Coin_per_minute.png`          | anchor     | `normal`       | Coin rate (`/min`) anchor            |
+| `expected_state_full_game.png` | screenshot | `normal`       | Baseline — all fields available      |
+| `total_coin.png`               | screenshot | `total_coin`   | Total coin balance instead of `/min` |
+| `intro_sprint.png`             | screenshot | `intro_sprint` | Intro Sprint card active             |
+| `tournament.png`               | screenshot | `tournament`   | `Tier 17+`; total coins in top bar   |
+| `end_of_run.png`               | screenshot | `end_of_run`   | GAME STATS + RETRY; ends run         |
+
+
+### expected.json schema
+
+Each entry in `fixtures/expected.json` contains:
+
+
+| Field             | Description                                                                      |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `file`            | PNG filename in `fixtures/`                                                      |
+| `kind`            | `anchor` or `screenshot`                                                         |
+| `game_mode`       | Mode classifier output (see edge-case section)                                   |
+| `scanning`        | `true` if scanner should actively parse this frame                               |
+| `expect`          | Expected `tier`, `wave`, `coin_per_minute_raw`, `coin_per_minute` (normalized)   |
+| `expect_run_type` | Expected `runs.run_type` when this frame starts a run (`normal` or `tournament`) |
+| `behavior`        | `record_snapshot`, `end_run`, `update_coin_per_minute`, `warn_user` flags        |
+| `notes`           | Human-readable context                                                           |
+
+
+### Layout notes
+
+- **Wave and Tier** share one anchor (`Wave_and_Tier.png`); separate `value_offset` per field
+- **Coin/Minute** anchor matches the `/min` rate line, not total coin balance
+- Full screenshots are used for integration tests (mode detection + multi-field OCR)
+- When adding fixtures, always update `expected.json` and the edge-case table in Goal.md
+
+---
+
+## Open questions
+
+- Preferred UI framework: React or Svelte (agent may choose)
+- Chart library: unconstrained
+- Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
+
