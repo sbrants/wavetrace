@@ -1,0 +1,210 @@
+//! Scanner thread: capture -> OCR -> classify -> state machine -> DB + events.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+use crate::state_machine::{Action, LiveState, RunStateMachine};
+use crate::{capture, classify, db, fields, settings};
+
+#[derive(Clone, Serialize)]
+pub struct ScannerEvent {
+    pub status: String, // scanning | window_not_found | ocr_error | stopped
+    pub live: Option<LiveState>,
+    pub current_run_id: Option<String>,
+}
+
+pub struct Scanner {
+    running: Arc<AtomicBool>,
+    pub machine: Arc<Mutex<RunStateMachine>>,
+    pub current_run_id: Arc<Mutex<Option<String>>>,
+    app: Arc<Mutex<Option<AppHandle>>>,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            machine: Arc::new(Mutex::new(RunStateMachine::new())),
+            current_run_id: Arc::new(Mutex::new(None)),
+            app: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl Scanner {
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Ok(guard) = self.app.lock() {
+            if let Some(app) = guard.as_ref() {
+                emit(app, "stopped", &self.machine, &self.current_run_id);
+            }
+        }
+    }
+
+    pub fn start(&self, app: AppHandle) -> Result<(), String> {
+        if self.is_running() {
+            return Ok(());
+        }
+        let conn = db::open().map_err(|e| e.to_string())?;
+        let cfg = settings::load(&conn);
+        let target = settings::resolve_target_window(&conn)?;
+
+        self.running.store(true, Ordering::SeqCst);
+        if let Ok(mut guard) = self.app.lock() {
+            *guard = Some(app.clone());
+        }
+        let running = self.running.clone();
+        let machine = self.machine.clone();
+        let current_run_id = self.current_run_id.clone();
+        let app_slot = self.app.clone();
+
+        std::thread::spawn(move || {
+            let log_path = db::app_data_dir().join("logs");
+            std::fs::create_dir_all(&log_path).ok();
+            emit(&app, "starting", &machine, &current_run_id);
+
+            while running.load(Ordering::SeqCst) {
+                let tick = Instant::now();
+
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
+                let frame = capture::capture_by_title(&target.title_substring);
+                let status = match frame {
+                    None => {
+                        emit(&app, "window_not_found", &machine, &current_run_id);
+                        sleep_remainder(tick, cfg.poll_interval_ms);
+                        continue;
+                    }
+                    Some(full) => {
+                        let should_continue = || running.load(Ordering::SeqCst);
+                        let fields = fields::ocr_all_fields_cancellable(&full, &should_continue);
+                        if !should_continue() {
+                            break;
+                        }
+                        let input = classify::classify(
+                            &fields.mode_lines,
+                            Some(&fields.coin_lines),
+                            Some(&fields.tier_wave_lines),
+                        );
+                        log_line(
+                            &log_path,
+                            &format!(
+                                "poll {}x{} tier={:?} wave={:?} coin={:?} tier_ocr={:?} coin_ocr={:?}",
+                                full.width(),
+                                full.height(),
+                                input.tier,
+                                input.wave,
+                                input.coin,
+                                fields.tier_wave_lines,
+                                fields.coin_lines,
+                            ),
+                        );
+                        let actions = machine.lock().unwrap().poll(input);
+                        if !actions.is_empty() {
+                            apply_actions(&conn, &current_run_id, &actions, &log_path);
+                        }
+                        "scanning"
+                    }
+                };
+                emit(&app, status, &machine, &current_run_id);
+                sleep_remainder(tick, cfg.poll_interval_ms);
+            }
+            emit(&app, "stopped", &machine, &current_run_id);
+            if let Ok(mut guard) = app_slot.lock() {
+                *guard = None;
+            }
+        });
+        Ok(())
+    }
+}
+
+pub fn apply_actions(
+    conn: &rusqlite::Connection,
+    current_run_id: &Arc<Mutex<Option<String>>>,
+    actions: &[Action],
+    log_path: &std::path::Path,
+) {
+    for action in actions {
+        let result = match action {
+            Action::StartRun { run_type } => db::start_run(conn, run_type.as_str())
+                .map(|id| *current_run_id.lock().unwrap() = Some(id)),
+            Action::Snapshot {
+                wave,
+                tier,
+                coin_per_minute,
+            } => {
+                let id = current_run_id.lock().unwrap().clone();
+                match id {
+                    Some(id) => db::insert_snapshot(
+                        conn,
+                        &id,
+                        *wave as i64,
+                        tier.map(|t| t as i64),
+                        *coin_per_minute,
+                    ),
+                    None => Ok(()),
+                }
+            }
+            Action::EndRun {
+                final_wave,
+                peak_tier,
+            } => {
+                let id = current_run_id.lock().unwrap().take();
+                match id {
+                    Some(id) => db::end_run(
+                        conn,
+                        &id,
+                        Some(*final_wave as i64),
+                        peak_tier.map(|t| t as i64),
+                    ),
+                    None => Ok(()),
+                }
+            }
+        };
+        if let Err(e) = result {
+            log_line(log_path, &format!("DB error applying {action:?}: {e}"));
+        }
+    }
+}
+
+fn emit(
+    app: &AppHandle,
+    status: &str,
+    machine: &Arc<Mutex<RunStateMachine>>,
+    current_run_id: &Arc<Mutex<Option<String>>>,
+) {
+    let event = ScannerEvent {
+        status: status.to_string(),
+        live: Some(machine.lock().unwrap().live_state()),
+        current_run_id: current_run_id.lock().unwrap().clone(),
+    };
+    app.emit("scanner-update", event).ok();
+}
+
+fn sleep_remainder(tick: Instant, interval_ms: u64) {
+    let elapsed = tick.elapsed();
+    let interval = Duration::from_millis(interval_ms);
+    if elapsed < interval {
+        std::thread::sleep(interval - elapsed);
+    }
+}
+
+fn log_line(dir: &std::path::Path, msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("scanner.log"))
+    {
+        writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339()).ok();
+    }
+}

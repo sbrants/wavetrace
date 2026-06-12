@@ -1,0 +1,27 @@
+[package]
+name = "towerrun"
+version = "0.1.0"
+description = "The Tower Run Performance tracker"
+edition = "2021"
+
+[lib]
+name = "towerrun_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+chrono = "0.4.45"
+dirs = "6.0.0"
+image = "0.25.10"
+imageproc = "0.27.0"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tauri = { version = "2", features = ["tray-icon"] }
+uuid = { version = "1.23.3", features = ["v4"] }
+windows = { version = "0.62.2", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Globalization", "Foundation", "Foundation_Collections"] }
+windows-future = "0.3.2"
+xcap = { version = "0.9.6", features = ["wgc"] }

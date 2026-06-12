@@ -1,0 +1,347 @@
+//! SQLite layer per Goal.md "Data model (SQLite MVP)".
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use chrono::Utc;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+pub struct Db(pub Mutex<Connection>);
+
+#[derive(Debug, Serialize)]
+pub struct RunRow {
+    pub id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub run_type: String,
+    pub peak_tier: Option<i64>,
+    pub final_wave: Option<i64>,
+    pub avg_coin_per_minute: Option<f64>,
+    pub snapshot_count: i64,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SnapshotRow {
+    pub wave: i64,
+    pub tier: Option<i64>,
+    pub coin_per_minute: Option<f64>,
+    pub recorded_at: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RunFilter {
+    pub run_type: Option<String>,
+    pub min_wave: Option<i64>,
+    pub min_tier: Option<i64>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+}
+
+pub fn app_data_dir() -> PathBuf {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("towerrun");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
+pub fn open() -> rusqlite::Result<Connection> {
+    let conn = Connection::open(app_data_dir().join("towerrun.db"))?;
+    migrate(&conn)?;
+    Ok(conn)
+}
+
+#[cfg(test)]
+pub fn open_in_memory() -> rusqlite::Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    migrate(&conn)?;
+    Ok(conn)
+}
+
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS runs (
+            id          TEXT PRIMARY KEY,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            run_type    TEXT NOT NULL DEFAULT 'normal',
+            peak_tier   INTEGER,
+            final_wave  INTEGER,
+            comment     TEXT
+        );
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id              TEXT PRIMARY KEY,
+            run_id          TEXT NOT NULL REFERENCES runs(id),
+            wave            INTEGER NOT NULL,
+            tier            INTEGER,
+            coin_per_minute REAL,
+            recorded_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_run ON snapshots(run_id);
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );",
+    )?;
+    let _ = conn.execute("ALTER TABLE runs ADD COLUMN comment TEXT", []);
+    Ok(())
+}
+
+pub fn start_run(conn: &Connection, run_type: &str) -> rusqlite::Result<String> {
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO runs (id, started_at, run_type) VALUES (?1, ?2, ?3)",
+        params![id, Utc::now().to_rfc3339(), run_type],
+    )?;
+    Ok(id)
+}
+
+pub fn end_run(
+    conn: &Connection,
+    run_id: &str,
+    final_wave: Option<i64>,
+    peak_tier: Option<i64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE runs SET ended_at = ?2, final_wave = ?3, peak_tier = ?4 WHERE id = ?1",
+        params![run_id, Utc::now().to_rfc3339(), final_wave, peak_tier],
+    )?;
+    Ok(())
+}
+
+pub fn insert_snapshot(
+    conn: &Connection,
+    run_id: &str,
+    wave: i64,
+    tier: Option<i64>,
+    coin_per_minute: Option<f64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            Uuid::new_v4().to_string(),
+            run_id,
+            wave,
+            tier,
+            coin_per_minute,
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<RunRow>> {
+    let mut sql = String::from(
+        "SELECT r.id, r.started_at, r.ended_at, r.run_type, r.peak_tier, r.final_wave,
+                (SELECT AVG(coin_per_minute) FROM snapshots s WHERE s.run_id = r.id),
+                (SELECT COUNT(*) FROM snapshots s WHERE s.run_id = r.id),
+                r.comment
+         FROM runs r WHERE 1=1",
+    );
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(rt) = &filter.run_type {
+        sql.push_str(" AND r.run_type = ?");
+        args.push(Box::new(rt.clone()));
+    }
+    if let Some(w) = filter.min_wave {
+        sql.push_str(" AND r.final_wave >= ?");
+        args.push(Box::new(w));
+    }
+    if let Some(t) = filter.min_tier {
+        sql.push_str(" AND r.peak_tier >= ?");
+        args.push(Box::new(t));
+    }
+    if let Some(d) = &filter.date_from {
+        sql.push_str(" AND r.started_at >= ?");
+        args.push(Box::new(d.clone()));
+    }
+    if let Some(d) = &filter.date_to {
+        sql.push_str(" AND r.started_at <= ?");
+        args.push(Box::new(d.clone()));
+    }
+    sql.push_str(" ORDER BY r.started_at DESC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |row| {
+        Ok(RunRow {
+            id: row.get(0)?,
+            started_at: row.get(1)?,
+            ended_at: row.get(2)?,
+            run_type: row.get(3)?,
+            peak_tier: row.get(4)?,
+            final_wave: row.get(5)?,
+            avg_coin_per_minute: row.get(6)?,
+            snapshot_count: row.get(7)?,
+            comment: row.get(8)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn set_run_comment(
+    conn: &Connection,
+    run_id: &str,
+    comment: &str,
+) -> rusqlite::Result<()> {
+    let trimmed = comment.trim();
+    let value: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+    conn.execute(
+        "UPDATE runs SET comment = ?2 WHERE id = ?1",
+        params![run_id, value],
+    )?;
+    Ok(())
+}
+
+pub fn delete_runs(conn: &Connection, run_ids: &[String]) -> rusqlite::Result<usize> {
+    let mut deleted = 0usize;
+    for id in run_ids {
+        conn.execute("DELETE FROM snapshots WHERE run_id = ?1", params![id])?;
+        let n = conn.execute("DELETE FROM runs WHERE id = ?1", params![id])?;
+        deleted += n;
+    }
+    Ok(deleted)
+}
+
+pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<SnapshotRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT wave, tier, coin_per_minute, recorded_at
+         FROM snapshots WHERE run_id = ?1 ORDER BY wave ASC",
+    )?;
+    let rows = stmt.query_map(params![run_id], |row| {
+        Ok(SnapshotRow {
+            wave: row.get(0)?,
+            tier: row.get(1)?,
+            coin_per_minute: row.get(2)?,
+            recorded_at: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn get_setting(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+/// CSV export of runs (includes run_type per Goal.md Settings UI).
+pub fn export_runs_csv(conn: &Connection) -> rusqlite::Result<String> {
+    let runs = list_runs(conn, &RunFilter::default())?;
+    let mut out = String::from(
+        "id,started_at,ended_at,run_type,peak_tier,final_wave,avg_coin_per_minute,snapshot_count,comment\n",
+    );
+    for r in runs {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{}\n",
+            r.id,
+            r.started_at,
+            r.ended_at.unwrap_or_default(),
+            r.run_type,
+            r.peak_tier.map(|v| v.to_string()).unwrap_or_default(),
+            r.final_wave.map(|v| v.to_string()).unwrap_or_default(),
+            r.avg_coin_per_minute.map(|v| v.to_string()).unwrap_or_default(),
+            r.snapshot_count,
+            csv_escape(r.comment.as_deref().unwrap_or_default()),
+        ));
+    }
+    Ok(out)
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_lifecycle_roundtrip() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "tournament").unwrap();
+        insert_snapshot(&conn, &id, 1, Some(17), None).unwrap();
+        insert_snapshot(&conn, &id, 2, Some(17), Some(500.0)).unwrap();
+        end_run(&conn, &id, Some(2), Some(17)).unwrap();
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_type, "tournament");
+        assert_eq!(runs[0].final_wave, Some(2));
+        assert_eq!(runs[0].snapshot_count, 2);
+
+        let filtered = list_runs(
+            &conn,
+            &RunFilter {
+                run_type: Some("normal".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(filtered.is_empty());
+
+        let snaps = run_snapshots(&conn, &id).unwrap();
+        assert_eq!(snaps.len(), 2);
+        assert_eq!(snaps[1].coin_per_minute, Some(500.0));
+
+        let csv = export_runs_csv(&conn).unwrap();
+        assert!(csv.contains("tournament"));
+    }
+
+    #[test]
+    fn delete_runs_removes_snapshots() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "normal").unwrap();
+        insert_snapshot(&conn, &id, 1, Some(10), Some(100.0)).unwrap();
+        delete_runs(&conn, &[id.clone()]).unwrap();
+        assert!(list_runs(&conn, &RunFilter::default()).unwrap().is_empty());
+        assert!(run_snapshots(&conn, &id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_comment_roundtrip() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "normal").unwrap();
+        set_run_comment(&conn, &id, "  good run  ").unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].comment.as_deref(), Some("good run"));
+        set_run_comment(&conn, &id, "").unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].comment, None);
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let conn = open_in_memory().unwrap();
+        assert_eq!(get_setting(&conn, "poll_interval_ms").unwrap(), None);
+        set_setting(&conn, "poll_interval_ms", "1000").unwrap();
+        set_setting(&conn, "poll_interval_ms", "500").unwrap();
+        assert_eq!(
+            get_setting(&conn, "poll_interval_ms").unwrap(),
+            Some("500".into())
+        );
+    }
+}
