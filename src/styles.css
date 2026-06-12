@@ -171,6 +171,19 @@ main {
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.date-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.date-filter input[type="date"] {
+  min-width: 140px;
 }
 
 .muted {

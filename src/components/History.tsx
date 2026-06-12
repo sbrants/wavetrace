@@ -30,6 +30,8 @@ const PAGE_SIZES = [5, 10, 25, 50, 100] as const;
 export default function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [filter, setFilter] = useState<RunFilter>({});
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("started_at");
   const [sortAsc, setSortAsc] = useState(false);
   const [selected, setSelected] = useState<RunRow | null>(null);
@@ -45,15 +47,30 @@ export default function History() {
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
 
+  const listFilter = useCallback((): RunFilter => {
+    const next: RunFilter = { ...filter };
+    if (dateFrom) {
+      next.date_from = localDateToIsoStart(dateFrom);
+    } else {
+      delete next.date_from;
+    }
+    if (dateTo) {
+      next.date_to = localDateToIsoEnd(dateTo);
+    } else {
+      delete next.date_to;
+    }
+    return next;
+  }, [filter, dateFrom, dateTo]);
+
   const reload = useCallback(() => {
-    api.listRuns(filter).then(setRuns).catch(() => {});
-  }, [filter]);
+    api.listRuns(listFilter()).then(setRuns).catch(() => {});
+  }, [listFilter]);
 
   useEffect(reload, [reload]);
 
   useEffect(() => {
     setPage(1);
-  }, [filter, pageSize]);
+  }, [filter, dateFrom, dateTo, pageSize]);
 
   const updateComment = useCallback(async (runId: string, value: string) => {
     setRuns((prev) =>
@@ -185,7 +202,7 @@ export default function History() {
     try {
       const newId = await api.combineRuns([...checked]);
       setChecked(new Set());
-      const updated = await api.listRuns(filter);
+      const updated = await api.listRuns(listFilter());
       setRuns(updated);
       const combined = updated.find((r) => r.id === newId) ?? null;
       setSelected(combined);
@@ -242,6 +259,37 @@ export default function History() {
             })
           }
         />
+        <label className="date-filter">
+          From
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+            aria-label="Filter runs from date"
+          />
+        </label>
+        <label className="date-filter">
+          To
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+            aria-label="Filter runs to date"
+          />
+        </label>
+        {(dateFrom || dateTo) && (
+          <button
+            type="button"
+            onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          >
+            Clear dates
+          </button>
+        )}
         <button onClick={reload}>Refresh</button>
         <button onClick={exportCsv}>Export CSV</button>
         <button
@@ -542,4 +590,14 @@ function buildCompareChartData(
       });
       return row;
     });
+}
+
+/** Local calendar date (YYYY-MM-DD) → UTC ISO start of that local day. */
+function localDateToIsoStart(date: string): string {
+  return new Date(`${date}T00:00:00`).toISOString();
+}
+
+/** Local calendar date (YYYY-MM-DD) → UTC ISO end of that local day. */
+function localDateToIsoEnd(date: string): string {
+  return new Date(`${date}T23:59:59.999`).toISOString();
 }

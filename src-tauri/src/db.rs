@@ -546,6 +546,50 @@ mod tests {
     }
 
     #[test]
+    fn list_runs_filters_by_date_range() {
+        let conn = open_in_memory().unwrap();
+        let old = start_run(&conn, "farming").unwrap();
+        conn.execute(
+            "UPDATE runs SET started_at = '2026-01-15T12:00:00Z' WHERE id = ?1",
+            params![old],
+        )
+        .unwrap();
+        end_run(&conn, &old, Some(10), Some(5)).unwrap();
+
+        let recent = start_run(&conn, "farming").unwrap();
+        conn.execute(
+            "UPDATE runs SET started_at = '2026-06-10T08:30:00Z' WHERE id = ?1",
+            params![recent],
+        )
+        .unwrap();
+        end_run(&conn, &recent, Some(20), Some(8)).unwrap();
+
+        let june = list_runs(
+            &conn,
+            &RunFilter {
+                date_from: Some("2026-06-01T00:00:00Z".into()),
+                date_to: Some("2026-06-30T23:59:59Z".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(june.len(), 1);
+        assert_eq!(june[0].id, recent);
+
+        let jan = list_runs(
+            &conn,
+            &RunFilter {
+                date_from: Some("2026-01-01T00:00:00Z".into()),
+                date_to: Some("2026-01-31T23:59:59Z".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(jan.len(), 1);
+        assert_eq!(jan[0].id, old);
+    }
+
+    #[test]
     fn settings_roundtrip() {
         let conn = open_in_memory().unwrap();
         assert_eq!(get_setting(&conn, "poll_interval_ms").unwrap(), None);

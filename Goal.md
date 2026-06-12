@@ -13,7 +13,7 @@ Build a cross-platform performance tracker for the idle game **The Tower**. The 
 | ----- | --------------------- | ------------------------------------------------------------ |
 | 1     | Windows 10+           | Emulator or game window                                      |
 | 1b    | macOS, Linux          | Same as Phase 1                                              |
-| 2     | All Phase 1 platforms | Date-range filters, background capture (stretch); run comparison overlay **done** |
+| 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done** |
 | 3+    | Android, iOS          | Direct app capture (separate implementation)                 |
 
 
@@ -383,7 +383,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 - Table: started_at, duration, run_type, peak_tier, final_wave, avg coin/min, comment
 - Sort by: date, final_wave, peak_tier, avg coin/min
-- Filter by: min wave, min tier, run_type (`farming` / `tournament` / all); date range in API, UI pending
+- Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
 - Combine selected runs (strictly increasing waves); delete selected; export CSV
@@ -422,10 +422,9 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ### Phase 2
 
-- Date-range filters in History UI
 - Background capture when game is occluded (stretch; document per-OS limits)
 
-**Already shipped (from Phase 2 list):** run comparison overlay on chart, history pagination, chart screenshot copy/download
+**Already shipped (from Phase 2 list):** run comparison overlay on chart, history pagination, chart screenshot copy/download, date-range filters
 
 ### Phase 3
 
