@@ -22,6 +22,8 @@ pub struct Scanner {
     pub machine: Arc<Mutex<RunStateMachine>>,
     pub current_run_id: Arc<Mutex<Option<String>>>,
     app: Arc<Mutex<Option<AppHandle>>>,
+    /// Last emitted live state — UI reads this without waiting on the scanner mutex.
+    cached_live: Arc<Mutex<LiveState>>,
 }
 
 impl Default for Scanner {
@@ -31,11 +33,16 @@ impl Default for Scanner {
             machine: Arc::new(Mutex::new(RunStateMachine::new())),
             current_run_id: Arc::new(Mutex::new(None)),
             app: Arc::new(Mutex::new(None)),
+            cached_live: Arc::new(Mutex::new(LiveState::idle())),
         }
     }
 }
 
 impl Scanner {
+    pub fn cached_live_state(&self) -> LiveState {
+        self.cached_live.lock().unwrap().clone()
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -44,7 +51,13 @@ impl Scanner {
         self.running.store(false, Ordering::SeqCst);
         if let Ok(guard) = self.app.lock() {
             if let Some(app) = guard.as_ref() {
-                emit(app, "stopped", &self.machine, &self.current_run_id);
+                emit(
+                    app,
+                    "stopped",
+                    &self.machine,
+                    &self.current_run_id,
+                    &self.cached_live,
+                );
             }
         }
     }
@@ -65,11 +78,18 @@ impl Scanner {
         let machine = self.machine.clone();
         let current_run_id = self.current_run_id.clone();
         let app_slot = self.app.clone();
+        let cached_live = self.cached_live.clone();
 
         std::thread::spawn(move || {
             let log_path = db::app_data_dir().join("logs");
             std::fs::create_dir_all(&log_path).ok();
-            emit(&app, "starting", &machine, &current_run_id);
+            emit(
+                &app,
+                "starting",
+                &machine,
+                &current_run_id,
+                &cached_live,
+            );
 
             while running.load(Ordering::SeqCst) {
                 let tick = Instant::now();
@@ -80,32 +100,36 @@ impl Scanner {
                 let frame = capture::capture_by_title(&target.title_substring);
                 let status = match frame {
                     None => {
-                        emit(&app, "window_not_found", &machine, &current_run_id);
+                        emit(
+                            &app,
+                            "window_not_found",
+                            &machine,
+                            &current_run_id,
+                            &cached_live,
+                        );
                         sleep_remainder(tick, cfg.poll_interval_ms);
                         continue;
                     }
                     Some(full) => {
                         let should_continue = || running.load(Ordering::SeqCst);
+                        let ocr_started = Instant::now();
                         let fields = fields::ocr_all_fields_cancellable(&full, &should_continue);
+                        let ocr_ms = ocr_started.elapsed().as_millis();
                         if !should_continue() {
                             break;
                         }
-                        let input = classify::classify(
-                            &fields.mode_lines,
-                            Some(&fields.coin_lines),
-                            Some(&fields.tier_wave_lines),
-                        );
+                        let input = classify::classify(&fields.all_lines);
                         log_line(
                             &log_path,
                             &format!(
-                                "poll {}x{} tier={:?} wave={:?} coin={:?} tier_ocr={:?} coin_ocr={:?}",
+                                "poll {}x{} ocr_ms={} tier={:?} wave={:?} coin={:?} lines={:?}",
                                 full.width(),
                                 full.height(),
+                                ocr_ms,
                                 input.tier,
                                 input.wave,
                                 input.coin,
-                                fields.tier_wave_lines,
-                                fields.coin_lines,
+                                fields.all_lines,
                             ),
                         );
                         let actions = machine.lock().unwrap().poll(input);
@@ -115,10 +139,10 @@ impl Scanner {
                         "scanning"
                     }
                 };
-                emit(&app, status, &machine, &current_run_id);
+                emit(&app, status, &machine, &current_run_id, &cached_live);
                 sleep_remainder(tick, cfg.poll_interval_ms);
             }
-            emit(&app, "stopped", &machine, &current_run_id);
+            emit(&app, "stopped", &machine, &current_run_id, &cached_live);
             if let Ok(mut guard) = app_slot.lock() {
                 *guard = None;
             }
@@ -181,10 +205,13 @@ fn emit(
     status: &str,
     machine: &Arc<Mutex<RunStateMachine>>,
     current_run_id: &Arc<Mutex<Option<String>>>,
+    cached_live: &Arc<Mutex<LiveState>>,
 ) {
+    let live = machine.lock().unwrap().live_state();
+    *cached_live.lock().unwrap() = live.clone();
     let event = ScannerEvent {
         status: status.to_string(),
-        live: Some(machine.lock().unwrap().live_state()),
+        live: Some(live),
         current_run_id: current_run_id.lock().unwrap().clone(),
     };
     app.emit("scanner-update", event).ok();

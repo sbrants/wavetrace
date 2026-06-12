@@ -7,8 +7,8 @@ use crate::db::{self, RunFilter, RunRow, SnapshotRow};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::Scanner;
 use crate::settings::Settings;
-use crate::state_machine::LiveState;
-use crate::{capture, scanner, settings};
+use crate::state_machine::{GameMode, LiveState};
+use crate::{capture, classify, fields, scanner, settings};
 use serde::Serialize;
 
 pub struct AppState {
@@ -51,7 +51,7 @@ pub fn scanner_running(state: State<AppState>) -> bool {
 
 #[tauri::command]
 pub fn live_state(state: State<AppState>) -> LiveState {
-    state.scanner.machine.lock().unwrap().live_state()
+    state.scanner.cached_live_state()
 }
 
 #[tauri::command]
@@ -123,7 +123,13 @@ pub struct CaptureBurstResult {
 
 /// Save one frame + OCR metadata to fixtures/captured/.
 #[tauri::command]
-pub fn capture_fixture_once() -> Result<CaptureEntry, String> {
+pub async fn capture_fixture_once() -> Result<CaptureEntry, String> {
+    tauri::async_runtime::spawn_blocking(capture_fixture_once_blocking)
+        .await
+        .map_err(|e| format!("capture task failed: {e}"))?
+}
+
+fn capture_fixture_once_blocking() -> Result<CaptureEntry, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
     fixture_capture::capture_once(&target.title_substring)
@@ -131,11 +137,19 @@ pub fn capture_fixture_once() -> Result<CaptureEntry, String> {
 
 /// Burst-capture frames for the OCR regression corpus.
 #[tauri::command]
-pub fn capture_fixture_burst(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
-    let conn = conn()?;
-    let target = settings::resolve_target_window(&conn)?;
+pub async fn capture_fixture_burst(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
     let count = count.clamp(1, 200);
     let interval_ms = interval_ms.clamp(100, 10_000);
+    tauri::async_runtime::spawn_blocking(move || {
+        capture_fixture_burst_blocking(count, interval_ms)
+    })
+    .await
+    .map_err(|e| format!("capture task failed: {e}"))?
+}
+
+fn capture_fixture_burst_blocking(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
+    let conn = conn()?;
+    let target = settings::resolve_target_window(&conn)?;
     let entries = fixture_capture::capture_burst(&target.title_substring, count, interval_ms)?;
     let coin_rate_detected = entries
         .iter()
@@ -149,20 +163,158 @@ pub fn capture_fixture_burst(count: usize, interval_ms: u64) -> Result<CaptureBu
     })
 }
 
+#[derive(Serialize)]
+pub struct OcrProbeResult {
+    pub window_found: bool,
+    pub target_substring: String,
+    pub width: u32,
+    pub height: u32,
+    pub elapsed_ms: u64,
+    pub all_lines: Vec<String>,
+    pub coin_lines: Vec<String>,
+    pub tier_wave_lines: Vec<String>,
+    pub mode_lines: Vec<String>,
+    pub tier: Option<u32>,
+    pub wave: Option<u32>,
+    pub coin_per_minute: Option<f64>,
+    pub coin_status: String,
+    pub mode: String,
+    pub preview_png_base64: Option<String>,
+}
+
+fn preview_thumbnail(img: &image::RgbaImage) -> image::RgbaImage {
+    const MAX_W: u32 = 400;
+    if img.width() <= MAX_W {
+        return img.clone();
+    }
+    let scale = MAX_W as f32 / img.width() as f32;
+    let h = ((img.height() as f32) * scale).round() as u32;
+    image::imageops::resize(
+        img,
+        MAX_W,
+        h.max(1),
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+/// One-shot capture + OCR for Settings diagnostics (runs off the UI thread).
+#[tauri::command]
+pub async fn probe_ocr() -> Result<OcrProbeResult, String> {
+    tauri::async_runtime::spawn_blocking(probe_ocr_blocking)
+        .await
+        .map_err(|e| format!("OCR probe task failed: {e}"))?
+}
+
+fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
+    use std::time::Instant;
+
+    let conn = conn()?;
+    let target = settings::resolve_target_window(&conn)?;
+    let started = Instant::now();
+    let frame = capture::capture_by_title(&target.title_substring);
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    let Some(img) = frame else {
+        return Ok(OcrProbeResult {
+            window_found: false,
+            target_substring: target.title_substring,
+            width: 0,
+            height: 0,
+            elapsed_ms,
+            all_lines: Vec::new(),
+            coin_lines: Vec::new(),
+            tier_wave_lines: Vec::new(),
+            mode_lines: Vec::new(),
+            tier: None,
+            wave: None,
+            coin_per_minute: None,
+            coin_status: "window_not_found".into(),
+            mode: "unknown".into(),
+            preview_png_base64: None,
+        });
+    };
+
+    let ocr_started = Instant::now();
+    let fields = fields::ocr_probe_fields(&img)?;
+    let ocr_ms = ocr_started.elapsed().as_millis() as u64;
+
+    let input = classify::classify(&fields.all_lines);
+    let coin_per_minute = match input.coin {
+        crate::parser::CoinReading::Rate(v) => Some(v),
+        _ => None,
+    };
+    let coin_status = match input.coin {
+        crate::parser::CoinReading::Rate(_) => "rate",
+        crate::parser::CoinReading::Total(_) => "total_balance",
+        crate::parser::CoinReading::Unreadable => "unreadable",
+    }
+    .to_string();
+    let mode = match input.mode {
+        GameMode::Normal => "normal",
+        GameMode::TotalCoin => "total_coin",
+        GameMode::IntroSprint => "intro_sprint",
+        GameMode::Tournament => "tournament",
+        GameMode::EndOfRun => "end_of_run",
+        GameMode::Unknown => "unknown",
+    }
+    .to_string();
+
+    let thumb = preview_thumbnail(&img);
+    let mut bytes = Vec::new();
+    let preview_png_base64 = thumb
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .ok()
+        .map(|_| base64::engine::general_purpose::STANDARD.encode(&bytes));
+
+    Ok(OcrProbeResult {
+        window_found: true,
+        target_substring: target.title_substring,
+        width: img.width(),
+        height: img.height(),
+        elapsed_ms: elapsed_ms + ocr_ms,
+        all_lines: fields.all_lines.clone(),
+        coin_lines: fields
+            .all_lines
+            .iter()
+            .filter(|l| l.to_lowercase().contains("/min"))
+            .cloned()
+            .collect(),
+        tier_wave_lines: fields.all_lines.clone(),
+        mode_lines: Vec::new(),
+        tier: input.tier,
+        wave: input.wave,
+        coin_per_minute,
+        coin_status,
+        mode,
+        preview_png_base64,
+    })
+}
+
 /// Capture the configured window and return it as a base64 PNG for Settings preview.
 #[tauri::command]
-pub fn preview_capture() -> Result<String, String> {
+pub async fn preview_capture() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(preview_capture_blocking)
+        .await
+        .map_err(|e| format!("preview task failed: {e}"))?
+}
+
+fn preview_capture_blocking() -> Result<String, String> {
     let cfg = settings::load(&conn()?);
     let target = cfg
         .target_window
         .ok_or("No target window configured")?;
     let img = capture::capture_by_title(&target.title_substring)
         .ok_or("Window not found or minimized")?;
+    let thumb = preview_thumbnail(&img);
     let mut bytes = Vec::new();
-    img.write_to(
-        &mut std::io::Cursor::new(&mut bytes),
-        image::ImageFormat::Png,
-    )
-    .map_err(|e| e.to_string())?;
+    thumb
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }

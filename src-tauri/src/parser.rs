@@ -104,7 +104,36 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
         t = t[len..].trim_start().to_string();
     }
 
+    if is_wave_progress_line(&t) {
+        return t;
+    }
+
     let lower = t.to_lowercase();
+    // Any slash suffix after a rate body: "70.6T/rtf", "3.48T/mi".
+    if let Some(idx) = lower.find('/') {
+        let body = t[..idx].trim();
+        if parse_number_with_suffix(body).is_some() {
+            return format!("{body}/min");
+        }
+    }
+    // "62.4T1mi", "83.3TA+i" — suffix glued to junk before "mi".
+    if lower.contains("mi") {
+        for ch in ['t', 'm', 'b', 'k'] {
+            if let Some(pos) = lower.rfind(ch) {
+                let stem = &t[..=pos];
+                if parse_number_with_suffix(stem).is_some() {
+                    return format!("{stem}/min");
+                }
+            }
+        }
+    }
+    // "/n'lin", "/nA1", "/ny" — OCR reads /min as /n…
+    if let Some(idx) = lower.find("/n") {
+        let body = t[..idx].trim();
+        if parse_number_with_suffix(body).is_some() {
+            return format!("{body}/min");
+        }
+    }
     if let Some(idx) = lower.find("/m") {
         let body = &t[..idx];
         let tail = &lower[idx + 2..];
@@ -114,6 +143,12 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
             || tail.starts_with('!')
             || tail.starts_with('f')
             || tail.starts_with('r')
+            || tail.starts_with('t')
+            || tail.starts_with('y')
+            || tail.starts_with('l')
+            || tail.starts_with('\'')
+            || tail.starts_with('a')
+            || tail.starts_with('(')
         {
             return format!("{body}/min");
         }
@@ -378,6 +413,18 @@ mod tests {
     fn coin_crop_accepts_m_suffix_without_icon() {
         assert_eq!(parse_coin_anchor_crop("512M/min"), CoinReading::Rate(512.0e6));
         assert_eq!(parse_coin_anchor_crop("E408T/mi"), CoinReading::Rate(408.0e12));
+    }
+
+    /// Strings taken from live NoxPlayer scanner.log misses.
+    #[test]
+    fn coin_live_ocr_quirks() {
+        assert_eq!(parse_coin_anchor_crop("62.4T1mi"), CoinReading::Rate(62.4e12));
+        assert_eq!(parse_coin_anchor_crop("70.6T/rtf"), CoinReading::Rate(70.6e12));
+        assert_eq!(parse_coin_anchor_crop("542M/n'lin"), CoinReading::Rate(542.0e6));
+        assert_eq!(parse_coin_anchor_crop("546M(min"), CoinReading::Rate(546.0e6));
+        assert_eq!(parse_coin_anchor_crop(") 71T/nA1"), CoinReading::Rate(71.0e12));
+        assert_eq!(parse_coin_anchor_crop("492M/min"), CoinReading::Rate(492.0e6));
+        assert_eq!(parse_coin_anchor_crop("1933 / 2002"), CoinReading::Unreadable);
     }
 
     #[test]

@@ -178,6 +178,24 @@ main {
   font-size: 13px;
 }
 
+.error {
+  color: #f87171;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.ocr-dump {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 11px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 8px 0;
+}
+
 .chart-card {
   background: var(--panel);
   border: 1px solid var(--border);

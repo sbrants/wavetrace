@@ -137,11 +137,7 @@ fn game_mode_label(mode: GameMode) -> String {
 
 pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
     let fields = fields::ocr_all_fields(frame);
-    let input = classify::classify(
-        &fields.mode_lines,
-        Some(&fields.coin_lines),
-        Some(&fields.tier_wave_lines),
-    );
+    let input = classify::classify(&fields.all_lines);
     let (coin_reading, coin_per_minute, coin_rate_detected) = coin_reading_label(input.coin);
 
     CaptureEntry {
@@ -153,9 +149,14 @@ pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
         height: frame.height(),
         window_title: window_title.to_string(),
         ocr: CaptureOcr {
-            coin_lines: fields.coin_lines,
-            tier_wave_lines: fields.tier_wave_lines,
-            mode_lines: fields.mode_lines,
+            coin_lines: fields
+                .all_lines
+                .iter()
+                .filter(|l| l.to_lowercase().contains("/min"))
+                .cloned()
+                .collect(),
+            tier_wave_lines: fields.all_lines.clone(),
+            mode_lines: Vec::new(),
         },
         classified: CaptureClassified {
             tier: input.tier,
@@ -228,13 +229,8 @@ fn persist_entry(frame: &RgbaImage, entry: &mut CaptureEntry) -> Result<(), Stri
     let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let id = format!("{stamp}_{:03}", next_sequence(&dir, &stamp.to_string()));
     let file = format!("{id}.png");
-    let coin_crop_file = format!("{id}_coin.png");
 
     write_png(&dir.join(&file), frame)?;
-    if let Some(crop) = fields::coin_ocr_crop(frame) {
-        write_png(&dir.join(&coin_crop_file), &crop)?;
-        entry.coin_crop_file = Some(coin_crop_file);
-    }
 
     entry.id = id;
     entry.file = file;
@@ -292,11 +288,7 @@ pub fn reanalyze_all_captures() -> Result<CorpusReport, String> {
         entry.classified = fresh.classified;
         entry.width = fresh.width;
         entry.height = fresh.height;
-        if let Some(crop) = crate::fields::coin_ocr_crop(&img) {
-            let coin_file = format!("{}_coin.png", entry.id);
-            write_png(&dir.join(&coin_file), &crop)?;
-            entry.coin_crop_file = Some(coin_file);
-        }
+        entry.coin_crop_file = None;
     }
     save_manifest(&manifest)?;
     Ok(evaluate_manifest(&manifest))

@@ -72,6 +72,20 @@ pub struct LiveState {
     pub total_coin_warning: bool,
 }
 
+impl LiveState {
+    pub fn idle() -> Self {
+        Self {
+            mode: GameMode::Unknown,
+            tier: None,
+            wave: None,
+            coin_per_minute: None,
+            run_active: false,
+            run_type: None,
+            total_coin_warning: false,
+        }
+    }
+}
+
 struct ActiveRun {
     run_type: RunType,
     last_saved_wave: u32,
@@ -197,6 +211,10 @@ pub struct RunStateMachine {
     coin_rate: DebouncedCoinRate,
     run: Option<ActiveRun>,
     last_coin_rate: Option<f64>,
+    /// Most recent parseable readings — keeps the dashboard stable between polls.
+    last_seen_tier: Option<u32>,
+    last_seen_wave: Option<u32>,
+    last_seen_coin: Option<f64>,
     last_mode: GameMode,
     tournament_seen: bool,
     /// Consecutive polls where coin reads as a balance (no /min).
@@ -217,6 +235,9 @@ impl RunStateMachine {
             coin_rate: DebouncedCoinRate::default(),
             run: None,
             last_coin_rate: None,
+            last_seen_tier: None,
+            last_seen_wave: None,
+            last_seen_coin: None,
             last_mode: GameMode::Unknown,
             tournament_seen: false,
             consecutive_total_coin_polls: 0,
@@ -226,9 +247,13 @@ impl RunStateMachine {
     pub fn live_state(&self) -> LiveState {
         LiveState {
             mode: self.last_mode,
-            tier: self.tier.display(),
-            wave: self.wave.display(),
-            coin_per_minute: self.coin_rate.display().or(self.last_coin_rate),
+            tier: self.tier.display().or(self.last_seen_tier),
+            wave: self.wave.display().or(self.last_seen_wave),
+            coin_per_minute: self
+                .coin_rate
+                .display()
+                .or(self.last_seen_coin)
+                .or(self.last_coin_rate),
             run_active: self.run.is_some(),
             run_type: self.run.as_ref().map(|r| r.run_type),
             // Debounced: one missed /min frame must not flash the banner.
@@ -271,8 +296,16 @@ impl RunStateMachine {
 
         // Coin rate only updates from a /min reading (normal / intro_sprint).
         // Total balances never overwrite the rate (Goal.md total_coin rules).
+        if let Some(t) = input.tier {
+            self.last_seen_tier = Some(t);
+        }
+        if let Some(w) = input.wave {
+            self.last_seen_wave = Some(w);
+        }
+
         match input.coin {
             CoinReading::Rate(v) => {
+                self.last_seen_coin = Some(v);
                 if let Some(confirmed) = self.coin_rate.feed(Some(v)) {
                     self.last_coin_rate = Some(confirmed);
                 }

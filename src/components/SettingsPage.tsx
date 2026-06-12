@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Settings, WindowInfo } from "../api";
+import { api, formatCoin, Settings, WindowInfo } from "../api";
 
 /** Default game window match per Goal.md "Window targeting". */
 const TOWER_TITLE_MATCH = "The Tower";
@@ -21,7 +21,7 @@ function withDefaultWindow(settings: Settings, windows: WindowInfo[]): Settings 
   return {
     ...settings,
     target_window: {
-      title_substring: match.title,
+      title_substring: TOWER_TITLE_MATCH,
       process_name: match.app_name,
     },
   };
@@ -34,6 +34,13 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captureResult, setCaptureResult] = useState<string | null>(null);
+  const [probe, setProbe] = useState<Awaited<ReturnType<typeof api.probeOcr>> | null>(
+    null
+  );
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [probeStatus, setProbeStatus] = useState<string | null>(null);
+  const [probeElapsed, setProbeElapsed] = useState(0);
 
   const load = async () => {
     const [loadedSettings, listedWindows] = await Promise.all([
@@ -47,6 +54,18 @@ export default function SettingsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!probing) {
+      return;
+    }
+    const started = Date.now();
+    setProbeElapsed(0);
+    const id = window.setInterval(() => {
+      setProbeElapsed(Math.floor((Date.now() - started) / 1000));
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [probing]);
 
   if (!settings) return <p className="muted">Loading…</p>;
 
@@ -118,6 +137,85 @@ export default function SettingsPage() {
             src={`data:image/png;base64,${preview}`}
             alt="capture preview"
           />
+        )}
+      </section>
+
+      <section>
+        <h3>OCR diagnostic</h3>
+        <p className="muted">
+          Runs Tesseract on the full capture. Coin uses the second line containing
+          /min (first is usually cash). Tier/Wave are parsed from lines containing
+          those words. Requires Tesseract on PATH.
+        </p>
+        <div className="row">
+          <button
+            disabled={probing}
+            onClick={async () => {
+              setProbing(true);
+              setProbe(null);
+              setProbeError(null);
+              setProbeStatus("Preparing…");
+              try {
+                if (await api.scannerRunning()) {
+                  setProbeStatus("Stopping scanner so OCR can run…");
+                  await api.stopScanner();
+                  await new Promise((r) => setTimeout(r, 800));
+                }
+                setProbeStatus("Capturing window and running OCR (usually 5–15s)…");
+                setProbe(await api.probeOcr());
+                setProbeStatus(null);
+              } catch (e) {
+                const msg = String(e);
+                setProbeError(msg);
+                setProbeStatus(null);
+              } finally {
+                setProbing(false);
+              }
+            }}
+          >
+            {probing ? `Testing… ${probeElapsed}s` : "Test OCR now"}
+          </button>
+        </div>
+        {probing && probeStatus && (
+          <p className="muted">{probeStatus}</p>
+        )}
+        {probeError && (
+          <p className="error">{probeError}</p>
+        )}
+        {probe && (
+          <div className="ocr-probe">
+            <p>
+              <strong>Window:</strong>{" "}
+              {probe.window_found
+                ? `${probe.width}×${probe.height} (match "${probe.target_substring}")`
+                : `not found (looking for "${probe.target_substring}")`}
+              {" · "}
+              <strong>{probe.elapsed_ms}ms</strong>
+            </p>
+            <p>
+              <strong>Tier:</strong> {probe.tier ?? "—"} · <strong>Wave:</strong>{" "}
+              {probe.wave ?? "—"} · <strong>Coin/min:</strong>{" "}
+              {probe.coin_per_minute != null
+                ? formatCoin(probe.coin_per_minute)
+                : probe.coin_status}
+            </p>
+            <p className="muted">
+              /min lines: {JSON.stringify(probe.coin_lines)}
+              <br />
+              all OCR text ({probe.all_lines?.length ?? probe.tier_wave_lines.length}{" "}
+              lines):
+            </p>
+            <pre className="ocr-dump">
+              {(probe.all_lines ?? probe.tier_wave_lines).join("\n")}
+            </pre>
+            {probe.preview_png_base64 && (
+              <img
+                className="preview"
+                src={`data:image/png;base64,${probe.preview_png_base64}`}
+                alt="OCR probe capture"
+              />
+            )}
+          </div>
         )}
       </section>
 

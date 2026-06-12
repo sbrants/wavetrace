@@ -69,6 +69,24 @@ export interface CaptureBurstResult {
   captured_dir: string;
 }
 
+export interface OcrProbeResult {
+  window_found: boolean;
+  target_substring: string;
+  width: number;
+  height: number;
+  elapsed_ms: number;
+  all_lines: string[];
+  coin_lines: string[];
+  tier_wave_lines: string[];
+  mode_lines: string[];
+  tier: number | null;
+  wave: number | null;
+  coin_per_minute: number | null;
+  coin_status: string;
+  mode: string;
+  preview_png_base64: string | null;
+}
+
 export const api = {
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
   getSettings: () => invoke<Settings>("get_settings"),
@@ -89,6 +107,7 @@ export const api = {
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
   exportCsv: () => invoke<string>("export_csv"),
   previewCapture: () => invoke<string>("preview_capture"),
+  probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   captureFixtureBurst: (count: number, intervalMs: number) =>
     invoke<CaptureBurstResult>("capture_fixture_burst", { count, intervalMs }),
   onScannerUpdate: (cb: (e: ScannerEvent) => void): Promise<UnlistenFn> =>

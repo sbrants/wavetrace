@@ -39,6 +39,7 @@ pub fn run() {
             commands::current_run_snapshots,
             commands::export_csv,
             commands::preview_capture,
+            commands::probe_ocr,
             commands::capture_fixture_once,
             commands::capture_fixture_burst,
         ])

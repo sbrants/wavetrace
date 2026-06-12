@@ -99,11 +99,6 @@ fn main() {
                 "Seeded from {} (tier={:?} wave={:?} coin={:?})",
                 fx.file, fx.expect.tier, fx.expect.wave, fx.expect.coin_per_minute
             ));
-            if let Some(crop) = towerrun_lib::fields::coin_ocr_crop(&frame) {
-                let coin_file = format!("{}_coin.png", entry.id);
-                crop.save(dir.join(&coin_file)).expect("save coin crop");
-                entry.coin_crop_file = Some(coin_file);
-            }
             manifest.captures.push(entry);
             added += 1;
         }

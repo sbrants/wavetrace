@@ -27,6 +27,22 @@ impl Default for Settings {
     }
 }
 
+/// Collapse a full window title to a short substring that still matches the
+/// game/emulator after restart. Avoids saving e.g. a Chrome tab's full title
+/// which would never match NoxPlayer's shorter title.
+pub fn normalize_target_substring(title: &str) -> String {
+    let lower = title.to_lowercase();
+    if lower.contains("the tower") {
+        return "The Tower".to_string();
+    }
+    for needle in ["noxplayer", "nox", "bluestacks", "ldplayer", "mumu"] {
+        if lower.contains(needle) {
+            return needle.to_string();
+        }
+    }
+    title.trim().to_string()
+}
+
 pub fn load(conn: &Connection) -> Settings {
     let mut s = Settings::default();
     if let Ok(Some(v)) = db::get_setting(conn, "target_window") {
@@ -40,6 +56,17 @@ pub fn load(conn: &Connection) -> Settings {
     s
 }
 
+fn is_emulator_app(app_name: &str, title: &str) -> bool {
+    let a = app_name.to_lowercase();
+    let t = title.to_lowercase();
+    a.contains("nox")
+        || a.contains("bluestacks")
+        || a.contains("ldplayer")
+        || a.contains("mumu")
+        || t.contains("noxplayer")
+        || t.contains("bluestacks")
+}
+
 /// Pick a saved target window, or auto-detect a game window and persist it.
 pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> {
     let mut cfg = load(conn);
@@ -49,18 +76,31 @@ pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> 
         }
     }
 
-    const NEEDLES: &[&str] = &["the tower", "bluestacks", "ldplayer", "mumu"];
+    let mut best: Option<(u32, TargetWindow)> = None;
     for w in capture::list_windows() {
         let title_lower = w.title.to_lowercase();
-        if NEEDLES.iter().any(|n| title_lower.contains(n)) {
-            let tw = TargetWindow {
-                title_substring: w.title.clone(),
-                process_name: w.app_name,
-            };
-            cfg.target_window = Some(tw.clone());
-            save(conn, &cfg).map_err(|e| e.to_string())?;
-            return Ok(tw);
+        let mut score = 0u32;
+        if title_lower.contains("the tower") {
+            score += 10;
         }
+        if is_emulator_app(&w.app_name, &w.title) {
+            score += 100;
+        }
+        if score == 0 {
+            continue;
+        }
+        let tw = TargetWindow {
+            title_substring: normalize_target_substring(&w.title),
+            process_name: w.app_name,
+        };
+        if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
+            best = Some((score, tw));
+        }
+    }
+    if let Some((_, tw)) = best {
+        cfg.target_window = Some(tw.clone());
+        save(conn, &cfg).map_err(|e| e.to_string())?;
+        return Ok(tw);
     }
 
     Err(
@@ -71,8 +111,28 @@ pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> 
 
 pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     if let Some(tw) = &s.target_window {
-        db::set_setting(conn, "target_window", &serde_json::to_string(tw).unwrap())?;
+        let mut normalized = tw.clone();
+        normalized.title_substring = normalize_target_substring(&tw.title_substring);
+        db::set_setting(
+            conn,
+            "target_window",
+            &serde_json::to_string(&normalized).unwrap(),
+        )?;
     }
     db::set_setting(conn, "poll_interval_ms", &s.poll_interval_ms.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_collapses_chrome_title_to_tower_substring() {
+        assert_eq!(
+            normalize_target_substring("The Tower - Google Chrome"),
+            "The Tower"
+        );
+        assert_eq!(normalize_target_substring("NoxPlayer"), "noxplayer");
+    }
 }

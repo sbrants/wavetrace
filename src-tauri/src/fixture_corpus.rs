@@ -44,11 +44,7 @@ fn load_png(name: &str) -> RgbaImage {
 
 fn classify_fixture(img: &RgbaImage) -> crate::state_machine::PollInput {
     let ocr = fields::ocr_all_fields(img);
-    classify::classify(
-        &ocr.mode_lines,
-        Some(&ocr.coin_lines),
-        Some(&ocr.tier_wave_lines),
-    )
+    classify::classify(&ocr.all_lines)
 }
 
 fn coin_value(coin: CoinReading) -> Option<f64> {
@@ -65,6 +61,7 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    #[ignore = "requires Tesseract installed on PATH"]
     fn expected_json_screenshots_have_ocr_pipeline() {
         let path = fixtures_dir().join("expected.json");
         let root: ExpectedRoot =
@@ -76,11 +73,7 @@ mod tests {
             }
             let img = load_png(&fx.file);
             let ocr = fields::ocr_all_fields(&img);
-            let input = classify::classify(
-                &ocr.mode_lines,
-                Some(&ocr.coin_lines),
-                Some(&ocr.tier_wave_lines),
-            );
+            let input = classify::classify(&ocr.all_lines);
 
             if let Some(tier) = fx.expect.tier {
                 assert_eq!(input.tier, Some(tier), "tier in {}", fx.file);
@@ -94,7 +87,7 @@ mod tests {
                     Some(coin),
                     "coin/min in {} coin_lines={:?} coin={:?}",
                     fx.file,
-                    ocr.coin_lines,
+                    ocr.all_lines,
                     input.coin
                 );
             }
@@ -165,6 +158,7 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    #[ignore = "requires Tesseract installed on PATH"]
     fn reanalyze_captured_frames_match_manifest() {
         let manifest = fixture_capture::load_manifest();
         let dir = fixture_capture::captured_dir();
