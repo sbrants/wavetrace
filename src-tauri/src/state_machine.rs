@@ -300,7 +300,18 @@ impl RunStateMachine {
             RunType::Farming
         };
         self.run = Some(new_active_run(run_type));
-        vec![Action::StartRun { run_type }]
+        let mut actions = vec![Action::StartRun { run_type }];
+        if let Some(wave) = self.wave.confirmed.or(self.last_seen_wave) {
+            if let Some(run) = self.run.as_mut() {
+                let tier = self.tier.confirmed.or(self.last_seen_tier);
+                run.accumulating_for_wave = Some(wave);
+                if let Some(rate) = self.last_coin_rate.or(self.last_seen_coin) {
+                    run.coin_samples.push(rate);
+                }
+                actions.extend(flush_completed_wave(run, wave, tier));
+            }
+        }
+        actions
     }
 
     pub fn poll(&mut self, input: PollInput) -> Vec<Action> {
@@ -532,6 +543,21 @@ mod tests {
         sm.manual_new_run();
         let actions = sm.ensure_run_for_scanning();
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn ensure_run_for_scanning_seeds_snapshot_at_current_wave() {
+        let mut sm = RunStateMachine::new();
+        sm.poll(p(GameMode::Normal, 14, 4500, CoinReading::Rate(100.0)));
+        let actions = sm.ensure_run_for_scanning();
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::Farming
+        }));
+        assert!(actions.contains(&Action::Snapshot {
+            wave: 4500,
+            tier: Some(14),
+            coin_per_minute: Some(100.0)
+        }));
     }
 
     #[test]

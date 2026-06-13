@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
 import { api, formatCoin, RunFilter, RunRow, SnapshotRow } from "../api";
+import {
+  buildCompareChartDataByProgress,
+  buildCompareChartDataByWave,
+  CompareXAxis,
+  snapshotsToChartData,
+} from "../chartData";
 import ChartScreenshotActions from "./ChartScreenshotActions";
+import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -44,6 +41,8 @@ export default function History() {
   const [compareLoading, setCompareLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
+  const [jumpPage, setJumpPage] = useState("");
+  const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
 
@@ -220,11 +219,26 @@ export default function History() {
     }
   };
 
-  const chartData = snapshots
-    .filter((s) => s.coin_per_minute !== null)
-    .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+  const chartData = snapshotsToChartData(snapshots);
 
-  const compareChartData = buildCompareChartData(compareRuns, compareSnapshots);
+  const compareRunIds = compareRuns.map((r) => r.id);
+  const compareChartData =
+    compareXAxis === "wave"
+      ? buildCompareChartDataByWave(compareRunIds, compareSnapshots)
+      : buildCompareChartDataByProgress(compareRunIds, compareSnapshots);
+
+  const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
+    dataKey: `coin_${i}`,
+    name: runShortLabel(r),
+    stroke: COMPARE_COLORS[i % COMPARE_COLORS.length],
+  }));
+
+  const goToPage = (raw: string) => {
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1 || n > totalPages) return;
+    setPage(n);
+    setJumpPage("");
+  };
 
   return (
     <div className="history">
@@ -422,6 +436,33 @@ export default function History() {
             >
               Next
             </button>
+            <label className="page-jump-label">
+              Go to
+              <input
+                type="number"
+                className="page-jump-input"
+                min={1}
+                max={totalPages}
+                value={jumpPage}
+                placeholder={String(safePage)}
+                onChange={(e) => setJumpPage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") goToPage(jumpPage);
+                }}
+                aria-label="Jump to page"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={
+                !jumpPage ||
+                Number.parseInt(jumpPage, 10) < 1 ||
+                Number.parseInt(jumpPage, 10) > totalPages
+              }
+              onClick={() => goToPage(jumpPage)}
+            >
+              Go
+            </button>
           </div>
         </div>
       )}
@@ -429,8 +470,22 @@ export default function History() {
       {compareRuns.length >= 2 && (
         <div className="chart-card compare-card" ref={compareChartRef}>
           <div className="chart-card-header">
-            <h3>Compare {compareRuns.length} runs — coin/min vs wave</h3>
+            <h3>
+              Compare {compareRuns.length} runs — coin/min vs{" "}
+              {compareXAxis === "wave" ? "wave" : "snapshot #"}
+            </h3>
             <div className="chart-card-actions">
+              <select
+                className="compare-axis-select"
+                value={compareXAxis}
+                onChange={(e) =>
+                  setCompareXAxis(e.target.value as CompareXAxis)
+                }
+                aria-label="Compare chart X axis"
+              >
+                <option value="wave">Absolute wave</option>
+                <option value="progress">Snapshot progress</option>
+              </select>
               <button onClick={clearCompare}>Clear comparison</button>
               <ChartScreenshotActions
                 targetRef={compareChartRef}
@@ -476,35 +531,13 @@ export default function History() {
               ))}
             </tbody>
           </table>
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={compareChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-              <XAxis dataKey="wave" stroke="#8da2c0" />
-              <YAxis
-                stroke="#8da2c0"
-                tickFormatter={(v: number) => formatCoin(v)}
-                width={70}
-              />
-              <Tooltip
-                formatter={(v) => formatCoin(v as number)}
-                labelFormatter={(l) => `Wave ${l}`}
-                contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
-              />
-              <Legend />
-              {compareRuns.map((r, i) => (
-                <Line
-                  key={r.id}
-                  type="monotone"
-                  dataKey={`coin_${i}`}
-                  name={runShortLabel(r)}
-                  stroke={COMPARE_COLORS[i % COMPARE_COLORS.length]}
-                  dot={false}
-                  strokeWidth={2}
-                  connectNulls
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+          <CoinVsWaveChart
+            mode="compare"
+            data={compareChartData}
+            lines={compareLines}
+            xAxis={compareXAxis}
+            height={320}
+          />
         </div>
       )}
 
@@ -520,29 +553,7 @@ export default function History() {
               disabled={chartData.length === 0}
             />
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-              <XAxis dataKey="wave" stroke="#8da2c0" />
-              <YAxis
-                stroke="#8da2c0"
-                tickFormatter={(v: number) => formatCoin(v)}
-                width={70}
-              />
-              <Tooltip
-                formatter={(v) => formatCoin(v as number)}
-                labelFormatter={(l) => `Wave ${l}`}
-                contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
-              />
-              <Line
-                type="monotone"
-                dataKey="coin"
-                stroke="#4cc2ff"
-                dot={false}
-                strokeWidth={2}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <CoinVsWaveChart mode="single" data={chartData} height={300} />
         </div>
       )}
     </div>
@@ -566,30 +577,6 @@ function runShortLabel(r: RunRow): string {
   const wave = r.final_wave ?? "?";
   const tier = r.peak_tier ?? "?";
   return `${date} (T${tier} W${wave})`;
-}
-
-function buildCompareChartData(
-  runs: RunRow[],
-  snapshots: Record<string, SnapshotRow[]>
-): { wave: number; [key: string]: number | null }[] {
-  const waves = new Set<number>();
-  for (const run of runs) {
-    for (const s of snapshots[run.id] ?? []) {
-      if (s.coin_per_minute !== null) {
-        waves.add(s.wave);
-      }
-    }
-  }
-  return [...waves]
-    .sort((a, b) => a - b)
-    .map((wave) => {
-      const row: { wave: number; [key: string]: number | null } = { wave };
-      runs.forEach((run, i) => {
-        const snap = (snapshots[run.id] ?? []).find((s) => s.wave === wave);
-        row[`coin_${i}`] = snap?.coin_per_minute ?? null;
-      });
-      return row;
-    });
 }
 
 /** Local calendar date (YYYY-MM-DD) → UTC ISO start of that local day. */

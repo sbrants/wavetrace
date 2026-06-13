@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-} from "recharts";
 import { api, formatCoin, ScannerEvent, SnapshotRow } from "../api";
+import { snapshotsToChartData } from "../chartData";
 import ChartScreenshotActions from "./ChartScreenshotActions";
+import CoinVsWaveChart from "./CoinVsWaveChart";
 
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
@@ -17,13 +10,10 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const live = event?.live ?? null;
 
   useEffect(() => {
-    // Refresh the chart whenever the scanner reports progress.
     api.currentRunSnapshots().then(setSnapshots).catch(() => {});
   }, [event?.current_run_id, live?.wave]);
 
-  const data = snapshots
-    .filter((s) => s.coin_per_minute !== null)
-    .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+  const chartData = snapshotsToChartData(snapshots);
 
   return (
     <div className="dashboard">
@@ -63,37 +53,15 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           <h3>Avg coin/min vs Wave (current run)</h3>
           <ChartScreenshotActions
             targetRef={chartRef}
-            disabled={data.length === 0}
+            disabled={chartData.length === 0}
           />
         </div>
-        {data.length === 0 ? (
+        {chartData.length === 0 ? (
           <p className="muted">
             No data yet. Start the scanner and let a run reach wave 1.
           </p>
         ) : (
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-              <XAxis dataKey="wave" stroke="#8da2c0" />
-              <YAxis
-                stroke="#8da2c0"
-                tickFormatter={(v: number) => formatCoin(v)}
-                width={70}
-              />
-              <Tooltip
-                formatter={(v) => formatCoin(v as number)}
-                labelFormatter={(l) => `Wave ${l}`}
-                contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
-              />
-              <Line
-                type="monotone"
-                dataKey="coin"
-                stroke="#4cc2ff"
-                dot={false}
-                strokeWidth={2}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <CoinVsWaveChart mode="single" data={chartData} height={320} />
         )}
       </div>
     </div>

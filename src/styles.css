@@ -359,6 +359,24 @@ tbody tr.selected {
   text-align: center;
 }
 
+.page-jump-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.page-jump-input {
+  min-width: 56px !important;
+  width: 56px;
+  padding: 6px 8px;
+}
+
+.compare-axis-select {
+  min-width: 160px !important;
+}
+
 .comment-col {
   width: 200px;
   min-width: 200px;
