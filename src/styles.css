@@ -621,3 +621,45 @@ select {
   max-height: 200px;
   overflow: auto;
 }
+
+.changelog-panel .changelog-scroll {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.changelog-panel .changelog-version {
+  margin: 16px 0 8px;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.changelog-panel .changelog-version:first-child {
+  margin-top: 0;
+}
+
+.changelog-panel .changelog-heading {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.changelog-panel ul {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.changelog-panel li {
+  margin-bottom: 4px;
+}
+
+.changelog-panel hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}

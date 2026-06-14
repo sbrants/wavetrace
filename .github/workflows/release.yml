@@ -30,6 +30,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Require updater signing secret
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. Add the contents of wavetrace.key to GitHub Actions secrets (see README)."
+            exit 1
+          fi
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-24.04'
         run: |
@@ -86,12 +99,9 @@ jobs:
             pipewire libpipewire clang
 
       - name: Build Arch binary
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm ci
-          npm run tauri build -- --bundles deb
+          npm run tauri build -- --config tauri.arch.ci.conf.json --bundles deb
 
       - name: Upload Arch binary to release
         uses: softprops/action-gh-release@v2

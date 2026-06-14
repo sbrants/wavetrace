@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Embedded changelog in Settings (bundled from `CHANGELOG.md`)
+
+---
+
+## [0.2.1] — 2026-06-14
+
+### Fixed
+
+- Release CI: run `npm ci` before `tauri-action` (Tauri CLI was missing on runners)
+- Release CI: Arch job skips updater signing (raw binary only; AppImage handles Linux updates)
+
 ---
 
 ## [0.2.0] — 2026-06-14

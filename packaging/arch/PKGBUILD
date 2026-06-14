@@ -7,7 +7,7 @@
 #   ./scripts/build-arch.sh
 
 pkgname=wavetrace
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Automatic per-wave tracker for The Tower"
 arch=('x86_64')

@@ -115,7 +115,8 @@ Release builds check GitHub on startup and offer one-click updates (Settings →
 
 1. Generate an updater keypair: `powershell -File scripts/setup-updater-signing.ps1`
 2. Add GitHub secret **`TAURI_SIGNING_PRIVATE_KEY`** — paste the full contents of
-   `%USERPROFILE%\.tauri\wavetrace.key` (not the `.pub` file)
+   `%USERPROFILE%\.tauri\wavetrace.key` (not the `.pub` file). **Required** for the
+   Release workflow; builds fail at the signing step if this secret is missing.
 3. Optional password: **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`**
 4. Push a `v*` tag — the **Release** workflow publishes installers, `latest.json`,
    and `.sig` files for the updater
