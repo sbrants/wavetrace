@@ -48,6 +48,10 @@ pub fn app_data_dir() -> PathBuf {
     dir
 }
 
+pub fn scanner_log_path() -> PathBuf {
+    app_data_dir().join("logs").join("scanner.log")
+}
+
 pub fn open() -> rusqlite::Result<Connection> {
     let conn = Connection::open(app_data_dir().join("towerrun.db"))?;
     migrate(&conn)?;
@@ -264,6 +268,24 @@ struct SourceRun {
     started_at: String,
     ended_at: String,
     run_type: String,
+    comment: Option<String>,
+}
+
+fn merge_run_comments(comments: &[Option<String>]) -> Option<String> {
+    let parts: Vec<String> = comments
+        .iter()
+        .filter_map(|c| {
+            c.as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        .collect();
+    match parts.len() {
+        0 => None,
+        1 => Some(parts[0].clone()),
+        _ => Some(parts.join(" · ")),
+    }
 }
 
 /// Merge multiple ended runs into one when their snapshot waves form a strictly
@@ -284,7 +306,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
     for id in &unique_ids {
         let row = conn
             .query_row(
-                "SELECT id, started_at, ended_at, run_type FROM runs WHERE id = ?1",
+                "SELECT id, started_at, ended_at, run_type, comment FROM runs WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok((
@@ -292,6 +314,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
                         row.get::<_, String>(1)?,
                         row.get::<_, Option<String>>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
@@ -305,6 +328,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
             started_at: row.1,
             ended_at,
             run_type: row.3,
+            comment: row.4,
         });
     }
 
@@ -347,6 +371,12 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
     };
     let peak_tier = combined_snapshots.iter().filter_map(|s| s.tier).max();
     let final_wave = combined_snapshots.last().map(|s| s.wave);
+    let comment = merge_run_comments(
+        &source_runs
+            .iter()
+            .map(|r| r.comment.clone())
+            .collect::<Vec<_>>(),
+    );
 
     let new_id = Uuid::new_v4().to_string();
     let tx = conn.unchecked_transaction().map_err(|e| {
@@ -354,9 +384,9 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
     })?;
 
     tx.execute(
-        "INSERT INTO runs (id, started_at, ended_at, run_type, peak_tier, final_wave)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![new_id, started_at, ended_at, run_type, peak_tier, final_wave],
+        "INSERT INTO runs (id, started_at, ended_at, run_type, peak_tier, final_wave, comment)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![new_id, started_at, ended_at, run_type, peak_tier, final_wave, comment],
     )
     .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
 
@@ -438,8 +468,8 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
 }
 
 /// CSV export of runs (includes run_type per Goal.md Settings UI).
-pub fn export_runs_csv(conn: &Connection) -> rusqlite::Result<String> {
-    let runs = list_runs(conn, &RunFilter::default())?;
+pub fn export_runs_csv(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<String> {
+    let runs = list_runs(conn, filter)?;
     let mut out = String::from(
         "id,started_at,ended_at,run_type,peak_tier,final_wave,avg_coin_per_minute,snapshot_count,comment\n",
     );
@@ -519,8 +549,32 @@ mod tests {
         assert_eq!(snaps.len(), 2);
         assert_eq!(snaps[1].coin_per_minute, Some(500.0));
 
-        let csv = export_runs_csv(&conn).unwrap();
+        let csv = export_runs_csv(&conn, &RunFilter::default()).unwrap();
         assert!(csv.contains("tournament"));
+    }
+
+    #[test]
+    fn export_runs_csv_respects_filter() {
+        let conn = open_in_memory().unwrap();
+        let farming = start_run(&conn, "farming").unwrap();
+        end_run(&conn, &farming, Some(10), Some(5)).unwrap();
+        let tournament = start_run(&conn, "tournament").unwrap();
+        end_run(&conn, &tournament, Some(20), Some(17)).unwrap();
+
+        let all = export_runs_csv(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(all.matches('\n').count(), 3); // header + 2 runs
+
+        let farming_only = export_runs_csv(
+            &conn,
+            &RunFilter {
+                run_type: Some("farming".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(farming_only.contains("farming"));
+        assert!(!farming_only.contains("tournament"));
+        assert_eq!(farming_only.matches('\n').count(), 2);
     }
 
     #[test]
@@ -776,5 +830,61 @@ mod tests {
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].run_type, "tournament");
         assert_eq!(run_snapshots(&conn, &combined_id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn combine_runs_keeps_single_comment() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        set_run_comment(&conn, &id1, "morning farm").unwrap();
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 2, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+
+        let combined_id = combine_runs(&conn, &[id1, id2]).unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].id, combined_id);
+        assert_eq!(runs[0].comment.as_deref(), Some("morning farm"));
+    }
+
+    #[test]
+    fn combine_runs_merges_two_comments_in_start_order() {
+        let conn = open_in_memory().unwrap();
+        let id1 = insert_closed_run(
+            &conn,
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T10:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        set_run_comment(&conn, &id1, "first half").unwrap();
+
+        let id2 = insert_closed_run(
+            &conn,
+            "2024-01-01T11:00:00Z",
+            "2024-01-01T11:30:00Z",
+            "farming",
+        );
+        insert_snapshot_at(&conn, &id2, 2, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+        set_run_comment(&conn, &id2, "second half").unwrap();
+
+        let combined_id = combine_runs(&conn, &[id2, id1]).unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].id, combined_id);
+        assert_eq!(
+            runs[0].comment.as_deref(),
+            Some("first half · second half")
+        );
     }
 }

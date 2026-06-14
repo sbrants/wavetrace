@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, formatCoin, Settings, WindowInfo } from "../api";
+import ScannerLogViewer from "./ScannerLogViewer";
+
+const showDevTools = import.meta.env.DEV;
 
 /** Default game window match per Goal.md "Window targeting". */
 const TOWER_TITLE_MATCH = "The Tower";
@@ -140,6 +143,7 @@ export default function SettingsPage() {
         )}
       </section>
 
+      {showDevTools && (
       <section>
         <h3>OCR diagnostic</h3>
         <p className="muted">
@@ -218,7 +222,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+      )}
 
+      {showDevTools && (
       <section>
         <h3>OCR test captures</h3>
         <p className="muted">
@@ -248,6 +254,7 @@ export default function SettingsPage() {
         </div>
         {captureResult && <p className="muted">{captureResult}</p>}
       </section>
+      )}
 
       <section>
         <h3>Polling</h3>
@@ -269,6 +276,8 @@ export default function SettingsPage() {
           </label>
         </div>
       </section>
+
+      <ScannerLogViewer />
 
       <div className="toolbar">
         <button className="primary" onClick={save}>

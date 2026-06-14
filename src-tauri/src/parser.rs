@@ -98,6 +98,7 @@ fn fix_digit_lookalikes(s: &str) -> String {
         out.push(match c {
             'A' | 'a' if prev_digit || next_digit => '4',
             'O' | 'o' if prev_digit || next_digit => '0',
+            'S' | 's' if prev_digit || next_digit => '5',
             'l' | 'I' if prev_digit || next_digit => '1',
             _ => c,
         });
@@ -127,6 +128,18 @@ fn fix_spaced_decimal(body: &str) -> String {
 /// Normalize common OCR mangling of the `/min` suffix on coin-rate lines.
 fn normalize_coin_rate_ocr(text: &str) -> String {
     let mut t = text.trim().to_string();
+    let lower_start = t.to_lowercase();
+    if lower_start.starts_with("@ o/") || lower_start.starts_with("@ 0/") {
+        if lower_start.contains("min") {
+            return "0/min".to_string();
+        }
+    }
+    if lower_start == "o/min" || lower_start.starts_with("o/min") {
+        return "0/min".to_string();
+    }
+    if lower_start.contains("04min") {
+        return "0/min".to_string();
+    }
     if t.starts_with(['x', 'X']) {
         return t;
     }
@@ -172,6 +185,45 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
     }
 
     let lower = t.to_lowercase();
+    // "(min" / "(mine" — OCR reads /min as parenthesized junk.
+    if lower.contains("(mine") || lower.contains("(min") {
+        if let Some(idx) = lower.find("(mi") {
+            let mut body = t[..idx].trim().to_string();
+            for prefix in ["@ ", "@", "C ", "c ", "(Cc) ", "(CC) ", "(cc) "] {
+                if let Some(rest) = body.strip_prefix(prefix) {
+                    body = rest.trim().to_string();
+                    break;
+                }
+            }
+            if body
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+                && !body.is_empty()
+            {
+                return format!("{body}T/min");
+            }
+            if parse_number_with_suffix(&body).is_some() {
+                return format!("{body}/min");
+            }
+        }
+    }
+    // "3.48 trninz" — T dropped and glued to junk after a space.
+    if let Some(idx) = lower.find(" tr") {
+        let mut body = t[..idx].trim().to_string();
+        for prefix in ["@ ", "@", "C ", "c "] {
+            if let Some(rest) = body.strip_prefix(prefix) {
+                body = rest.trim().to_string();
+                break;
+            }
+        }
+        if body
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+            && !body.is_empty()
+        {
+            return format!("{body}T/min");
+        }
+    }
     // Any slash suffix after a rate body: "70.6T/rtf", "3.48T/mi".
     if let Some(idx) = lower.find('/') {
         let body = t[..idx].trim();
@@ -308,11 +360,19 @@ pub fn parse_coin_line(raw: &str) -> CoinReading {
         matches!(sep, '/' | '(' | '\\' | '|' | ' ').then(|| idx - sep.len_utf8())
     });
     if let Some(idx) = min_pos {
-        let body = &text[..idx];
-        if !is_plausible_rate(body, raw) {
+        let mut body = text[..idx].trim().to_string();
+        if !is_plausible_rate(&body, raw) {
             return CoinReading::Unreadable;
         }
-        match parse_number_with_suffix(body) {
+        if has_coin_icon_prefix(raw)
+            && body
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+            && !body.is_empty()
+        {
+            body.push('T');
+        }
+        match parse_number_with_suffix(&body) {
             Some(v) => CoinReading::Rate(v),
             None => CoinReading::Unreadable,
         }
@@ -404,8 +464,22 @@ pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
     if end == 0 {
         return CoinReading::Unreadable;
     }
-    let token = &text[..end];
-    if let Some(v) = parse_number_with_suffix(token) {
+    let mut token = text[..end].to_string();
+    if let Some((num, suffix)) = split_number_suffix(&token) {
+        if is_balance_tier_suffix(&suffix) {
+            if let Some(mult) = suffix_multiplier(&suffix) {
+                return CoinReading::Total(num * mult);
+            }
+        }
+    }
+    if token
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+        && has_coin_icon_prefix(raw)
+    {
+        token.push('T');
+    }
+    if let Some(v) = parse_number_with_suffix(&token) {
         CoinReading::Rate(v)
     } else {
         CoinReading::Unreadable
@@ -542,7 +616,7 @@ mod tests {
 
     #[test]
     fn coin_anchor_crop_without_min_suffix() {
-        assert_eq!(parse_coin_anchor_crop("@ 3.48\\"), CoinReading::Rate(3.48));
+        assert_eq!(parse_coin_anchor_crop("@ 3.48\\"), CoinReading::Rate(3.48e12));
         assert_eq!(parse_coin_anchor_crop("@ 3.48T"), CoinReading::Rate(3.48e12));
         assert_eq!(parse_coin_anchor_crop("@ 68.8Tz"), CoinReading::Rate(68.8e12));
         assert_eq!(parse_coin_anchor_crop("@ O/min"), CoinReading::Rate(0.0));
@@ -561,7 +635,10 @@ mod tests {
         // Coin icon read as @, zero read as letter O
         assert_eq!(parse_coin_line("@ O/min"), CoinReading::Rate(0.0));
         // "/min" read as "(min"
-        assert_eq!(parse_coin_line("@ 3.48 (min"), CoinReading::Rate(3.48));
+        assert_eq!(parse_coin_line("@ 3.48 (min"), CoinReading::Rate(3.48e12));
+        assert_eq!(parse_coin_line("@ 3.48 (mine"), CoinReading::Rate(3.48e12));
+        assert_eq!(parse_coin_line("@ 3.48 trninz"), CoinReading::Rate(3.48e12));
+        assert_eq!(parse_coin_line("@ O/ min-"), CoinReading::Rate(0.0));
         assert_eq!(parse_coin_line("0|min"), CoinReading::Rate(0.0));
         // Multiplier lines must never parse as coin values
         assert_eq!(parse_coin_line("x3312.65"), CoinReading::Unreadable);

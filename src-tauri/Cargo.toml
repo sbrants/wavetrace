@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+arboard = "3.4.1"
 base64 = "0.22.1"
 chrono = "0.4.45"
 dirs = "6.0.0"

@@ -62,6 +62,14 @@ export interface RunFilter {
   date_to?: string;
 }
 
+export interface ScannerLogView {
+  path: string;
+  lines: string[];
+  total_lines: number;
+  truncated: boolean;
+  log_tail_truncated: boolean;
+}
+
 export interface CaptureBurstResult {
   saved: number;
   coin_rate_detected: number;
@@ -107,7 +115,9 @@ export const api = {
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
-  exportCsv: () => invoke<string>("export_csv"),
+  exportCsv: (filter: RunFilter) => invoke<string>("export_csv", { filter }),
+  readScannerLog: (maxLines: number) =>
+    invoke<ScannerLogView>("read_scanner_log", { maxLines }),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   captureFixtureBurst: (count: number, intervalMs: number) =>

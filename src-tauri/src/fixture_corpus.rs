@@ -56,7 +56,7 @@ fn coin_value(coin: CoinReading) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture_capture::{self, CaptureManifest};
+    use crate::fixture_capture::{self, CaptureManifest, LIVE_COIN_HIT_RATE_MIN};
 
     #[test]
     #[cfg(windows)]
@@ -94,6 +94,49 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    fn seeded_corpus_labeled_expectations_pass() {
+        let manifest = fixture_capture::load_manifest();
+        let seeded: Vec<_> = manifest
+            .captures
+            .iter()
+            .filter(|e| fixture_capture::is_seeded_entry(e))
+            .collect();
+        if seeded.is_empty() {
+            eprintln!(
+                "no seeded fixtures — run: cargo run --example seed_captured_corpus -- --clear-seeded"
+            );
+            return;
+        }
+
+        let with_expect: Vec<_> = seeded.iter().filter(|e| e.expect.is_some()).collect();
+        assert!(
+            !with_expect.is_empty(),
+            "seeded fixtures missing expect labels — re-run seed_captured_corpus"
+        );
+
+        let report = fixture_capture::evaluate_manifest(&manifest);
+        let seeded_failures: Vec<_> = report
+            .failures
+            .iter()
+            .filter(|f| seeded.iter().any(|e| f.starts_with(&format!("{}:", e.id))))
+            .collect();
+
+        assert_eq!(
+            seeded_failures.len(),
+            0,
+            "seeded labeled failures: {:?}",
+            seeded_failures
+        );
+        eprintln!(
+            "seeded corpus: total={} labeled={} pass={}",
+            seeded.len(),
+            with_expect.len(),
+            with_expect.len() - seeded_failures.len()
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn captured_corpus_reports_coin_detection() {
         let manifest: CaptureManifest = fixture_capture::load_manifest();
         if manifest.captures.is_empty() {
@@ -105,21 +148,35 @@ mod tests {
 
         let report = fixture_capture::evaluate_manifest(&manifest);
         eprintln!(
-            "captured corpus: total={} coin_rate_hits={} coin_rate_misses={} labeled={} pass={} fail={}",
-            report.total,
-            report.coin_rate_hits,
-            report.coin_rate_misses,
-            report.labeled,
-            report.labeled_pass,
-            report.labeled_fail
+            "captured corpus: total={} seeded={} live={}",
+            report.total, report.seeded_total, report.live_total
         );
+        eprintln!(
+            "coin_rate: all={}/{} seeded={}/{} live={}/{}",
+            report.coin_rate_hits,
+            report.total,
+            report.seeded_coin_rate_hits,
+            report.seeded_total,
+            report.live_coin_rate_hits,
+            report.live_total
+        );
+        eprintln!(
+            "labeled: pass={}/{} fail={}",
+            report.labeled_pass, report.labeled, report.labeled_fail
+        );
+
         for miss in manifest
             .captures
             .iter()
             .filter(|c| !c.classified.coin_rate_detected)
         {
+            let kind = if fixture_capture::is_seeded_entry(miss) {
+                "seeded"
+            } else {
+                "live"
+            };
             eprintln!(
-                "MISS {} {}x{} coin_lines={:?}",
+                "MISS [{kind}] {} {}x{} coin_lines={:?}",
                 miss.id, miss.width, miss.height, miss.ocr.coin_lines
             );
         }
@@ -127,29 +184,38 @@ mod tests {
             eprintln!("LABELED FAIL: {fail}");
         }
 
-        let hit_rate = report.coin_rate_hits as f64 / report.total.max(1) as f64;
-        eprintln!("coin detection hit rate: {:.0}%", hit_rate * 100.0);
-
         if report.labeled_fail > 0 {
             panic!("labeled capture failures: {:?}", report.failures);
         }
 
-        let live = manifest
-            .captures
-            .iter()
-            .filter(|c| c.window_title != "seeded_fixture")
-            .count();
-        if live > 0 {
-            let live_hits = manifest
-                .captures
-                .iter()
-                .filter(|c| c.window_title != "seeded_fixture" && c.classified.coin_rate_detected)
-                .count();
+        if report.live_total > 0 {
+            let live_hit_rate =
+                report.live_coin_rate_hits as f64 / report.live_total.max(1) as f64;
             eprintln!(
-                "live capture coin hit rate: {:.0}% ({}/{})",
-                100.0 * live_hits as f64 / live as f64,
-                live_hits,
-                live
+                "live coin detection hit rate: {:.0}% ({}/{})",
+                live_hit_rate * 100.0,
+                report.live_coin_rate_hits,
+                report.live_total
+            );
+            if live_hit_rate < LIVE_COIN_HIT_RATE_MIN {
+                panic!(
+                    "live coin hit rate {:.0}% below {:.0}% threshold ({}/{})",
+                    live_hit_rate * 100.0,
+                    LIVE_COIN_HIT_RATE_MIN * 100.0,
+                    report.live_coin_rate_hits,
+                    report.live_total
+                );
+            }
+        }
+
+        if report.seeded_total > 0 {
+            let seeded_hit_rate =
+                report.seeded_coin_rate_hits as f64 / report.seeded_total.max(1) as f64;
+            eprintln!(
+                "seeded coin detection hit rate: {:.0}% ({}/{})",
+                seeded_hit_rate * 100.0,
+                report.seeded_coin_rate_hits,
+                report.seeded_total
             );
         }
     }
@@ -166,6 +232,27 @@ mod tests {
             }
             let img = image::open(&path).expect("capture png").to_rgba8();
             let fresh = fixture_capture::analyze_frame(&img, &entry.window_title);
+
+            assert_eq!(
+                fresh.classified.tier, entry.classified.tier,
+                "tier mismatch for {}",
+                entry.id
+            );
+            assert_eq!(
+                fresh.classified.wave, entry.classified.wave,
+                "wave mismatch for {}",
+                entry.id
+            );
+            assert_eq!(
+                fresh.classified.coin_per_minute, entry.classified.coin_per_minute,
+                "coin_per_minute mismatch for {} coin_lines={:?}",
+                entry.id, fresh.ocr.coin_lines
+            );
+            assert_eq!(
+                fresh.classified.coin_rate_detected, entry.classified.coin_rate_detected,
+                "coin_rate_detected mismatch for {}",
+                entry.id
+            );
             assert_eq!(
                 fresh.classified.coin_rate_detected,
                 fresh.classified.coin_per_minute.is_some(),

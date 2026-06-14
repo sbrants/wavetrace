@@ -9,6 +9,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{capture, fields, parser::CoinReading, state_machine::GameMode};
 
+/// Minimum coin-rate detection rate for live captures (seeded fixtures excluded).
+pub const LIVE_COIN_HIT_RATE_MIN: f64 = 0.80;
+
+pub fn is_seeded_entry(entry: &CaptureEntry) -> bool {
+    entry.window_title == "seeded_fixture"
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureExpect {
     pub tier: Option<u32>,
@@ -92,6 +99,27 @@ pub fn save_manifest(manifest: &CaptureManifest) -> Result<(), String> {
     std::fs::write(manifest_path(), json).map_err(|e| e.to_string())
 }
 
+/// Remove seeded reference fixtures, keeping live captures.
+pub fn clear_seeded_captures() -> Result<usize, String> {
+    let dir = captured_dir();
+    let mut manifest = load_manifest();
+    let removed: Vec<_> = manifest
+        .captures
+        .iter()
+        .filter(|e| is_seeded_entry(e))
+        .cloned()
+        .collect();
+    for entry in &removed {
+        let _ = std::fs::remove_file(dir.join(&entry.file));
+        if let Some(coin) = &entry.coin_crop_file {
+            let _ = std::fs::remove_file(dir.join(coin));
+        }
+    }
+    manifest.captures.retain(|e| !is_seeded_entry(e));
+    save_manifest(&manifest)?;
+    Ok(removed.len())
+}
+
 /// Remove live captures from the corpus, keeping seeded reference fixtures.
 pub fn clear_live_captures() -> Result<usize, String> {
     let dir = captured_dir();
@@ -149,12 +177,7 @@ pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
         height: frame.height(),
         window_title: window_title.to_string(),
         ocr: CaptureOcr {
-            coin_lines: fields
-                .all_lines
-                .iter()
-                .filter(|l| l.to_lowercase().contains("/min"))
-                .cloned()
-                .collect(),
+            coin_lines: coin_relevant_lines(&fields.all_lines),
             tier_wave_lines: fields.all_lines.clone(),
             mode_lines: Vec::new(),
         },
@@ -175,7 +198,7 @@ fn write_png(path: &Path, img: &RgbaImage) -> Result<(), String> {
     img.save(path).map_err(|e| e.to_string())
 }
 
-pub fn capture_once(window_title: &str) -> Result<CaptureEntry, String> {
+pub fn capture_once(window_title: &str, label_detected: bool) -> Result<CaptureEntry, String> {
     let frame = capture::capture_by_title(window_title).ok_or_else(|| {
         format!(
             "Window not found or too small: \"{window_title}\". \
@@ -190,7 +213,7 @@ pub fn capture_once(window_title: &str) -> Result<CaptureEntry, String> {
         ));
     }
     let mut entry = analyze_frame(&frame, window_title);
-    persist_entry(&frame, &mut entry)?;
+    persist_entry(&frame, &mut entry, label_detected)?;
     Ok(entry)
 }
 
@@ -198,10 +221,11 @@ pub fn capture_burst(
     window_title: &str,
     count: usize,
     interval_ms: u64,
+    label_detected: bool,
 ) -> Result<Vec<CaptureEntry>, String> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        match capture_once(window_title) {
+        match capture_once(window_title, label_detected) {
             Ok(entry) => {
                 eprintln!(
                     "[{}/{count}] {} coin_rate={} coin_lines={:?}",
@@ -222,7 +246,11 @@ pub fn capture_burst(
     Ok(out)
 }
 
-fn persist_entry(frame: &RgbaImage, entry: &mut CaptureEntry) -> Result<(), String> {
+fn persist_entry(
+    frame: &RgbaImage,
+    entry: &mut CaptureEntry,
+    label_detected: bool,
+) -> Result<(), String> {
     let dir = captured_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
@@ -234,6 +262,10 @@ fn persist_entry(frame: &RgbaImage, entry: &mut CaptureEntry) -> Result<(), Stri
 
     entry.id = id;
     entry.file = file;
+
+    if label_detected {
+        entry.expect = auto_expect_from_classified(&entry.classified);
+    }
 
     let mut manifest = load_manifest();
     manifest.captures.push(entry.clone());
@@ -262,12 +294,64 @@ fn next_sequence(dir: &Path, stamp: &str) -> u32 {
 #[derive(Debug, Clone)]
 pub struct CorpusReport {
     pub total: usize,
+    pub seeded_total: usize,
+    pub live_total: usize,
     pub coin_rate_hits: usize,
     pub coin_rate_misses: usize,
+    pub seeded_coin_rate_hits: usize,
+    pub live_coin_rate_hits: usize,
     pub labeled: usize,
     pub labeled_pass: usize,
     pub labeled_fail: usize,
     pub failures: Vec<String>,
+}
+
+pub fn capture_expect_from(
+    tier: Option<u32>,
+    wave: Option<u32>,
+    coin_per_minute_raw: Option<String>,
+    coin_per_minute: Option<f64>,
+) -> CaptureExpect {
+    CaptureExpect {
+        tier,
+        wave,
+        coin_per_minute_raw,
+        coin_per_minute,
+    }
+}
+
+/// Build `expect` from classified OCR when tier, wave, and coin rate are all detected.
+pub fn auto_expect_from_classified(classified: &CaptureClassified) -> Option<CaptureExpect> {
+    if classified.tier.is_none() || classified.wave.is_none() || !classified.coin_rate_detected {
+        return None;
+    }
+    Some(CaptureExpect {
+        tier: classified.tier,
+        wave: classified.wave,
+        coin_per_minute_raw: None,
+        coin_per_minute: classified.coin_per_minute,
+    })
+}
+
+fn coin_relevant_lines(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            if lower.contains("/min") {
+                return true;
+            }
+            let t = line.trim();
+            !t.contains('$')
+                && (t.starts_with('@')
+                    || t.starts_with("(Cc)")
+                    || t.starts_with("(CC)")
+                    || t.starts_with("(cc)")
+                    || t.starts_with("C ")
+                    || t.starts_with("c "))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Re-run OCR on every saved PNG and refresh manifest classified/ocr fields.
@@ -275,9 +359,6 @@ pub fn reanalyze_all_captures() -> Result<CorpusReport, String> {
     let dir = captured_dir();
     let mut manifest = load_manifest();
     for entry in &mut manifest.captures {
-        if entry.window_title == "seeded_fixture" {
-            entry.expect = None;
-        }
         let path = dir.join(&entry.file);
         if !path.exists() {
             continue;
@@ -294,11 +375,30 @@ pub fn reanalyze_all_captures() -> Result<CorpusReport, String> {
     Ok(evaluate_manifest(&manifest))
 }
 
+/// Backfill `expect` on entries from their classified values (for manual review).
+pub fn label_detected_captures(manifest: &mut CaptureManifest) -> usize {
+    let mut labeled = 0usize;
+    for entry in &mut manifest.captures {
+        if entry.expect.is_some() {
+            continue;
+        }
+        if let Some(expect) = auto_expect_from_classified(&entry.classified) {
+            entry.expect = Some(expect);
+            labeled += 1;
+        }
+    }
+    labeled
+}
+
 pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     let mut report = CorpusReport {
         total: manifest.captures.len(),
+        seeded_total: 0,
+        live_total: 0,
         coin_rate_hits: 0,
         coin_rate_misses: 0,
+        seeded_coin_rate_hits: 0,
+        live_coin_rate_hits: 0,
         labeled: 0,
         labeled_pass: 0,
         labeled_fail: 0,
@@ -306,8 +406,20 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     };
 
     for entry in &manifest.captures {
+        let seeded = is_seeded_entry(entry);
+        if seeded {
+            report.seeded_total += 1;
+        } else {
+            report.live_total += 1;
+        }
+
         if entry.classified.coin_rate_detected {
             report.coin_rate_hits += 1;
+            if seeded {
+                report.seeded_coin_rate_hits += 1;
+            } else {
+                report.live_coin_rate_hits += 1;
+            }
         } else {
             report.coin_rate_misses += 1;
         }
@@ -332,8 +444,9 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
                     reasons.push("coin_per_minute missing".into());
                 }
             }
-        } else if expect.coin_per_minute_raw.is_none() && entry.classified.coin_rate_detected {
-            // expect explicitly null rate — should not detect /min
+        } else if expect.coin_per_minute.is_none() && entry.classified.coin_rate_detected {
+            ok = false;
+            reasons.push("coin_rate_detected but expect no rate".into());
         }
 
         if expect.tier.is_some() && entry.classified.tier != expect.tier {

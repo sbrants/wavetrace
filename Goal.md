@@ -102,7 +102,7 @@ flowchart LR
 2. Settings (`target_window`, `poll_interval_ms`) are persisted in the SQLite `settings` table
 3. On each poll: capture window → full-frame OCR → classify lines → parse Tier / Wave / coin rate
 
-**Poll interval:** 1 second (configurable via `poll_interval_ms`)
+**Poll interval:** 1.5 seconds (1500ms, configurable via `poll_interval_ms`)
 
 ### Tracked fields (initial set)
 
@@ -355,7 +355,7 @@ Database file: `{app_data}/towerrun.db`
 
 | key              | type    | notes                                              |
 | ---------------- | ------- | -------------------------------------------------- |
-| poll_interval_ms | INTEGER | default 1000                                       |
+| poll_interval_ms | INTEGER | default 1500                                       |
 | target_window    | JSON    | `{title_substring, process_name}` for reconnection |
 
 ---
@@ -499,6 +499,70 @@ Each entry in `fixtures/expected.json` contains:
 - **Coin/Minute** uses the second `/min` line (first is usually cash); parser handles Windows OCR suffix quirks
 - Full screenshots are used for integration tests (mode detection + multi-field OCR)
 - When adding fixtures, always update `expected.json` and the edge-case table in Goal.md
+
+---
+
+## Windows release signing (Microsoft Trusted Signing)
+
+**Status:** wired in repo, not yet enrolled in Azure. Use when distributing installers to testers beyond “click Run anyway” on SmartScreen.
+
+Let's Encrypt and other TLS certs do **not** work for Windows Authenticode signing. Use [Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/quickstart) (formerly Trusted Signing) or a traditional OV/EV code signing cert.
+
+### Why sign
+
+- Reduces **SmartScreen “Unknown publisher”** warnings on downloaded `.exe` / installers
+- Not required to run locally if testers accept the warning
+- Regular `npm run tauri build` stays **unsigned** (no Azure credentials)
+
+### Repo wiring (already in place)
+
+| Path | Purpose |
+| ---- | ------- |
+| `src-tauri/tauri.signed.windows.conf.json` | Tauri `signCommand` → `scripts/trusted-sign.ps1` |
+| `scripts/trusted-sign.ps1` | Invokes `trusted-signing-cli` with Azure env vars |
+| `scripts/build-signed.ps1` | Loads `.env.signing`, runs signed release build |
+| `scripts/setup-trusted-signing.ps1` | Installs CLI, checks signtool / Azure CLI |
+| `.env.signing.example` | Template for secrets (copy → `.env.signing`, gitignored) |
+
+**Signed build command:** `npm run tauri:build:signed`
+
+Tauri signs `towerrun.exe`, MSI, and NSIS setup when signing succeeds.
+
+### Azure setup (one-time, do before first signed build)
+
+1. **Register** resource provider `Microsoft.CodeSigning` on the subscription
+2. **Create Artifact Signing account** — pick a supported region; note the endpoint (e.g. `https://eus.codesigning.azure.net`, `https://wus2.codesigning.azure.net`)
+3. **Identity validation** — individual developer or organization; **Public Trust** for public apps. Can take 1–20 business days
+4. **Certificate profile** — create a **Public Trust** profile linked to the validated identity
+5. **App Registration** (Microsoft Entra ID) — client ID + client secret; grant the app signing access on the Artifact Signing account (Certificate Manager / signing role)
+
+**Eligibility (Public Trust):** individuals — USA/Canada; organizations — USA, Canada, EU, UK (see [quickstart prerequisites](https://learn.microsoft.com/en-us/azure/trusted-signing/quickstart)). Billing account type must match validation type.
+
+### Local prerequisites
+
+- `trusted-signing-cli` — `powershell -File scripts/setup-trusted-signing.ps1` or `cargo install trusted-signing-cli`
+- **Windows SDK** `signtool` (10.0.26100+ recommended)
+- **.NET** 8+ (for signing tooling)
+- **Azure CLI** (optional, for portal workflows)
+
+### Environment variables (`.env.signing`)
+
+```env
+AZURE_CLIENT_ID=
+AZURE_CLIENT_SECRET=
+AZURE_TENANT_ID=
+AZURE_TRUSTED_SIGNING_ENDPOINT=    # e.g. https://eus.codesigning.azure.net
+AZURE_TRUSTED_SIGNING_ACCOUNT_NAME=
+AZURE_CERTIFICATE_PROFILE_NAME=
+```
+
+Never commit `.env.signing`.
+
+### Tester distribution notes
+
+- Unsigned builds: tell testers **More info → Run anyway** (or Unblock on the file)
+- Signed builds: SmartScreen improves immediately; publisher reputation may still build over time
+- No in-app auto-updater yet — testers reinstall manually per version
 
 ---
 

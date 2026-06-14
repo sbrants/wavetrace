@@ -1,9 +1,64 @@
+import { invoke } from "@tauri-apps/api/core";
+
 const PANEL_BG = "#16203a";
 const TITLE_COLOR = "#8da2c0";
 
+const STYLE_PROPS = [
+  "fill",
+  "stroke",
+  "stroke-width",
+  "opacity",
+  "font-family",
+  "font-size",
+  "font-weight",
+  "text-anchor",
+  "dominant-baseline",
+] as const;
+
+function findChartSvg(root: HTMLElement): SVGSVGElement {
+  const recharts = root.querySelector("svg.recharts-surface");
+  if (recharts instanceof SVGSVGElement) {
+    return recharts;
+  }
+
+  const candidates = [...root.querySelectorAll("svg")].filter(
+    (svg) => !svg.closest(".chart-screenshot-actions")
+  );
+  if (candidates.length === 0) {
+    throw new Error("No chart to capture");
+  }
+
+  return candidates.reduce((best, svg) => {
+    const a = best.getBoundingClientRect();
+    const b = svg.getBoundingClientRect();
+    return b.width * b.height > a.width * a.height ? svg : best;
+  });
+}
+
+function prepareSvgForExport(source: SVGSVGElement): SVGSVGElement {
+  const cloned = source.cloneNode(true) as SVGSVGElement;
+  cloned.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  cloned.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+
+  const sourceNodes = [source, ...source.querySelectorAll("*")];
+  const cloneNodes = [cloned, ...cloned.querySelectorAll("*")];
+  cloneNodes.forEach((node, i) => {
+    const el = node as SVGElement;
+    const src = sourceNodes[i] as Element;
+    const computed = window.getComputedStyle(src);
+    for (const prop of STYLE_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (value && value !== "none" && value !== "normal") {
+        el.style.setProperty(prop, value);
+      }
+    }
+  });
+
+  return cloned;
+}
+
 export async function captureChartCard(element: HTMLElement): Promise<Blob> {
-  const svg = element.querySelector("svg");
-  if (!svg) throw new Error("No chart to capture");
+  const svg = findChartSvg(element);
 
   const title = element.querySelector("h3")?.textContent ?? "chart";
   const svgRect = svg.getBoundingClientRect();
@@ -28,7 +83,7 @@ export async function captureChartCard(element: HTMLElement): Promise<Blob> {
   ctx.font = `${14 * scale}px "Segoe UI", system-ui, sans-serif`;
   ctx.fillText(title, padding * scale, (padding + 14) * scale);
 
-  const cloned = svg.cloneNode(true) as SVGSVGElement;
+  const cloned = prepareSvgForExport(svg);
   cloned.setAttribute("width", String(svgRect.width));
   cloned.setAttribute("height", String(svgRect.height));
 
@@ -74,7 +129,25 @@ export function chartScreenshotFilename(title: string): string {
   return `${slug}-${stamp}.png`;
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(new Error("Failed to encode image"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function copyChartScreenshot(blob: Blob) {
+  if ("__TAURI_INTERNALS__" in window) {
+    const pngBase64 = await blobToBase64(blob);
+    await invoke("copy_image_to_clipboard", { pngBase64 });
+    return;
+  }
+
   if (!navigator.clipboard?.write) {
     throw new Error("Clipboard is not available");
   }

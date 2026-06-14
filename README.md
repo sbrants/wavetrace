@@ -35,11 +35,71 @@ cargo test --release       # parser, state machine, classifier, db (+ Windows OC
 cargo test --release -- --ignored   # optional manual/debug tests only
 ```
 
+### OCR regression corpus
+
+Bundled screenshots and optional live NoxPlayer captures in `fixtures/captured/` guard
+against OCR/parser regressions on Windows.
+
+**Capture live frames** (Settings → “Capture 80 test frames”, or CLI):
+
+```powershell
+cd src-tauri
+cargo run --example capture_fixtures -- --count 30
+cargo run --example capture_fixtures -- --count 30 --label-detected   # auto-set expect when all fields detected
+```
+
+**Seed reference fixtures** from `fixtures/expected.json` (keeps existing live captures):
+
+```powershell
+cargo run --example seed_captured_corpus -- --clear-seeded
+```
+
+**Re-run OCR** on saved PNGs after parser/classify changes:
+
+```powershell
+cargo run --example reanalyze_corpus
+```
+
+**Backfill labels** on live captures for review:
+
+```powershell
+cargo run --example label_corpus
+```
+
+**Run corpus tests**:
+
+```powershell
+cargo test --release captured_corpus -- --nocapture
+```
+
 ## Build a release bundle
 
 ```powershell
 npm run tauri build
 ```
+
+Outputs: `src-tauri/target/release/towerrun.exe` plus MSI/NSIS installers under
+`src-tauri/target/release/bundle/`.
+
+### Signed release (Microsoft Trusted Signing)
+
+Unsigned builds show Windows SmartScreen warnings. To sign installers with
+[Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/quickstart):
+
+1. **Azure setup** (one-time): register `Microsoft.CodeSigning`, create an
+   Artifact Signing account, complete identity validation (individual or org),
+   create a **Public Trust** certificate profile, and an **App Registration**
+   with a client secret. Grant the app **Trusted Signing Certificate Manager**
+   (or equivalent signing role) on the account.
+2. **Install signing CLI**: `powershell -File scripts/setup-trusted-signing.ps1`
+3. **Configure secrets**: copy `.env.signing.example` → `.env.signing` and fill:
+   `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`,
+   `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`,
+   `AZURE_CERTIFICATE_PROFILE_NAME`
+4. **Build signed**: `npm run tauri:build:signed`
+
+Regular `npm run tauri build` stays unsigned (no Azure credentials required).
+
 
 ## Using the app
 

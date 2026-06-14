@@ -3,6 +3,7 @@
 //! Usage:
 //!   cargo run --example capture_fixtures -- --count 30 --interval 500
 //!   cargo run --example capture_fixtures -- --count 50 --title "The Tower"
+//!   cargo run --example capture_fixtures -- --count 30 --label-detected
 
 use towerrun_lib::{capture, db, fixture_capture, settings};
 
@@ -12,6 +13,7 @@ fn main() {
     let mut title: Option<String> = None;
     let mut list_windows = false;
     let mut clear_live = false;
+    let mut label_detected = false;
 
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -31,6 +33,7 @@ fn main() {
             }
             "--list-windows" | "-l" => list_windows = true,
             "--clear-live" => clear_live = true,
+            "--label-detected" => label_detected = true,
             "--help" | "-h" => {
                 println!(
                     "capture_fixtures — save frames to fixtures/captured/\n\n\
@@ -39,6 +42,7 @@ fn main() {
                        --interval, -i <ms>   delay between frames (default 500)\n\
                        --title, -t <text>    window title substring\n\
                        --clear-live          remove prior live captures (keep seeded)\n\
+                       --label-detected      auto-set expect when tier/wave/coin detected\n\
                        --list-windows, -l    show open windows and exit\n"
                 );
                 return;
@@ -81,21 +85,26 @@ fn main() {
     println!(
         "Capturing {count} frames every {interval_ms}ms from \"{window_title}\"..."
     );
+    if label_detected {
+        println!("Auto-labeling captures where tier, wave, and coin rate are detected.");
+    }
     println!("Output: {}", fixture_capture::captured_dir().display());
 
-    let entries =
-        fixture_capture::capture_burst(&window_title, count, interval_ms).expect("capture burst");
+    let entries = fixture_capture::capture_burst(&window_title, count, interval_ms, label_detected)
+        .expect("capture burst");
 
     let hits = entries
         .iter()
         .filter(|e| e.classified.coin_rate_detected)
         .count();
+    let labeled = entries.iter().filter(|e| e.expect.is_some()).count();
     println!(
-        "Done. saved={} coin_rate_detected={}/{} ({:.0}%)",
+        "Done. saved={} coin_rate_detected={}/{} ({:.0}%) labeled={}",
         entries.len(),
         hits,
         entries.len(),
-        100.0 * hits as f64 / entries.len().max(1) as f64
+        100.0 * hits as f64 / entries.len().max(1) as f64,
+        labeled
     );
     println!("Manifest: {}", fixture_capture::manifest_path().display());
     println!("Run tests: cargo test captured_corpus -- --nocapture");

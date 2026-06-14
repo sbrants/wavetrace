@@ -14,6 +14,12 @@ export default function ChartScreenshotActions({
   disabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const flash = (message: string) => {
+    setStatus(message);
+    window.setTimeout(() => setStatus(null), 1500);
+  };
 
   const capture = async () => {
     if (!targetRef.current) {
@@ -33,6 +39,7 @@ export default function ChartScreenshotActions({
     try {
       const blob = await capture();
       await copyChartScreenshot(blob);
+      flash("Copied ✓");
     } catch (e) {
       alert(String(e));
     } finally {
@@ -45,6 +52,7 @@ export default function ChartScreenshotActions({
     try {
       const blob = await capture();
       downloadChartScreenshot(blob, filename());
+      flash("Downloaded ✓");
     } catch (e) {
       alert(String(e));
     } finally {
@@ -74,6 +82,7 @@ export default function ChartScreenshotActions({
       >
         <DownloadIcon />
       </button>
+      {status && <span className="chart-action-status">{status}</span>}
     </div>
   );
 }

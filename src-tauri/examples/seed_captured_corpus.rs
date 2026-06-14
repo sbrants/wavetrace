@@ -2,13 +2,13 @@
 //!
 //! Usage:
 //!   cargo run --example seed_captured_corpus
-//!   cargo run --example seed_captured_corpus -- --clear
+//!   cargo run --example seed_captured_corpus -- --clear-seeded
 
 use std::path::PathBuf;
 
 use image::RgbaImage;
 use serde::Deserialize;
-use towerrun_lib::fixture_capture::{self, CaptureManifest};
+use towerrun_lib::fixture_capture::{self, capture_expect_from};
 
 #[derive(Debug, Deserialize)]
 struct ExpectedRoot {
@@ -47,24 +47,13 @@ fn scale_to(img: &RgbaImage, w: u32, h: u32, tag: &str) -> (RgbaImage, String) {
 }
 
 fn main() {
-    let clear = std::env::args().any(|a| a == "--clear");
+    let clear_seeded = std::env::args().any(|a| a == "--clear-seeded" || a == "--clear");
     let dir = fixture_capture::captured_dir();
     std::fs::create_dir_all(&dir).expect("create captured dir");
 
-    if clear {
-        for ent in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".png") {
-                let _ = std::fs::remove_file(ent.path());
-            }
-        }
-        fixture_capture::save_manifest(&CaptureManifest {
-            version: 1,
-            description: "Live captures for OCR regression. Set expect on entries for strict tests.".into(),
-            captures: Vec::new(),
-        })
-        .expect("reset manifest");
-        println!("Cleared {}", dir.display());
+    if clear_seeded {
+        let n = fixture_capture::clear_seeded_captures().expect("clear seeded captures");
+        println!("Cleared {n} seeded capture(s) from {}", dir.display());
     }
 
     let expected_path = fixtures_dir().join("expected.json");
@@ -74,6 +63,7 @@ fn main() {
 
     let mut manifest = fixture_capture::load_manifest();
     let mut added = 0usize;
+    let mut updated = 0usize;
 
     let scales = [(978, 2084), (1080, 2280), (720, 1560)];
 
@@ -85,16 +75,31 @@ fn main() {
             variants.push((scaled, name));
         }
 
+        let expect = capture_expect_from(
+            fx.expect.tier,
+            fx.expect.wave,
+            fx.expect.coin_per_minute_raw.clone(),
+            fx.expect.coin_per_minute,
+        );
+
         for (frame, file_name) in variants {
-            if manifest.captures.iter().any(|c| c.file == file_name) {
+            if let Some(existing) = manifest.captures.iter_mut().find(|c| c.file == file_name) {
+                existing.expect = Some(expect.clone());
+                existing.notes = Some(format!(
+                    "Seeded from {} (tier={:?} wave={:?} coin={:?})",
+                    fx.file, fx.expect.tier, fx.expect.wave, fx.expect.coin_per_minute
+                ));
+                updated += 1;
                 continue;
             }
+
             let path = dir.join(&file_name);
             frame.save(&path).expect("save png");
 
             let mut entry = fixture_capture::analyze_frame(&frame, "seeded_fixture");
             entry.file = file_name.clone();
             entry.id = file_name.trim_end_matches(".png").to_string();
+            entry.expect = Some(expect.clone());
             entry.notes = Some(format!(
                 "Seeded from {} (tier={:?} wave={:?} coin={:?})",
                 fx.file, fx.expect.tier, fx.expect.wave, fx.expect.coin_per_minute
@@ -107,12 +112,16 @@ fn main() {
     fixture_capture::save_manifest(&manifest).expect("save manifest");
     let report = fixture_capture::evaluate_manifest(&manifest);
     println!(
-        "Seeded {added} frames into {} (total={})",
+        "Seeded {added} new + {updated} updated in {} (total={} seeded={} live={})",
         dir.display(),
-        manifest.captures.len()
+        manifest.captures.len(),
+        report.seeded_total,
+        report.live_total
     );
     println!(
-        "coin_rate_hits={}/{} labeled_pass={}/{}",
+        "coin_rate: seeded={}/{} all={}/{} labeled_pass={}/{}",
+        report.seeded_coin_rate_hits,
+        report.seeded_total,
         report.coin_rate_hits,
         report.total,
         report.labeled_pass,

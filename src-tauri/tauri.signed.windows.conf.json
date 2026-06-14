@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "windows": {
+      "signCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\trusted-sign.ps1 %1"
+    }
+  }
+}

@@ -1,7 +1,7 @@
 //! Classify a set of OCR lines into a PollInput, following the
 //! "Game mode edge cases" decision flow in Goal.md.
 
-use crate::parser::{parse_coin_line, CoinReading};
+use crate::parser::{has_coin_icon_prefix, parse_coin_line, CoinReading};
 use crate::state_machine::{GameMode, PollInput};
 
 /// Find "<keyword> <int>[+]" anywhere inside a line, tolerating separators.
@@ -42,7 +42,7 @@ pub fn classify(lines: &[String]) -> PollInput {
 
     let tier = extract_tier(lines, &mut tournament);
     let wave = extract_wave(lines);
-    let coin = extract_coin_second_min(lines);
+    let coin = extract_coin_second_min(lines, tournament || end_of_run);
 
     let mode = if end_of_run {
         GameMode::EndOfRun
@@ -93,14 +93,23 @@ fn extract_wave(lines: &[String]) -> Option<u32> {
 
 /// Second `/min` line wins (first is usually cash `$…/min`).
 /// Windows OCR often drops "/min" on the coin row (`@ 3.48T…`); fall back to `@` lines.
-fn extract_coin_second_min(lines: &[String]) -> CoinReading {
+fn extract_coin_second_min(lines: &[String], prefer_total: bool) -> CoinReading {
     let min_lines: Vec<&str> = lines
         .iter()
         .map(|s| s.as_str())
-        .filter(|l| l.to_lowercase().contains("/min"))
+        .filter(|l| {
+            let lower = l.to_lowercase();
+            if lower.contains("/min") {
+                return true;
+            }
+            has_coin_icon_prefix(l) && (lower.contains("/mi") || lower.contains("/m"))
+        })
         .collect();
     if min_lines.len() >= 2 {
         return parse_coin_line(min_lines[1].trim());
+    }
+    if min_lines.len() == 1 && has_coin_icon_prefix(min_lines[0]) {
+        return parse_coin_line(min_lines[0].trim());
     }
 
     let at_lines: Vec<&str> = lines
@@ -110,15 +119,38 @@ fn extract_coin_second_min(lines: &[String]) -> CoinReading {
             let t = l.trim();
             !t.contains('$')
                 && (t.starts_with('@')
+                    || t.starts_with("C ")
+                    || t.starts_with("c ")
                     || t.starts_with("(Cc)")
                     || t.starts_with("(CC)")
                     || t.starts_with("(cc)"))
         })
         .collect();
     if let Some(line) = at_lines.first() {
+        let reading = if prefer_total {
+            parse_coin_line(line.trim())
+        } else {
+            crate::parser::parse_coin_anchor_crop(line.trim())
+        };
+        if matches!(reading, CoinReading::Rate(_) | CoinReading::Total(_)) {
+            return reading;
+        }
         let reading = parse_coin_line(line.trim());
         if matches!(reading, CoinReading::Rate(_)) {
             return reading;
+        }
+    }
+
+    for line in lines {
+        let t = line.trim().to_lowercase();
+        if t.contains('$') {
+            continue;
+        }
+        if (t.starts_with('o') || t.starts_with('0')) && t.contains("min") {
+            let reading = parse_coin_line(line.trim());
+            if matches!(reading, CoinReading::Rate(_)) {
+                return reading;
+            }
         }
     }
 

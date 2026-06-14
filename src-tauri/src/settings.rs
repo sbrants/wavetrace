@@ -22,7 +22,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             target_window: None,
-            poll_interval_ms: 1000,
+            poll_interval_ms: 1500,
         }
     }
 }

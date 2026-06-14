@@ -40,8 +40,12 @@ pub fn run() {
             commands::export_csv,
             commands::preview_capture,
             commands::probe_ocr,
+            #[cfg(debug_assertions)]
             commands::capture_fixture_once,
+            #[cfg(debug_assertions)]
             commands::capture_fixture_burst,
+            commands::copy_image_to_clipboard,
+            commands::read_scanner_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

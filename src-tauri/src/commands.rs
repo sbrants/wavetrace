@@ -120,11 +120,99 @@ pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>,
 
 /// Export runs to CSV next to the database; returns the file path.
 #[tauri::command]
-pub fn export_csv() -> Result<String, String> {
-    let csv = db::export_runs_csv(&conn()?).map_err(|e| e.to_string())?;
+pub fn export_csv(filter: RunFilter) -> Result<String, String> {
+    let csv = db::export_runs_csv(&conn()?, &filter).map_err(|e| e.to_string())?;
     let path = db::app_data_dir().join("runs_export.csv");
     std::fs::write(&path, csv).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[derive(Serialize)]
+pub struct ScannerLogView {
+    pub path: String,
+    pub lines: Vec<String>,
+    pub total_lines: usize,
+    /// True when fewer than total_lines are returned (line or byte cap).
+    pub truncated: bool,
+    /// True when the log file exceeded the byte tail limit.
+    pub log_tail_truncated: bool,
+}
+
+const MAX_SCANNER_LOG_TAIL_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CLIPBOARD_PNG_BYTES: usize = 8 * 1024 * 1024;
+
+fn count_lines_in_file(path: &std::path::Path) -> Result<usize, String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut lines = 0usize;
+    loop {
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        lines += buf[..n].iter().filter(|b| **b == b'\n').count();
+    }
+    Ok(lines)
+}
+
+fn read_file_tail_text(path: &std::path::Path, max_bytes: usize) -> Result<(String, bool), String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let len = meta.len() as usize;
+    if len == 0 {
+        return Ok((String::new(), false));
+    }
+    let tail_truncated = len > max_bytes;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let read_len = len.min(max_bytes);
+    if tail_truncated {
+        file.seek(SeekFrom::End(-(read_len as i64)))
+            .map_err(|e| e.to_string())?;
+    }
+    let mut buf = vec![0u8; read_len];
+    file.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    if tail_truncated {
+        if let Some(idx) = text.find('\n') {
+            text = text[idx + 1..].to_string();
+        } else {
+            text.clear();
+        }
+    }
+    Ok((text, tail_truncated))
+}
+
+/// Tail the scanner log (last N lines, capped at 2 MiB from EOF).
+#[tauri::command]
+pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
+    let path = db::scanner_log_path();
+    let path_str = path.to_string_lossy().to_string();
+    if !path.exists() {
+        return Ok(ScannerLogView {
+            path: path_str,
+            lines: Vec::new(),
+            total_lines: 0,
+            truncated: false,
+            log_tail_truncated: false,
+        });
+    }
+
+    let max_lines = max_lines.clamp(10, 2000);
+    let total_lines = count_lines_in_file(&path)?;
+    let (content, log_tail_truncated) =
+        read_file_tail_text(&path, MAX_SCANNER_LOG_TAIL_BYTES)?;
+    let all: Vec<&str> = content.lines().collect();
+    let line_truncated = all.len() > max_lines;
+    let start = all.len().saturating_sub(max_lines);
+    let lines: Vec<String> = all[start..].iter().map(|s| (*s).to_string()).collect();
+    Ok(ScannerLogView {
+        path: path_str,
+        truncated: line_truncated || log_tail_truncated,
+        log_tail_truncated,
+        total_lines,
+        lines,
+    })
 }
 
 #[derive(Serialize)]
@@ -146,7 +234,7 @@ pub async fn capture_fixture_once() -> Result<CaptureEntry, String> {
 fn capture_fixture_once_blocking() -> Result<CaptureEntry, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
-    fixture_capture::capture_once(&target.title_substring)
+    fixture_capture::capture_once(&target.title_substring, false)
 }
 
 /// Burst-capture frames for the OCR regression corpus.
@@ -164,7 +252,7 @@ pub async fn capture_fixture_burst(count: usize, interval_ms: u64) -> Result<Cap
 fn capture_fixture_burst_blocking(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
-    let entries = fixture_capture::capture_burst(&target.title_substring, count, interval_ms)?;
+    let entries = fixture_capture::capture_burst(&target.title_substring, count, interval_ms, false)?;
     let coin_rate_detected = entries
         .iter()
         .filter(|e| e.classified.coin_rate_detected)
@@ -331,4 +419,71 @@ fn preview_capture_blocking() -> Result<String, String> {
         )
         .map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+pub fn copy_image_to_clipboard(png_base64: String) -> Result<(), String> {
+    let trimmed = png_base64.trim();
+    let est_bytes = trimmed.len().saturating_mul(3) / 4;
+    if est_bytes > MAX_CLIPBOARD_PNG_BYTES {
+        return Err(format!(
+            "image too large ({est_bytes} bytes, max {MAX_CLIPBOARD_PNG_BYTES})"
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|e| format!("invalid image data: {e}"))?;
+    if bytes.len() > MAX_CLIPBOARD_PNG_BYTES {
+        return Err(format!(
+            "image too large ({} bytes, max {MAX_CLIPBOARD_PNG_BYTES})",
+            bytes.len()
+        ));
+    }
+    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    let rgba = img.to_rgba8();
+    let width = rgba.width() as usize;
+    let height = rgba.height() as usize;
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard
+        .set_image(arboard::ImageData {
+            width,
+            height,
+            bytes: rgba.into_raw().into(),
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod log_tail_tests {
+    use super::{count_lines_in_file, read_file_tail_text};
+    use std::io::Write;
+
+    fn temp_log(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("towerrun_{name}_{}", std::process::id()))
+    }
+
+    #[test]
+    fn tail_reads_last_bytes_and_skips_partial_line() {
+        let path = temp_log("small");
+        let mut f = std::fs::File::create(&path).expect("create");
+        write!(f, "line1\nline2\nline3\n").expect("write");
+        let (text, truncated) = read_file_tail_text(&path, 64).expect("tail");
+        assert!(!truncated);
+        assert!(text.contains("line3"));
+        assert_eq!(count_lines_in_file(&path).expect("count"), 3);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn tail_truncates_large_files() {
+        let path = temp_log("big");
+        let mut f = std::fs::File::create(&path).expect("create");
+        write!(f, "{}", "x".repeat(5000)).expect("pad");
+        write!(f, "\nfinal\n").expect("tail line");
+        let (text, truncated) = read_file_tail_text(&path, 100).expect("tail");
+        assert!(truncated);
+        assert!(text.contains("final"));
+        assert!(!text.contains("xxxx"));
+        let _ = std::fs::remove_file(path);
+    }
 }

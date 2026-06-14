@@ -212,8 +212,9 @@ export default function History() {
 
   const exportCsv = async () => {
     try {
-      const path = await api.exportCsv();
-      alert(`Exported to:\n${path}`);
+      const activeFilter = listFilter();
+      const path = await api.exportCsv(activeFilter);
+      alert(`Exported ${runs.length} run${runs.length === 1 ? "" : "s"} to:\n${path}`);
     } catch (e) {
       alert(e);
     }
