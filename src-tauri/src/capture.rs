@@ -108,8 +108,8 @@ fn capture_window_via_monitor(w: &xcap::Window) -> Option<RgbaImage> {
     let wh = w.height().ok()?;
     let monitor = w.current_monitor().ok()?;
     let mon_img = monitor.capture_image().ok()?;
-    let mx = monitor.x().ok()? as i32;
-    let my = monitor.y().ok()? as i32;
+    let mx = monitor.x().ok()?;
+    let my = monitor.y().ok()?;
     let rel_x = (wx - mx).max(0) as u32;
     let rel_y = (wy - my).max(0) as u32;
     let w = ww.min(mon_img.width().saturating_sub(rel_x)).max(1);

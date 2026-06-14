@@ -129,10 +129,10 @@ fn fix_spaced_decimal(body: &str) -> String {
 fn normalize_coin_rate_ocr(text: &str) -> String {
     let mut t = text.trim().to_string();
     let lower_start = t.to_lowercase();
-    if lower_start.starts_with("@ o/") || lower_start.starts_with("@ 0/") {
-        if lower_start.contains("min") {
-            return "0/min".to_string();
-        }
+    if (lower_start.starts_with("@ o/") || lower_start.starts_with("@ 0/"))
+        && lower_start.contains("min")
+    {
+        return "0/min".to_string();
     }
     if lower_start == "o/min" || lower_start.starts_with("o/min") {
         return "0/min".to_string();

@@ -192,7 +192,7 @@ impl DebouncedCoinRate {
             return false;
         }
         let ratio = v / cur;
-        ratio > 50.0 || ratio < 0.02
+        !(0.02..=50.0).contains(&ratio)
     }
 
     /// Latest rate for the dashboard; holds the last parseable reading between polls.

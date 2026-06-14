@@ -41,8 +41,6 @@ pub struct CaptureClassified {
 pub struct CaptureEntry {
     pub id: String,
     pub file: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub coin_crop_file: Option<String>,
     pub captured_at: String,
     pub width: u32,
     pub height: u32,
@@ -131,9 +129,6 @@ pub fn prune_coin_misses() -> Result<(usize, usize), String> {
         .collect();
     for entry in &removed {
         let _ = std::fs::remove_file(dir.join(&entry.file));
-        if let Some(coin) = &entry.coin_crop_file {
-            let _ = std::fs::remove_file(dir.join(coin));
-        }
     }
     manifest
         .captures
@@ -171,7 +166,6 @@ pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
     CaptureEntry {
         id: String::new(),
         file: String::new(),
-        coin_crop_file: None,
         captured_at: chrono::Utc::now().to_rfc3339(),
         width: frame.width(),
         height: frame.height(),
@@ -304,20 +298,6 @@ pub struct CorpusReport {
     pub failures: Vec<String>,
 }
 
-pub fn capture_expect_from(
-    tier: Option<u32>,
-    wave: Option<u32>,
-    coin_per_minute_raw: Option<String>,
-    coin_per_minute: Option<f64>,
-) -> CaptureExpect {
-    CaptureExpect {
-        tier,
-        wave,
-        coin_per_minute_raw,
-        coin_per_minute,
-    }
-}
-
 /// Build `expect` from classified OCR when tier, wave, and coin rate are all detected.
 pub fn auto_expect_from_classified(classified: &CaptureClassified) -> Option<CaptureExpect> {
     if classified.tier.is_none() || classified.wave.is_none() || !classified.coin_rate_detected {
@@ -367,7 +347,6 @@ pub fn reanalyze_all_captures() -> Result<CorpusReport, String> {
         entry.classified = fresh.classified;
         entry.width = fresh.width;
         entry.height = fresh.height;
-        entry.coin_crop_file = None;
     }
     save_manifest(&manifest)?;
     Ok(evaluate_manifest(&manifest))

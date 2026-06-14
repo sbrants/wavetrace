@@ -17,7 +17,7 @@ use windows::{
 };
 
 #[cfg(windows)]
-use futures::executor::block_on;
+use pollster::block_on;
 
 #[cfg(windows)]
 static WINRT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
