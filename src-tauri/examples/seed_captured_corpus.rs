@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use image::RgbaImage;
 use serde::Deserialize;
-use towerrun_lib::fixture_capture::{self, capture_expect_from};
+use wavetrace_lib::fixture_capture::{self, capture_expect_from};
 
 #[derive(Debug, Deserialize)]
 struct ExpectedRoot {

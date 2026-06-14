@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-Write-Host "Microsoft Trusted Signing setup for TowerRun"
+Write-Host "Microsoft Trusted Signing setup for WaveTrace"
 Write-Host ""
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {

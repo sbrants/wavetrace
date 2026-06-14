@@ -1,8 +1,8 @@
-# The Tower Run Performance tracker
+# WaveTrace
 
 ## Overview
 
-Build a cross-platform performance tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
+**WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop only**.
 
@@ -61,7 +61,7 @@ The game being tracked is **The Tower**. It runs on Android and iOS; on desktop,
 
 - **Single Tauri 2.x app:** Rust native shell handles screenshots + OCR; embedded webview serves the UI
 - **Frontend:** agent may choose React or Svelte
-- **Local SQLite** at `{app_data}/towerrun.db`
+- **Local SQLite** at `{app_data}/wavetrace/wavetrace.db`
 - **Future:** same UI talks to a cloud API instead of local DB
 
 ```mermaid
@@ -320,7 +320,7 @@ For suffixes beyond `ac`, continue the pattern: each subsequent two-letter suffi
 
 ## Data model (SQLite MVP)
 
-Database file: `{app_data}/towerrun.db`
+Database file: `{app_data}/wavetrace/wavetrace.db`
 
 ### runs
 
@@ -526,7 +526,7 @@ Let's Encrypt and other TLS certs do **not** work for Windows Authenticode signi
 
 **Signed build command:** `npm run tauri:build:signed`
 
-Tauri signs `towerrun.exe`, MSI, and NSIS setup when signing succeeds.
+Tauri signs `wavetrace.exe`, MSI, and NSIS setup when signing succeeds.
 
 ### Azure setup (one-time, do before first signed build)
 

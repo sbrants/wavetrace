@@ -49,7 +49,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>TowerRun</h1>
+        <h1>WaveTrace</h1>
         <nav>
           {(["dashboard", "history", "settings"] as Tab[]).map((t) => (
             <button

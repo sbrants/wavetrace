@@ -31,7 +31,7 @@ Write-Host "Signing $File via Microsoft Trusted Signing ($account / $profile)...
     -e $endpoint `
     -a $account `
     -c $profile `
-    -d "TowerRun Performance Tracker" `
+    -d "WaveTrace" `
     $File
 
 if ($LASTEXITCODE -ne 0) {

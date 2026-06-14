@@ -5537,28 +5537,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
-name = "towerrun"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "base64 0.22.1",
- "chrono",
- "dirs",
- "futures",
- "icu_locale_core",
- "image",
- "rusqlite",
- "serde",
- "serde_json",
- "spreadsheet-ods",
- "tauri",
- "tauri-build",
- "uuid",
- "windows 0.62.2",
- "xcap",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5947,6 +5925,28 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap 2.14.0",
  "semver",
+]
+
+[[package]]
+name = "wavetrace"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "base64 0.22.1",
+ "chrono",
+ "dirs",
+ "futures",
+ "icu_locale_core",
+ "image",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "spreadsheet-ods",
+ "tauri",
+ "tauri-build",
+ "uuid",
+ "windows 0.62.2",
+ "xcap",
 ]
 
 [[package]]

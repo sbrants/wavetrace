@@ -1,6 +1,6 @@
 //! Re-run OCR on all frames in fixtures/captured/ and print hit-rate stats.
 
-use towerrun_lib::fixture_capture::{self, LIVE_COIN_HIT_RATE_MIN};
+use wavetrace_lib::fixture_capture::{self, LIVE_COIN_HIT_RATE_MIN};
 
 fn main() {
     let report = fixture_capture::reanalyze_all_captures().expect("reanalyze");

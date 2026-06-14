@@ -42,11 +42,34 @@ pub struct RunFilter {
 }
 
 pub fn app_data_dir() -> PathBuf {
-    let dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("towerrun");
-    std::fs::create_dir_all(&dir).ok();
-    dir
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let new_dir = base.join("wavetrace");
+    if !new_dir.exists() {
+        for legacy in ["wavewatch", "towerrun"] {
+            let old_dir = base.join(legacy);
+            if old_dir.exists() {
+                if std::fs::rename(&old_dir, &new_dir).is_err() {
+                    std::fs::create_dir_all(&old_dir).ok();
+                    return old_dir;
+                }
+                break;
+            }
+        }
+    }
+    std::fs::create_dir_all(&new_dir).ok();
+    new_dir
+}
+
+fn database_path() -> PathBuf {
+    let dir = app_data_dir();
+    let preferred = dir.join("wavetrace.db");
+    for candidate in ["wavetrace.db", "wavewatch.db", "towerrun.db"] {
+        let path = dir.join(candidate);
+        if path.exists() {
+            return path;
+        }
+    }
+    preferred
 }
 
 pub fn scanner_log_path() -> PathBuf {
@@ -54,7 +77,7 @@ pub fn scanner_log_path() -> PathBuf {
 }
 
 pub fn open() -> rusqlite::Result<Connection> {
-    let conn = Connection::open(app_data_dir().join("towerrun.db"))?;
+    let conn = Connection::open(database_path())?;
     migrate(&conn)?;
     Ok(conn)
 }

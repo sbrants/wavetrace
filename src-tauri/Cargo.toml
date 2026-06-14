@@ -1,11 +1,11 @@
 [package]
-name = "towerrun"
+name = "wavetrace"
 version = "0.1.0"
-description = "The Tower Run Performance tracker"
+description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 
 [lib]
-name = "towerrun_lib"
+name = "wavetrace_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

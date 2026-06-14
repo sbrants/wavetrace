@@ -503,7 +503,7 @@ mod log_tail_tests {
     use std::io::Write;
 
     fn temp_log(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("towerrun_{name}_{}", std::process::id()))
+        std::env::temp_dir().join(format!("wavetrace_{name}_{}", std::process::id()))
     }
 
     #[test]

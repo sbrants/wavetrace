@@ -1,6 +1,6 @@
-# TowerRun Performance Tracker
+# WaveTrace
 
-Desktop companion app for the idle game **The Tower**. It watches the game
+Desktop companion for the idle game **The Tower**. It watches the game
 window, OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the
 wave advances, and charts coin/min against wave for the current and past runs.
 
@@ -78,7 +78,7 @@ cargo test --release captured_corpus -- --nocapture
 npm run tauri build
 ```
 
-Outputs: `src-tauri/target/release/towerrun.exe` plus MSI/NSIS installers under
+Outputs: `src-tauri/target/release/wavetrace.exe` plus MSI/NSIS installers under
 `src-tauri/target/release/bundle/`.
 
 ### Signed release (Microsoft Trusted Signing)
@@ -110,8 +110,9 @@ Regular `npm run tauri build` stays unsigned (no Azure credentials required).
 4. **Dashboard** shows live values and the coin/min-vs-wave chart.
   **History** lists past runs with filtering, sorting, and CSV export.
 
-Data lives in `%APPDATA%/towerrun/towerrun.db`; scanner diagnostics in
-`%APPDATA%/towerrun/logs/scanner.log`.
+Data lives in `%APPDATA%/wavetrace/wavetrace.db` (migrates from `wavewatch/` or
+`towerrun/` on first launch); scanner diagnostics in
+`%APPDATA%/wavetrace/logs/scanner.log`.
 
 ## Notes
 

@@ -4,7 +4,7 @@
 //!   cargo run --example label_corpus
 //!   cargo run --example label_corpus -- --dry-run
 
-use towerrun_lib::fixture_capture;
+use wavetrace_lib::fixture_capture;
 
 fn main() {
     let dry_run = std::env::args().any(|a| a == "--dry-run");

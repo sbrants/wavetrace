@@ -5,7 +5,7 @@
 //!   cargo run --example capture_fixtures -- --count 50 --title "The Tower"
 //!   cargo run --example capture_fixtures -- --count 30 --label-detected
 
-use towerrun_lib::{capture, db, fixture_capture, settings};
+use wavetrace_lib::{capture, db, fixture_capture, settings};
 
 fn main() {
     let mut count: usize = 30;

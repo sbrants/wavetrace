@@ -1,4 +1,10 @@
-$log = Join-Path $env:APPDATA "towerrun\logs\scanner.log"
+$log = Join-Path $env:APPDATA "wavetrace\logs\scanner.log"
+if (-not (Test-Path $log)) {
+    $log = Join-Path $env:APPDATA "wavewatch\logs\scanner.log"
+}
+if (-not (Test-Path $log)) {
+    $log = Join-Path $env:APPDATA "towerrun\logs\scanner.log"
+}
 if (-not (Test-Path $log)) { Write-Error "Missing $log"; exit 1 }
 
 $old = [System.Collections.Generic.List[int]]::new()

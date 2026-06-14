@@ -52,7 +52,10 @@ const MIN_CAPTURE_AREA: u32 = 200_000;
 fn is_our_app_window(title: &str, app_name: &str) -> bool {
     let t = title.to_lowercase();
     let a = app_name.to_lowercase();
-    a.contains("towerrun") || t.contains("towerrun performance")
+    a.contains("wavetrace")
+        || t.contains("wavetrace")
+        || a.contains("wavewatch")
+        || t.contains("wavewatch")
 }
 
 fn is_browser_window(app_name: &str, title: &str) -> bool {

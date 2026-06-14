@@ -27,11 +27,11 @@ pub struct WorkbookExportPayload {
 }
 
 pub fn snapshots_csv_filename() -> String {
-    format!("towerrun-snapshots-{}.csv", export_stamp())
+    format!("wavetrace-snapshots-{}.csv", export_stamp())
 }
 
 pub fn workbook_ods_filename() -> String {
-    format!("towerrun-runs-{}.ods", export_stamp())
+    format!("wavetrace-runs-{}.ods", export_stamp())
 }
 
 fn export_stamp() -> String {
