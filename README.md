@@ -40,6 +40,9 @@ cargo test --release -- --ignored   # optional manual/debug tests only
 Bundled screenshots and optional live NoxPlayer captures in `fixtures/captured/` guard
 against OCR/parser regressions on Windows.
 
+**Fixture images are not stored in git** (privacy). Capture your own corpus locally;
+`fixtures/expected.json` and `fixtures/captured/manifest.json` stay in the repo.
+
 **Capture live frames** (Settings → “Capture 80 test frames”, or CLI):
 
 ```powershell
