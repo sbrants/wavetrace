@@ -1,27 +1,33 @@
 # WaveTrace
 
+**Repository:** https://github.com/sbrants/wavetrace  
+**Releases:** https://github.com/sbrants/wavetrace/releases
+
 ## Overview
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop only**.
+**Current status (v0.2.3):** Phase 1 is **shipped on Windows 10+**. Linux builds (AppImage + Arch binary) and in-app auto-update are also shipped. macOS remains Phase 1b. See [Phases](#phases).
+
+**Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
 ### Platform matrix
 
 
-| Phase | Platforms             | Capture target                                               |
-| ----- | --------------------- | ------------------------------------------------------------ |
-| 1     | Windows 10+           | Emulator or game window                                      |
-| 1b    | macOS, Linux          | Same as Phase 1                                              |
-| 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done** |
-| 3+    | Android, iOS          | Direct app capture (separate implementation)                 |
+| Phase | Platforms             | Capture target                                               | Status |
+| ----- | --------------------- | ------------------------------------------------------------ | ------ |
+| 1     | Windows 10+           | Emulator or game window                                      | **Shipped** (v0.1.0+) |
+| 1b    | Linux                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.1.2+) |
+| 1b    | macOS                 | Same as Phase 1                                              | Planned |
+| 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done**    | Partial |
+| 3+    | Android, iOS          | Direct app capture (separate implementation)                 | Future |
 
 
 ### Core components
 
-- **Scanner** — window capture + full-frame Windows OCR + text classification
-- **Database** — local SQLite for MVP; cloud backend in Phase 3
-- **UI** — embedded web UI (PWA-style) reading from local DB; cloud-hosted in Phase 3
+- **Scanner** — window capture + full-frame OCR + line classification (Windows: `Windows.Media.Ocr`; Linux: Tesseract)
+- **Database** — local SQLite; cloud backend in Phase 3
+- **UI** — React + TypeScript embedded webview reading from local DB; cloud-hosted in Phase 3
 
 ---
 
@@ -60,8 +66,8 @@ The game being tracked is **The Tower**. It runs on Android and iOS; on desktop,
 ### MVP (Phase 1)
 
 - **Single Tauri 2.x app:** Rust native shell handles screenshots + OCR; embedded webview serves the UI
-- **Frontend:** agent may choose React or Svelte
-- **Local SQLite** at `{app_data}/wavetrace/wavetrace.db`
+- **Frontend:** React + TypeScript + Vite; charts via Recharts
+- **Local SQLite** at `{app_data}/wavetrace/wavetrace.db` (migrates from legacy `towerrun/` / `wavewatch/` paths)
 - **Future:** same UI talks to a cloud API instead of local DB
 
 ```mermaid
@@ -118,9 +124,10 @@ flowchart LR
 
 ## OCR and field detection
 
-### OCR engine (Windows Phase 1)
+### OCR engine
 
-- **Engine:** `Windows.Media.Ocr` (built into Windows 10+; no extra install)
+- **Windows:** `Windows.Media.Ocr` (built into Windows 10+; no extra install)
+- **Linux:** Tesseract (`tesseract-ocr-eng`); same full-frame + line-classification pipeline
 - Full-window capture is downscaled (max width 900px) before OCR to keep poll latency reasonable
 - OCR returns text lines; the classifier finds Tier, Wave, and coin rate from line content
 
@@ -140,7 +147,7 @@ flowchart LR
 
 ## Game mode edge cases
 
-The game UI changes layout and labels depending on mode. The scanner must classify each poll into a **game mode** before parsing fields. OCR regression uses live captures in `fixtures/captured/manifest.json`; reference screenshots in `fixtures/` document edge-case layouts.
+The game UI changes layout and labels depending on mode. The scanner must classify each poll into a **game mode** before parsing fields. OCR regression uses the committed corpus in `fixtures/captured/manifest.json`. Local reference screenshots under `fixtures/` document edge-case layouts (see [Test fixtures](#test-fixtures)).
 
 ```mermaid
 flowchart TD
@@ -224,9 +231,9 @@ else → OCR failure; keep last known coin/min for display
 
 ### Adding new edge cases
 
-When adding a fixture to `fixtures/`:
+When extending game-mode handling:
 
-1. Save the screenshot or anchor PNG (local reference; not committed if under `fixtures/*.png`)
+1. Save a reference screenshot under `fixtures/` root (local-only; gitignored)
 2. Capture live frames into `fixtures/captured/` and set `expect` on entries for strict regression checks
 3. Document detection and handling in the table above
 
@@ -298,12 +305,14 @@ For suffixes beyond `ac`, continue the pattern: each subsequent two-letter suffi
   - (b) user clicks **New Run**
 - **Run type** is set once when the run starts:
   - `tournament` if tournament mode is detected (`Tier N+` or trophy icon) on the first confirmed poll of the run
-  - `normal` otherwise
+  - `farming` otherwise (stored as `run_type = 'farming'` in SQLite)
   - `run_type` does not change mid-run
 - **Snapshot saved** when: confirmed wave increases by exactly 1 vs the last saved wave for the current run
 - Each snapshot stores: `run_id`, `wave`, `tier`, `coin_per_minute`, `recorded_at` (UTC ISO-8601)
+- **Coin/min per snapshot:** average all `/min` readings collected while the confirmed wave was stable (multiple poll cycles on the same wave); `null` if no rate was seen before the wave advanced
 - **Run ends** when: `"Retry"` text is detected OR wave drops/resets to 1 (whichever comes first)
 - After run ends: persist run (`ended_at`, `final_wave`, `peak_tier`, `run_type`); wait for `wave = 1` before auto-starting the next run
+- **Resume run:** user can continue the last open run after stopping the scanner (reopens the most recent run with `ended_at IS NULL`)
 
 ### OCR stability (debounce)
 
@@ -330,12 +339,13 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 | id         | TEXT PK | UUID                                                  |
 | started_at | TEXT    | UTC ISO-8601                                          |
 | ended_at   | TEXT    | nullable                                              |
-| run_type   | TEXT    | `normal` or `tournament`; set at run start, immutable |
+| run_type   | TEXT    | `farming` or `tournament`; set at run start, immutable |
 | peak_tier  | INTEGER | max tier seen during run                              |
 | final_wave | INTEGER | last wave before run ended                            |
+| comment    | TEXT    | optional user note (editable in History)              |
 
 
-`run_type` distinguishes runs that share the same tier number — e.g. a farming run at Tier 17 (`normal`) vs a tournament run showing `Tier 17+` (`tournament`).
+`run_type` distinguishes runs that share the same tier number — e.g. a farming run at Tier 17 (`farming`) vs a tournament run showing `Tier 17+` (`tournament`).
 
 ### snapshots
 
@@ -367,8 +377,9 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 - Current run: tier, coin/min, wave (live-updating)
 - Run type badge when `run_type = tournament`
 - Line chart: X = wave, Y = coin/minute (points from snapshots in current run)
+- Chart screenshot: copy PNG to clipboard or download
 - Status: scanning / paused / game window not found
-- **New Run** button to manually start a fresh run
+- **New Run** and **Resume run** buttons; **Stop** ends scanning (run may stay open for resume)
 
 #### User warnings
 
@@ -381,19 +392,24 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ### Run history
 
-- Table: started_at, duration, run_type, peak_tier, final_wave, avg coin/min, comment
+- Table: started_at, duration, run_type, peak_tier, final_wave, avg coin/min, per-run **comment** (editable inline)
 - Sort by: date, final_wave, peak_tier, avg coin/min
 - Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
-- Combine selected runs (strictly increasing waves); delete selected; export CSV
+- Combine selected runs (strictly increasing waves); delete selected runs; delete individual **outlier snapshots**
+- Export filtered runs to **CSV** (snapshots) or **ODS workbook** (runs + snapshots tables)
+- Chart screenshot copy/download on history charts
 
 ### Settings
 
 - Select target window (window picker); auto-preselect a window whose title contains `"The Tower"` when none is saved yet
 - Preview captured window
-- OCR diagnostic probe (full-frame Windows OCR on live capture)
-- Export runs to CSV (includes `run_type`)
+- **Probe OCR** — full-frame OCR on live capture (tier, wave, coin/min, raw lines)
+- **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail `{app_data}/logs/scanner.log`, capped at 2 MiB)
+- **Check for updates** — in-app updater (GitHub Releases `latest.json`; Windows NSIS, Linux AppImage)
+- Embedded **changelog** (from `CHANGELOG.md`)
+- Dev builds only (`import.meta.env.DEV`): OCR fixture capture burst controls
 
 ---
 
@@ -409,24 +425,27 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ## Phases
 
-### Phase 1 — MVP (build this first)
+### Phase 1 — MVP ✅ shipped (v0.1.0+)
 
 - Tauri app on **Windows 10+**, local SQLite, 3 fields, wave-triggered snapshots
-- Live dashboard + run history table + basic chart
-- Window picker + full-frame Windows OCR
-- CSV export
+- Live dashboard + run history table + coin/min vs wave chart
+- Window picker + full-frame OCR + line classification
+- CSV export; ODS workbook export; run comments; outlier snapshot cleanup
+- Resume run; chart screenshots; scanner log viewer
+- OCR regression corpus in `fixtures/captured/`
 
-### Phase 1b
+### Phase 1b — Linux ✅ shipped (v0.1.2+); macOS planned
 
-- macOS and Linux support (same feature set as Phase 1)
+- **Linux:** AppImage (Ubuntu 24.04 CI), Arch `x86_64` binary, Tesseract OCR, PKGBUILD
+- **macOS:** same feature set as Phase 1 (not yet built)
 
-### Phase 2
+### Phase 2 — partial
 
-- Background capture when game is occluded (stretch; document per-OS limits)
+- Background capture when game is occluded (stretch; document per-OS limits) — **not started**
 
-**Already shipped (from Phase 2 list):** run comparison overlay on chart, history pagination, chart screenshot copy/download, date-range filters
+**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds)
 
-### Phase 3
+### Phase 3 — future
 
 - Cloud sync backend, auth, multi-device
 - Android and iOS direct app capture
@@ -435,45 +454,58 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ## Acceptance criteria (Phase 1)
 
-- User can select a target window and save it
-- User can calibrate parser behavior via captured corpus tests in `fixtures/captured/manifest.json` (not per-field anchor crops)
-- App detects wave increase and writes a snapshot with UTC timestamp
-- Tournament runs are stored with `run_type = tournament` and filterable in run history
-- App detects run end via Retry text or wave reset; auto-starts new run at wave 1
-- Dashboard shows live values and coin/min vs wave chart for the current run
-- User can browse past runs and open a run's chart
-- User can export runs to CSV
-- OCR/parser tests pass against the captured corpus (`fixtures/captured/manifest.json`)
-- Edge-case fixtures (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
-- Live dashboard shows a warning banner when `game_mode = total_coin`
-- Works on Windows 10+ (macOS/Linux in Phase 1b; mobile in Phase 3+)
+- [x] User can select a target window and save it
+- [x] OCR/parser regression via committed corpus in `fixtures/captured/manifest.json`
+- [x] App detects wave increase and writes a snapshot with UTC timestamp
+- [x] Tournament runs stored with `run_type = tournament` and filterable in run history
+- [x] App detects run end via Retry text or wave reset; auto-starts new run at wave 1
+- [x] Dashboard shows live values and coin/min vs wave chart for the current run
+- [x] User can browse past runs and open a run's chart
+- [x] User can export runs to CSV and ODS
+- [x] Edge-case game modes (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
+- [x] Live dashboard shows a warning banner when `game_mode = total_coin`
+- [x] Works on Windows 10+
+- [x] Works on Linux (Tesseract OCR; Phase 1b)
+- [ ] macOS build (Phase 1b)
 
 ---
 
 ## Test fixtures
 
-The `fixtures/captured/` folder holds live window captures for OCR regression. `fixtures/captured/manifest.json` is the source of truth for classified values and optional `expect` labels on each frame.
+The `fixtures/captured/` folder holds live window captures for OCR regression. **`fixtures/captured/*.png` and `manifest.json` are committed** so CI and other developers can run corpus tests. Reference screenshots at `fixtures/` root (game-mode edge cases) stay **local-only** (gitignored).
 
-Reference crops and full screenshots under `fixtures/` (gitignored at repo root) document HUD regions and game-mode edge cases. The live scanner uses **full-frame OCR**, not template matching.
+`fixtures/captured/manifest.json` is the source of truth for classified values and optional `expect` labels on each frame. Legacy `fixtures/expected.json` and seeded-corpus tooling were removed in v0.2.3.
+
+The live scanner uses **full-frame OCR + line classification** — not template matching or per-field anchor crops.
+
+### Corpus workflow
+
+```powershell
+cd src-tauri
+cargo run --example capture_fixtures -- --count 50 --label-detected
+cargo run --example capture_fixtures -- --prune-misses   # drop frames with no /min before commit
+cargo run --example reanalyze_corpus                   # re-OCR all PNGs after parser changes
+cargo run --example label_corpus                       # backfill expect labels for review
+cargo test --release captured_corpus -- --nocapture
+```
+
+Other `capture_fixtures` flags: `--clear-live`, `--clear-all`.
 
 Agents should:
 
-1. Run `cargo test captured_corpus` against the committed capture corpus
+1. Run `cargo test captured_corpus` against the committed capture corpus (Windows)
 2. Implement game-mode detection per [Game mode edge cases](#game-mode-edge-cases)
-3. Add new captures with `capture_fixtures` when parser behavior changes
+3. Add new captures with `capture_fixtures` when parser behavior changes; prune misses before commit
 
-### Reference fixture inventory (local)
+### Reference fixture inventory (local, `fixtures/*.png`)
 
-
-| File                           | Kind       | `game_mode`    | Purpose                              |
-| ------------------------------ | ---------- | -------------- | ------------------------------------ |
-| `Wave_and_Tier.png`            | anchor     | `normal`       | Reference crop — Tier + Wave panel (parser tests) |
-| `Coin_per_minute.png`          | anchor     | `normal`       | Reference crop — coin rate (`/min`) line          |
-| `expected_state_full_game.png` | screenshot | `normal`       | Baseline — all fields available      |
-| `total_coin.png`               | screenshot | `total_coin`   | Total coin balance instead of `/min` |
-| `intro_sprint.png`             | screenshot | `intro_sprint` | Intro Sprint card active             |
-| `tournament.png`               | screenshot | `tournament`   | `Tier 17+`; total coins in top bar   |
-| `end_of_run.png`               | screenshot | `end_of_run`   | GAME STATS + RETRY; ends run         |
+| File                           | `game_mode`    | Purpose                              |
+| ------------------------------ | -------------- | ------------------------------------ |
+| `expected_state_full_game.png` | `normal`       | Baseline — all fields available      |
+| `total_coin.png`               | `total_coin`   | Total coin balance instead of `/min` |
+| `intro_sprint.png`             | `intro_sprint` | Intro Sprint card active             |
+| `tournament.png`               | `tournament`   | `Tier 17+`; total coins in top bar   |
+| `end_of_run.png`               | `end_of_run`   | GAME STATS + RETRY; ends run         |
 
 
 ### manifest.json schema
@@ -493,7 +525,7 @@ Each entry in `fixtures/captured/manifest.json` contains:
 
 - **Wave and Tier** are parsed from lines containing those keywords anywhere in the OCR output
 - **Coin/Minute** uses the second `/min` line (first is usually cash); parser handles Windows OCR suffix quirks
-- Full screenshots are used for integration tests (mode detection + multi-field OCR)
+- Local reference screenshots (`fixtures/*.png`) document game-mode layouts; regression tests use the committed `fixtures/captured/` corpus
 - When adding captures, update `manifest.json` and the edge-case table in Goal.md
 
 ---
@@ -559,12 +591,29 @@ Never commit `.env.signing`.
 - Unsigned builds: tell testers **More info → Run anyway** (or Unblock on the file)
 - Signed builds: SmartScreen improves immediately; publisher reputation may still build over time
 - In-app auto-update via GitHub Releases (`latest.json`); Windows NSIS + Linux AppImage
+- Arch/pacman users install via package manager; in-app updater targets AppImage
+
+---
+
+## Auto-update (shipped v0.2.0+)
+
+Release builds check GitHub on startup and offer one-click updates (Settings → **Check for updates**).
+
+| Platform | Update artifact |
+| -------- | --------------- |
+| Windows  | NSIS installer (`.exe`) |
+| Linux    | AppImage |
+| Arch     | Use pacman/AUR — updater targets AppImage |
+
+**Maintainer setup:** generate updater keypair (`scripts/setup-updater-signing.ps1`), add GitHub secret `TAURI_SIGNING_PRIVATE_KEY`, push a `v*` tag. The **Release** workflow publishes installers, `latest.json`, and `.sig` files. Public key is embedded in `src-tauri/tauri.conf.json`.
+
+This is separate from Azure Trusted Signing (SmartScreen for fresh downloads); both apply on Windows release builds when configured.
 
 ---
 
 ## Open questions
 
-- Preferred UI framework: React or Svelte (agent may choose)
-- Chart library: unconstrained
+- macOS Phase 1b timeline and signing/notarization approach
 - Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
+- Background capture when game window is occluded (Phase 2)
 
