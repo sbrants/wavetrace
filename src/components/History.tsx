@@ -6,6 +6,7 @@ import {
   CompareXAxis,
   snapshotsToChartData,
 } from "../chartData";
+import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 
@@ -46,6 +47,7 @@ export default function History() {
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
   );
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
   const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
@@ -216,11 +218,34 @@ export default function History() {
     }
   };
 
+  const flashExport = (message: string) => {
+    setExportStatus(message);
+    window.setTimeout(() => setExportStatus(null), 2000);
+  };
+
   const exportCsv = async () => {
     try {
-      const activeFilter = listFilter();
-      const path = await api.exportCsv(activeFilter);
-      alert(`Exported ${runs.length} run${runs.length === 1 ? "" : "s"} to:\n${path}`);
+      const result = await api.exportCsv(listFilter());
+      downloadTextFile(result.content, result.filename);
+      flashExport(
+        `Downloaded ${result.snapshot_count} snapshot${result.snapshot_count === 1 ? "" : "s"} ✓`
+      );
+    } catch (e) {
+      alert(e);
+    }
+  };
+
+  const exportWorkbook = async () => {
+    try {
+      const result = await api.exportWorkbook(listFilter());
+      downloadBase64File(
+        result.data_base64,
+        result.filename,
+        "application/vnd.oasis.opendocument.spreadsheet"
+      );
+      flashExport(
+        `Downloaded ${result.run_count} run${result.run_count === 1 ? "" : "s"} ✓`
+      );
     } catch (e) {
       alert(e);
     }
@@ -424,6 +449,10 @@ export default function History() {
         )}
         <button onClick={reload}>Refresh</button>
         <button onClick={exportCsv}>Export CSV</button>
+        <button onClick={exportWorkbook}>Export ODS</button>
+        {exportStatus && (
+          <span className="chart-action-status">{exportStatus}</span>
+        )}
         <button
           disabled={checked.size < 2 || compareLoading}
           onClick={compareSelected}

@@ -538,37 +538,6 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
     Ok(())
 }
 
-/// CSV export of runs (includes run_type per Goal.md Settings UI).
-pub fn export_runs_csv(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<String> {
-    let runs = list_runs(conn, filter)?;
-    let mut out = String::from(
-        "id,started_at,ended_at,run_type,peak_tier,final_wave,avg_coin_per_minute,snapshot_count,comment\n",
-    );
-    for r in runs {
-        out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{}\n",
-            r.id,
-            r.started_at,
-            r.ended_at.unwrap_or_default(),
-            r.run_type,
-            r.peak_tier.map(|v| v.to_string()).unwrap_or_default(),
-            r.final_wave.map(|v| v.to_string()).unwrap_or_default(),
-            r.avg_coin_per_minute.map(|v| v.to_string()).unwrap_or_default(),
-            r.snapshot_count,
-            csv_escape(r.comment.as_deref().unwrap_or_default()),
-        ));
-    }
-    Ok(out)
-}
-
-fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains('\n') {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,33 +652,6 @@ mod tests {
         let snaps = run_snapshots(&conn, &id).unwrap();
         assert_eq!(snaps.len(), 2);
         assert_eq!(snaps[1].coin_per_minute, Some(500.0));
-
-        let csv = export_runs_csv(&conn, &RunFilter::default()).unwrap();
-        assert!(csv.contains("tournament"));
-    }
-
-    #[test]
-    fn export_runs_csv_respects_filter() {
-        let conn = open_in_memory().unwrap();
-        let farming = start_run(&conn, "farming").unwrap();
-        end_run(&conn, &farming, Some(10), Some(5)).unwrap();
-        let tournament = start_run(&conn, "tournament").unwrap();
-        end_run(&conn, &tournament, Some(20), Some(17)).unwrap();
-
-        let all = export_runs_csv(&conn, &RunFilter::default()).unwrap();
-        assert_eq!(all.matches('\n').count(), 3); // header + 2 runs
-
-        let farming_only = export_runs_csv(
-            &conn,
-            &RunFilter {
-                run_type: Some("farming".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert!(farming_only.contains("farming"));
-        assert!(!farming_only.contains("tournament"));
-        assert_eq!(farming_only.matches('\n').count(), 2);
     }
 
     #[test]

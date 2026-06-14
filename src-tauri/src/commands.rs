@@ -4,6 +4,7 @@ use base64::Engine;
 use tauri::{AppHandle, State};
 
 use crate::db::{self, RunFilter, RunRow, SnapshotRow};
+use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
@@ -142,13 +143,32 @@ pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>,
     }
 }
 
-/// Export runs to CSV next to the database; returns the file path.
+/// Export all snapshots (with run metadata) for browser download.
 #[tauri::command]
-pub fn export_csv(filter: RunFilter) -> Result<String, String> {
-    let csv = db::export_runs_csv(&conn()?, &filter).map_err(|e| e.to_string())?;
-    let path = db::app_data_dir().join("runs_export.csv");
-    std::fs::write(&path, csv).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+pub fn export_csv(filter: RunFilter) -> Result<CsvExportPayload, String> {
+    let conn = conn()?;
+    let (content, run_count, snapshot_count) =
+        export::export_snapshots_csv(&conn, &filter).map_err(|e| e.to_string())?;
+    Ok(CsvExportPayload {
+        filename: export::snapshots_csv_filename(),
+        content,
+        run_count,
+        snapshot_count,
+    })
+}
+
+/// Export runs workbook (ODS) for browser download.
+#[tauri::command]
+pub fn export_workbook(filter: RunFilter) -> Result<WorkbookExportPayload, String> {
+    let conn = conn()?;
+    let (bytes, run_count, snapshot_count) =
+        export::export_workbook_ods_bytes(&conn, &filter)?;
+    Ok(WorkbookExportPayload {
+        filename: export::workbook_ods_filename(),
+        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        run_count,
+        snapshot_count,
+    })
 }
 
 #[derive(Serialize)]

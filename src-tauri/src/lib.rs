@@ -2,6 +2,7 @@ pub mod capture;
 pub mod classify;
 pub mod commands;
 pub mod db;
+pub mod export;
 pub mod fields;
 pub mod fixture_capture;
 pub mod fixture_corpus;
@@ -41,6 +42,7 @@ pub fn run() {
             commands::run_snapshots,
             commands::current_run_snapshots,
             commands::export_csv,
+            commands::export_workbook,
             commands::preview_capture,
             commands::probe_ocr,
             #[cfg(debug_assertions)]

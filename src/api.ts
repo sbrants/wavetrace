@@ -98,6 +98,20 @@ export interface OcrProbeResult {
 
 export type ScanStartMode = "new_run" | "resume_previous";
 
+export interface CsvExport {
+  filename: string;
+  content: string;
+  run_count: number;
+  snapshot_count: number;
+}
+
+export interface WorkbookExport {
+  filename: string;
+  data_base64: string;
+  run_count: number;
+  snapshot_count: number;
+}
+
 export const api = {
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
   getSettings: () => invoke<Settings>("get_settings"),
@@ -124,7 +138,10 @@ export const api = {
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
-  exportCsv: (filter: RunFilter) => invoke<string>("export_csv", { filter }),
+  exportCsv: (filter: RunFilter) =>
+    invoke<CsvExport>("export_csv", { filter }),
+  exportWorkbook: (filter: RunFilter) =>
+    invoke<WorkbookExport>("export_workbook", { filter }),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
   previewCapture: () => invoke<string>("preview_capture"),
