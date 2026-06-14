@@ -133,6 +133,7 @@ branch/commit.
 
 - `webkit2gtk-4.1`, `gtk3` — Tauri webview
 - `tesseract`, `tesseract-data-eng` — OCR (Linux uses Tesseract instead of Windows OCR)
+- `pipewire`, `libpipewire` — window capture (`xcap` on Linux)
 
 ### CI artifacts
 

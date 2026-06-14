@@ -33,7 +33,9 @@ jobs:
             patchelf \
             libssl-dev \
             libtesseract-dev \
-            tesseract-ocr-eng
+            tesseract-ocr-eng \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev
 
       - name: Build AppImage
         run: |
@@ -59,7 +61,8 @@ jobs:
           pacman -Syu --noconfirm \
             base-devel git nodejs npm rust patchelf \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
-            tesseract tesseract-data-eng openssl pkgconf
+            tesseract tesseract-data-eng openssl pkgconf \
+            pipewire libpipewire
 
       - name: Build release binary
         run: |

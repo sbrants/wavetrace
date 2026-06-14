@@ -18,6 +18,8 @@ depends=(
   'gtk3'
   'webkit2gtk-4.1'
   'tesseract'
+  'pipewire'
+  'libpipewire'
   'hicolor-icon-theme'
 )
 makedepends=(
