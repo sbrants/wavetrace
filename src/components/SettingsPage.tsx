@@ -5,6 +5,23 @@ import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
 
 const showDevTools = import.meta.env.DEV;
+const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
+
+function loadShowAdvanced(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_SETTINGS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveShowAdvanced(on: boolean) {
+  try {
+    localStorage.setItem(ADVANCED_SETTINGS_KEY, on ? "1" : "0");
+  } catch {
+    // ignore storage errors
+  }
+}
 
 /** Default game window match per Goal.md "Window targeting". */
 const TOWER_TITLE_MATCH = "The Tower";
@@ -44,6 +61,7 @@ export default function SettingsPage() {
   const [probeError, setProbeError] = useState<string | null>(null);
   const [probeStatus, setProbeStatus] = useState<string | null>(null);
   const [probeElapsed, setProbeElapsed] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced);
 
   const load = async () => {
     const [loadedSettings, listedWindows] = await Promise.all([
@@ -224,6 +242,24 @@ export default function SettingsPage() {
       </section>
       )}
 
+      <section className="settings-advanced-toggle">
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={showAdvanced}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setShowAdvanced(on);
+              saveShowAdvanced(on);
+            }}
+          />
+          Advanced
+        </label>
+        <p className="muted">Polling interval and scanner log.</p>
+      </section>
+
+      {showAdvanced && (
+        <>
       <section>
         <h3>Polling</h3>
         <div className="row">
@@ -246,6 +282,8 @@ export default function SettingsPage() {
       </section>
 
       <ScannerLogViewer />
+        </>
+      )}
 
       <AppUpdater />
 

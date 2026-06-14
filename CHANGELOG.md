@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.3] — 2026-06-14
+
+### Added
+
+- OCR regression corpus in `fixtures/captured/` (live captures + `manifest.json` labels)
+
+### Changed
+
+- GitHub repo renamed to [`sbrants/wavetrace`](https://github.com/sbrants/wavetrace); updater endpoint updated
+- Settings: polling interval and scanner log behind **Advanced** checkbox
+- README refresh (repo links, corpus workflow, current UI)
+
+### Removed
+
+- Legacy `fixtures/expected.json` and seeded-corpus tooling
+
+### Fixed
+
+- Slimmer Rust deps: drop unused `tray-icon`, PNG-only `image`, `pollster` instead of `futures`
+- Minor clippy cleanups
+
+---
+
 ## [0.2.2] — 2026-06-14
 
 ### Fixed

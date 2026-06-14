@@ -4,13 +4,17 @@ Desktop companion for the idle game **The Tower**. It watches the game
 window, OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the
 wave advances, and charts coin/min against wave for the current and past runs.
 
-Full product spec: [Goal.md](Goal.md). Test assets: [fixtures/](fixtures/).
+**Repository:** https://github.com/sbrants/wavetrace  
+**Releases:** https://github.com/sbrants/wavetrace/releases
+
+Full product spec: [Goal.md](Goal.md). OCR regression corpus:
+[`fixtures/captured/manifest.json`](fixtures/captured/manifest.json).
 
 ## Stack
 
 - **Tauri 2** — Rust native shell + embedded webview
 - **Rust backend** — window capture ([xcap](https://crates.io/crates/xcap)), Windows built-in OCR
-(Windows.Media.Ocr), SQLite ([rusqlite](https://crates.io/crates/rusqlite))
+  (Windows.Media.Ocr), SQLite ([rusqlite](https://crates.io/crates/rusqlite))
 - **React + TypeScript + Vite** frontend, charts via Recharts
 
 ## Prerequisites (Windows 10+)
@@ -31,18 +35,15 @@ npm run tauri dev
 
 ```powershell
 cd src-tauri
-cargo test --release       # parser, state machine, classifier, db (+ Windows OCR fixtures on Windows)
+cargo test --release       # parser, state machine, classifier, db (+ captured corpus on Windows)
 cargo test --release -- --ignored   # optional manual/debug tests only
 ```
 
 ### OCR regression corpus
 
-Bundled screenshots and optional live NoxPlayer captures in `fixtures/captured/` guard
-against OCR/parser regressions on Windows.
-
-**Fixture images** under `fixtures/captured/` are committed for OCR regression tests.
-Capture your own corpus locally with the commands below; reference PNGs at
-`fixtures/` root stay local-only.
+Live window captures in `fixtures/captured/` guard against OCR/parser regressions on
+Windows. `fixtures/captured/manifest.json` is the source of truth; optional `expect`
+labels on entries enable strict checks.
 
 **Capture live frames** (Settings → “Capture 80 test frames”, or CLI):
 
@@ -65,11 +66,8 @@ cargo run --example reanalyze_corpus
 cargo run --example label_corpus
 ```
 
-**Run corpus tests**:
-
-```powershell
-cargo test --release captured_corpus -- --nocapture
-```
+Reference PNGs at `fixtures/` root (game-mode edge cases) stay local-only and are not
+committed.
 
 ## Build a release bundle
 
@@ -129,7 +127,7 @@ Local signed Windows builds can set `TAURI_SIGNING_PRIVATE_KEY_PATH` in
 ## Arch Linux
 
 WaveTrace is not built on Windows for Linux. Use an Arch machine, VM, or the
-`Release Linux` GitHub Actions workflow.
+**Release** GitHub Actions workflow.
 
 ### Quick build (Arch)
 
@@ -152,8 +150,8 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a `v0.1.0` git tag on the remote, or edit `PKGBUILD` to point at your
-branch/commit.
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.3`), or edit
+`PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)
 
@@ -166,15 +164,18 @@ branch/commit.
 Push a `v*` tag or run **Release** manually on GitHub Actions to publish Windows
 installers, Linux AppImage, Arch binary, and `latest.json` for auto-update.
 
-
 ## Using the app
 
-1. **Settings** tab: pick the emulator/game window and save.
-2. Press **Start scanning**.
-3. Play. A run starts when wave 1 is confirmed; snapshots are written as the
-  wave advances; the run closes on the Retry screen or a wave reset.
-4. **Dashboard** shows live values and the coin/min-vs-wave chart.
-  **History** lists past runs with filtering, sorting, and CSV export.
+1. **Settings** tab: pick the emulator/game window and save. Use **Probe OCR** to
+   verify capture before scanning.
+2. Press **New run** (or **Resume run** to continue the last open run).
+3. Play. Snapshots are written as the wave advances; the run closes on the Retry
+   screen or a wave reset.
+4. Press **Stop** when you are done scanning.
+5. **Dashboard** shows live values and the coin/min-vs-wave chart.
+   **History** lists past runs with filtering, sorting, CSV/ODS export, and chart
+   screenshots. **Settings** also includes the scanner log viewer and embedded
+   changelog.
 
 Data lives in `%APPDATA%/wavetrace/wavetrace.db` (migrates from `wavewatch/` or
 `towerrun/` on first launch); scanner diagnostics in
@@ -183,10 +184,9 @@ Data lives in `%APPDATA%/wavetrace/wavetrace.db` (migrates from `wavewatch/` or
 ## Notes
 
 - Tournament runs (`Tier N+` in game) are tagged `run_type = tournament` and
-can be filtered separately in History.
+  can be filtered separately in History.
 - When the game shows a **total coin balance** instead of a `/min` rate, the
-dashboard shows a warning banner and snapshots keep the last known rate
-(see Goal.md "Game mode edge cases").
+  dashboard shows a warning banner and snapshots keep the last known rate
+  (see Goal.md "Game mode edge cases").
 - Keep the project on a local drive: `node_modules/` and `target/` do not
-survive Google Drive's virtual filesystem.
-
+  survive Google Drive's virtual filesystem.
