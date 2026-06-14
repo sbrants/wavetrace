@@ -48,8 +48,9 @@ Capture your own corpus locally with the commands below; reference PNGs at
 
 ```powershell
 cd src-tauri
-cargo run --example capture_fixtures -- --count 30
-cargo run --example capture_fixtures -- --count 30 --clear-all --label-detected   # wipe corpus, then capture
+cargo run --example capture_fixtures -- --count 50 --label-detected
+cargo run --example capture_fixtures -- --prune-misses   # drop frames with no /min before commit
+cargo test --release captured_corpus -- --nocapture
 ```
 
 **Seed reference fixtures** from `fixtures/expected.json` (keeps existing live captures):
