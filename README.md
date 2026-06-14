@@ -45,7 +45,7 @@ against OCR/parser regressions on Windows.
 ```powershell
 cd src-tauri
 cargo run --example capture_fixtures -- --count 30
-cargo run --example capture_fixtures -- --count 30 --label-detected   # auto-set expect when all fields detected
+cargo run --example capture_fixtures -- --count 30 --clear-all --label-detected   # wipe corpus, then capture
 ```
 
 **Seed reference fixtures** from `fixtures/expected.json` (keeps existing live captures):

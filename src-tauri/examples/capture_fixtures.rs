@@ -13,6 +13,7 @@ fn main() {
     let mut title: Option<String> = None;
     let mut list_windows = false;
     let mut clear_live = false;
+    let mut clear_all = false;
     let mut label_detected = false;
 
     let args: Vec<String> = std::env::args().collect();
@@ -33,6 +34,7 @@ fn main() {
             }
             "--list-windows" | "-l" => list_windows = true,
             "--clear-live" => clear_live = true,
+            "--clear-all" => clear_all = true,
             "--label-detected" => label_detected = true,
             "--help" | "-h" => {
                 println!(
@@ -42,6 +44,7 @@ fn main() {
                        --interval, -i <ms>   delay between frames (default 500)\n\
                        --title, -t <text>    window title substring\n\
                        --clear-live          remove prior live captures (keep seeded)\n\
+                       --clear-all           remove all captures (seeded + live)\n\
                        --label-detected      auto-set expect when tier/wave/coin detected\n\
                        --list-windows, -l    show open windows and exit\n"
                 );
@@ -77,7 +80,10 @@ fn main() {
         }
     };
 
-    if clear_live {
+    if clear_all {
+        let n = fixture_capture::clear_all_captures().expect("clear all captures");
+        println!("Cleared all {n} capture(s) and reset manifest.");
+    } else if clear_live {
         let n = fixture_capture::clear_live_captures().expect("clear live captures");
         println!("Cleared {n} prior live capture(s).");
     }

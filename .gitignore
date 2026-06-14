@@ -3,3 +3,6 @@ dist/
 src-tauri/target/
 *.log
 .env.signing
+
+# Game screenshots — local only; never commit (privacy)
+fixtures/**/*.png

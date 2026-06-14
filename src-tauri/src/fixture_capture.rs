@@ -144,6 +144,29 @@ pub fn clear_live_captures() -> Result<usize, String> {
     Ok(removed.len())
 }
 
+/// Remove every capture (seeded + live) and delete all PNGs in `fixtures/captured/`.
+pub fn clear_all_captures() -> Result<usize, String> {
+    let dir = captured_dir();
+    let manifest = load_manifest();
+    let count = manifest.captures.len();
+    if dir.exists() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("png") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    save_manifest(&CaptureManifest {
+        version: 1,
+        description:
+            "Live captures for OCR regression. Set expect on entries for strict tests.".into(),
+        captures: Vec::new(),
+    })?;
+    Ok(count)
+}
+
 fn coin_reading_label(coin: CoinReading) -> (String, Option<f64>, bool) {
     match coin {
         CoinReading::Rate(v) => (format!("Rate({v})"), Some(v), true),
