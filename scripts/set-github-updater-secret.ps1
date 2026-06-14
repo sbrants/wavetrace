@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $key = Get-Content $keyPath -Raw
-$key | & $gh secret set TAURI_SIGNING_PRIVATE_KEY --repo sbrants/thetower-perftracker
+$key | & $gh secret set TAURI_SIGNING_PRIVATE_KEY --repo sbrants/wavetrace
 
-Write-Host "Set GitHub secret TAURI_SIGNING_PRIVATE_KEY for sbrants/thetower-perftracker"
+Write-Host "Set GitHub secret TAURI_SIGNING_PRIVATE_KEY for sbrants/wavetrace"
 Write-Host "Re-run the Release workflow or push a new v* tag."

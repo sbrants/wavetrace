@@ -71,7 +71,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: WaveTrace ${{ github.ref_name }}
           releaseBody: |
-            See [CHANGELOG.md](https://github.com/sbrants/thetower-perftracker/blob/main/CHANGELOG.md) for details.
+            See [CHANGELOG.md](https://github.com/sbrants/wavetrace/blob/main/CHANGELOG.md) for details.
 
             **Auto-update:** release builds check GitHub for updates on startup.
             - Windows: NSIS installer

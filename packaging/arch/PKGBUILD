@@ -1,6 +1,6 @@
 # Build on Arch Linux:
-#   git clone https://github.com/sbrants/thetower-perftracker.git
-#   cd thetower-perftracker/packaging/arch
+#   git clone https://github.com/sbrants/wavetrace.git
+#   cd wavetrace/packaging/arch
 #   makepkg -si
 #
 # Or from a repo checkout:
@@ -11,7 +11,7 @@ pkgver=0.2.2
 pkgrel=1
 pkgdesc="Automatic per-wave tracker for The Tower"
 arch=('x86_64')
-url="https://github.com/sbrants/thetower-perftracker"
+url="https://github.com/sbrants/wavetrace"
 license=('custom')
 options=('!strip')
 depends=(
@@ -39,18 +39,18 @@ source=("${url}.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd thetower-perftracker
+  cd wavetrace
   printf '%s' "$(node -p "require('./package.json').version")"
 }
 
 build() {
-  cd thetower-perftracker
+  cd wavetrace
   npm ci
   npm run tauri build
 }
 
 package() {
-  cd thetower-perftracker
+  cd wavetrace
 
   install -Dm755 "src-tauri/target/release/wavetrace" "${pkgdir}/usr/bin/wavetrace"
 

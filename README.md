@@ -134,8 +134,8 @@ WaveTrace is not built on Windows for Linux. Use an Arch machine, VM, or the
 ### Quick build (Arch)
 
 ```bash
-git clone https://github.com/sbrants/thetower-perftracker.git
-cd thetower-perftracker
+git clone https://github.com/sbrants/wavetrace.git
+cd wavetrace
 ./scripts/build-arch.sh
 ```
 
