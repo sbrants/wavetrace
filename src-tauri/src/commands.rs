@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 
 use crate::db::{self, RunFilter, RunRow, SnapshotRow};
 use crate::fixture_capture::{self, CaptureEntry};
-use crate::scanner::Scanner;
+use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
 use crate::state_machine::{GameMode, LiveState};
 use crate::{capture, fields, scanner, settings};
@@ -36,8 +36,17 @@ pub fn save_settings(new_settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_scanner(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    state.scanner.start(app)
+pub fn has_resumable_run(state: State<AppState>) -> Result<bool, String> {
+    state.scanner.has_resumable_run()
+}
+
+#[tauri::command]
+pub fn start_scanner(
+    app: AppHandle,
+    state: State<AppState>,
+    mode: ScanStartMode,
+) -> Result<(), String> {
+    state.scanner.start(app, mode)
 }
 
 #[tauri::command]

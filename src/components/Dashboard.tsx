@@ -39,18 +39,14 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         />
       </div>
 
-      <div className="toolbar">
-        <button onClick={() => api.manualNewRun().catch((e) => alert(e))}>
-          New Run
-        </button>
-        <span className="muted">
-          {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"} this run
-        </span>
-      </div>
-
       <div className="chart-card" ref={chartRef}>
         <div className="chart-card-header">
-          <h3>Avg coin/min vs Wave (current run)</h3>
+          <div>
+            <h3>Avg coin/min vs Wave (current run)</h3>
+            <span className="muted">
+              {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"} this run
+            </span>
+          </div>
           <ChartScreenshotActions
             targetRef={chartRef}
             disabled={chartData.length === 0}
@@ -58,7 +54,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         </div>
         {chartData.length === 0 ? (
           <p className="muted">
-            No data yet. Start the scanner and let a run reach wave 1.
+            No data yet. Start a new run or resume the previous one from the header.
           </p>
         ) : (
           <CoinVsWaveChart mode="single" data={chartData} height={320} />

@@ -4,11 +4,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::state_machine::{Action, LiveState, RunStateMachine};
+use crate::state_machine::{Action, LiveState, RunStateMachine, RunType};
 use crate::{capture, db, fields, settings};
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanStartMode {
+    NewRun,
+    ResumePrevious,
+}
 
 #[derive(Clone, Serialize)]
 pub struct ScannerEvent {
@@ -62,7 +69,17 @@ impl Scanner {
         }
     }
 
-    pub fn start(&self, app: AppHandle) -> Result<(), String> {
+    pub fn has_resumable_run(&self) -> Result<bool, String> {
+        if self.machine.lock().unwrap().has_active_run() {
+            return Ok(true);
+        }
+        let conn = db::open().map_err(|e| e.to_string())?;
+        Ok(db::latest_open_run(&conn)
+            .map_err(|e| e.to_string())?
+            .is_some())
+    }
+
+    pub fn start(&self, app: AppHandle, mode: ScanStartMode) -> Result<(), String> {
         if self.is_running() {
             return Ok(());
         }
@@ -77,7 +94,10 @@ impl Scanner {
 
         let log_path = db::app_data_dir().join("logs");
         std::fs::create_dir_all(&log_path).ok();
-        let start_actions = self.machine.lock().unwrap().ensure_run_for_scanning();
+        let start_actions = match mode {
+            ScanStartMode::NewRun => self.machine.lock().unwrap().manual_new_run(),
+            ScanStartMode::ResumePrevious => self.prepare_resume(&conn)?,
+        };
         if !start_actions.is_empty() {
             apply_actions(&conn, &self.current_run_id, &start_actions, &log_path);
         }
@@ -159,6 +179,27 @@ impl Scanner {
             }
         });
         Ok(())
+    }
+
+    fn prepare_resume(&self, conn: &rusqlite::Connection) -> Result<Vec<Action>, String> {
+        if self.machine.lock().unwrap().has_active_run() {
+            return Ok(Vec::new());
+        }
+        let Some((id, run_type)) = db::latest_open_run(conn).map_err(|e| e.to_string())? else {
+            return Err("No run to resume — start a new run instead.".into());
+        };
+        let (last_wave, peak_tier) = db::snapshot_stats(conn, &id).map_err(|e| e.to_string())?;
+        let run_type = match run_type.as_str() {
+            "tournament" => RunType::Tournament,
+            _ => RunType::Farming,
+        };
+        self.machine.lock().unwrap().resume_from_db(
+            run_type,
+            last_wave.unwrap_or(0) as u32,
+            peak_tier.map(|t| t as u32),
+        );
+        *self.current_run_id.lock().unwrap() = Some(id);
+        Ok(Vec::new())
     }
 }
 

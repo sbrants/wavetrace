@@ -112,7 +112,7 @@ pub fn end_open_runs(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn snapshot_stats(
+pub(crate) fn snapshot_stats(
     conn: &Connection,
     run_id: &str,
 ) -> rusqlite::Result<(Option<i64>, Option<i64>)> {
@@ -121,6 +121,20 @@ fn snapshot_stats(
         params![run_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
+}
+
+/// Open run to resume after stopping the scanner (most recent if several).
+pub fn latest_open_run(conn: &Connection) -> rusqlite::Result<Option<(String, String)>> {
+    conn.query_row(
+        "SELECT id, run_type FROM runs WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })
 }
 
 pub fn start_run(conn: &Connection, run_type: &str) -> rusqlite::Result<String> {
@@ -501,6 +515,20 @@ fn csv_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_open_run_returns_most_recent_open() {
+        let conn = open_in_memory().unwrap();
+        assert!(latest_open_run(&conn).unwrap().is_none());
+
+        let id1 = start_run(&conn, "farming").unwrap();
+        end_run(&conn, &id1, Some(3), Some(10)).unwrap();
+        let id2 = start_run(&conn, "tournament").unwrap();
+
+        let open = latest_open_run(&conn).unwrap().expect("open run");
+        assert_eq!(open.0, id2);
+        assert_eq!(open.1, "tournament");
+    }
 
     #[test]
     fn start_run_ends_previous_open_run() {

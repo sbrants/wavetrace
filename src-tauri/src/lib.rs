@@ -26,6 +26,7 @@ pub fn run() {
             commands::list_windows,
             commands::get_settings,
             commands::save_settings,
+            commands::has_resumable_run,
             commands::start_scanner,
             commands::stop_scanner,
             commands::scanner_running,

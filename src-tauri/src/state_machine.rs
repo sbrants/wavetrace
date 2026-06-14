@@ -246,6 +246,10 @@ impl RunStateMachine {
         }
     }
 
+    pub fn has_active_run(&self) -> bool {
+        self.run.is_some()
+    }
+
     pub fn live_state(&self) -> LiveState {
         LiveState {
             mode: self.last_mode,
@@ -287,6 +291,25 @@ impl RunStateMachine {
         });
         self.run = Some(new_active_run(RunType::Farming));
         actions
+    }
+
+    /// Continue an open run from the database after app restart or a fresh process.
+    pub fn resume_from_db(
+        &mut self,
+        run_type: RunType,
+        last_saved_wave: u32,
+        peak_tier: Option<u32>,
+    ) {
+        let mut run = new_active_run(run_type);
+        run.last_saved_wave = last_saved_wave;
+        run.peak_tier = peak_tier;
+        self.run = Some(run);
+        if last_saved_wave > 0 {
+            self.wave.candidate = Some(last_saved_wave);
+            self.wave.count = DEBOUNCE;
+            self.wave.confirmed = Some(last_saved_wave);
+            self.last_seen_wave = Some(last_saved_wave);
+        }
     }
 
     /// When scanning starts with no active run, open one immediately so snapshots can persist.
@@ -522,6 +545,22 @@ mod tests {
         assert_eq!(live.tier, Some(14));
         assert_eq!(live.wave, Some(1918));
         assert_eq!(live.coin_per_minute, Some(70.0e12));
+    }
+
+    #[test]
+    fn resume_from_db_continues_snapshotting_after_last_saved_wave() {
+        let mut sm = RunStateMachine::new();
+        sm.resume_from_db(RunType::Farming, 42, Some(17));
+        let coin = CoinReading::Rate(100.0);
+        feed2(&mut sm, p(GameMode::Normal, 17, 43, coin));
+        let actions = feed2(&mut sm, p(GameMode::Normal, 17, 44, CoinReading::Rate(110.0)));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::Snapshot {
+                wave: 43,
+                ..
+            }
+        )));
     }
 
     #[test]

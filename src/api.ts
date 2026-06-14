@@ -95,12 +95,16 @@ export interface OcrProbeResult {
   preview_png_base64: string | null;
 }
 
+export type ScanStartMode = "new_run" | "resume_previous";
+
 export const api = {
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
-  startScanner: () => invoke<void>("start_scanner"),
+  hasResumableRun: () => invoke<boolean>("has_resumable_run"),
+  startScanner: (mode: ScanStartMode) =>
+    invoke<void>("start_scanner", { mode }),
   stopScanner: () => invoke<void>("stop_scanner"),
   scannerRunning: () => invoke<boolean>("scanner_running"),
   liveState: () => invoke<LiveState>("live_state"),
