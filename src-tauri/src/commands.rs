@@ -114,6 +114,21 @@ pub fn combine_runs(run_ids: Vec<String>, state: State<AppState>) -> Result<Stri
 }
 
 #[tauri::command]
+pub fn delete_snapshots(snapshot_ids: Vec<String>) -> Result<usize, String> {
+    let conn = conn()?;
+    db::delete_snapshots(&conn, &snapshot_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_snapshot(snapshot_id: String) -> Result<(), String> {
+    let conn = conn()?;
+    match db::delete_snapshot(&conn, &snapshot_id).map_err(|e| e.to_string())? {
+        Some(_) => Ok(()),
+        None => Err("Snapshot not found".into()),
+    }
+}
+
+#[tauri::command]
 pub fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
     db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
 }

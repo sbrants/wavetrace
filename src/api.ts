@@ -48,6 +48,7 @@ export interface RunRow {
 }
 
 export interface SnapshotRow {
+  id: string;
   wave: number;
   tier: number | null;
   coin_per_minute: number | null;
@@ -114,6 +115,10 @@ export const api = {
     invoke<void>("set_run_comment", { runId, comment }),
   deleteRuns: (runIds: string[]) =>
     invoke<number>("delete_runs", { runIds }),
+  deleteSnapshot: (snapshotId: string) =>
+    invoke<void>("delete_snapshot", { snapshotId }),
+  deleteSnapshots: (snapshotIds: string[]) =>
+    invoke<number>("delete_snapshots", { snapshotIds }),
   combineRuns: (runIds: string[]) =>
     invoke<string>("combine_runs", { runIds }),
   runSnapshots: (runId: string) =>

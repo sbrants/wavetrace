@@ -388,6 +388,74 @@ tbody tr.selected {
   border-radius: 10px;
 }
 
+.snapshot-panel {
+  margin-top: 16px;
+}
+
+.snapshot-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.snapshot-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.snapshot-panel-header h3 {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.snapshot-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.snapshot-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.snapshot-table th,
+.snapshot-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.snapshot-table tbody tr {
+  cursor: pointer;
+}
+
+.snapshot-table tbody tr:hover {
+  background: #1e2c4e;
+}
+
+.snapshot-table tbody tr.snapshot-selected {
+  background: #3d3418;
+  outline: 1px solid #e8b339;
+}
+
+.snapshot-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.snapshot-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 .history-pagination {
   display: flex;
   align-items: center;

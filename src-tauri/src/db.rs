@@ -25,6 +25,7 @@ pub struct RunRow {
 
 #[derive(Debug, Serialize)]
 pub struct SnapshotRow {
+    pub id: String,
     pub wave: i64,
     pub tier: Option<i64>,
     pub coin_per_minute: Option<f64>,
@@ -443,17 +444,73 @@ pub fn delete_runs(conn: &Connection, run_ids: &[String]) -> rusqlite::Result<us
     Ok(deleted)
 }
 
+pub fn delete_snapshots(conn: &Connection, snapshot_ids: &[String]) -> rusqlite::Result<usize> {
+    use std::collections::HashSet;
+
+    if snapshot_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut run_ids = HashSet::new();
+    for id in snapshot_ids {
+        if let Ok(run_id) = conn.query_row(
+            "SELECT run_id FROM snapshots WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ) {
+            run_ids.insert(run_id);
+        }
+    }
+
+    let mut deleted = 0usize;
+    for id in snapshot_ids {
+        deleted += conn.execute("DELETE FROM snapshots WHERE id = ?1", params![id])?;
+    }
+
+    for run_id in run_ids {
+        sync_run_snapshot_stats(conn, &run_id)?;
+    }
+
+    Ok(deleted)
+}
+
+pub fn delete_snapshot(conn: &Connection, snapshot_id: &str) -> rusqlite::Result<Option<String>> {
+    let run_id: Option<String> = conn
+        .query_row(
+            "SELECT run_id FROM snapshots WHERE id = ?1",
+            params![snapshot_id],
+            |row| row.get(0),
+        )
+        .ok();
+    let deleted = delete_snapshots(conn, &[snapshot_id.to_string()])?;
+    if deleted == 0 {
+        Ok(None)
+    } else {
+        Ok(run_id)
+    }
+}
+
+fn sync_run_snapshot_stats(conn: &Connection, run_id: &str) -> rusqlite::Result<()> {
+    let (final_wave, peak_tier) = snapshot_stats(conn, run_id)?;
+    conn.execute(
+        "UPDATE runs SET final_wave = ?2, peak_tier = ?3 WHERE id = ?1",
+        params![run_id, final_wave, peak_tier],
+    )?;
+    Ok(())
+}
+
 pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<SnapshotRow>> {
     let mut stmt = conn.prepare(
-        "SELECT wave, tier, coin_per_minute, recorded_at
+        "SELECT id, wave, tier, coin_per_minute, recorded_at
          FROM snapshots WHERE run_id = ?1 ORDER BY wave ASC",
     )?;
     let rows = stmt.query_map(params![run_id], |row| {
         Ok(SnapshotRow {
-            wave: row.get(0)?,
-            tier: row.get(1)?,
-            coin_per_minute: row.get(2)?,
-            recorded_at: row.get(3)?,
+            id: row.get(0)?,
+            wave: row.get(1)?,
+            tier: row.get(2)?,
+            coin_per_minute: row.get(3)?,
+            recorded_at: row.get(4)?,
         })
     })?;
     rows.collect()
@@ -528,6 +585,56 @@ mod tests {
         let open = latest_open_run(&conn).unwrap().expect("open run");
         assert_eq!(open.0, id2);
         assert_eq!(open.1, "tournament");
+    }
+
+    #[test]
+    fn delete_snapshots_batch_recomputes_run_stats() {
+        let conn = open_in_memory().unwrap();
+        let run_id = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 3, Some(11), Some(300.0)).unwrap();
+        end_run(&conn, &run_id, Some(3), Some(11)).unwrap();
+
+        let snaps = run_snapshots(&conn, &run_id).unwrap();
+        let ids: Vec<String> = snaps
+            .iter()
+            .filter(|s| s.wave == 1 || s.wave == 3)
+            .map(|s| s.id.clone())
+            .collect();
+        assert_eq!(delete_snapshots(&conn, &ids).unwrap(), 2);
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].snapshot_count, 1);
+        assert_eq!(runs[0].final_wave, Some(2));
+        assert_eq!(runs[0].avg_coin_per_minute, Some(200.0));
+    }
+
+    #[test]
+    fn delete_snapshot_recomputes_run_stats() {
+        let conn = open_in_memory().unwrap();
+        let run_id = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 5, Some(12), Some(300.0)).unwrap();
+        end_run(&conn, &run_id, Some(5), Some(12)).unwrap();
+
+        let outlier = run_snapshots(&conn, &run_id)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.wave == 2)
+            .expect("wave 2");
+        delete_snapshot(&conn, &outlier.id).unwrap();
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].snapshot_count, 2);
+        assert_eq!(runs[0].final_wave, Some(5));
+        assert_eq!(runs[0].peak_tier, Some(12));
+        assert_eq!(runs[0].avg_coin_per_minute, Some(200.0));
+
+        let snaps = run_snapshots(&conn, &run_id).unwrap();
+        assert_eq!(snaps.len(), 2);
+        assert!(snaps.iter().all(|s| s.wave != 2));
     }
 
     #[test]

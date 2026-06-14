@@ -35,6 +35,8 @@ pub fn run() {
             commands::list_runs,
             commands::set_run_comment,
             commands::delete_runs,
+            commands::delete_snapshot,
+            commands::delete_snapshots,
             commands::combine_runs,
             commands::run_snapshots,
             commands::current_run_snapshots,

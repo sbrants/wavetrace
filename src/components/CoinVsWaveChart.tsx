@@ -21,6 +21,8 @@ type SingleProps = {
   mode: "single";
   data: CoinChartPoint[];
   height?: number;
+  onPointClick?: (wave: number) => void;
+  selectedWaves?: number[];
 };
 
 type CompareProps = {
@@ -40,9 +42,16 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
     if (props.data.length === 0) {
       return null;
     }
+    const { onPointClick, selectedWaves = [] } = props;
+    const selectedSet = new Set(selectedWaves);
+    const handleChartClick = (state: { activeLabel?: string | number }) => {
+      if (onPointClick && state?.activeLabel != null) {
+        onPointClick(Number(state.activeLabel));
+      }
+    };
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={props.data}>
+        <LineChart data={props.data} onClick={handleChartClick}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
           <XAxis dataKey="wave" stroke="#8da2c0" />
           <YAxis
@@ -59,8 +68,43 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
             type="monotone"
             dataKey="coin"
             stroke="#4cc2ff"
-            dot={false}
             strokeWidth={2}
+            dot={(dotProps) => {
+              const { cx, cy, payload, index } = dotProps;
+              if (cx == null || cy == null) {
+                return <g key={index} />;
+              }
+              const wave = (payload as CoinChartPoint).wave;
+              const selected = selectedSet.has(wave);
+              const visible = selected || !!onPointClick;
+              return (
+                <circle
+                  key={index}
+                  cx={cx}
+                  cy={cy}
+                  r={selected ? 7 : visible ? 4 : 0}
+                  fill={selected ? "#e8b339" : "#16203a"}
+                  stroke={selected ? "#fff" : "#4cc2ff"}
+                  strokeWidth={visible ? 2 : 0}
+                  style={{ cursor: onPointClick ? "pointer" : undefined }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPointClick?.(wave);
+                  }}
+                />
+              );
+            }}
+            activeDot={
+              onPointClick
+                ? {
+                    r: 7,
+                    fill: "#e8b339",
+                    stroke: "#fff",
+                    strokeWidth: 2,
+                    cursor: "pointer",
+                  }
+                : false
+            }
           />
         </LineChart>
       </ResponsiveContainer>

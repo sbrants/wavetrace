@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatCoin, RunFilter, RunRow, SnapshotRow } from "../api";
 import {
   buildCompareChartDataByProgress,
@@ -40,11 +40,15 @@ export default function History() {
   >({});
   const [compareLoading, setCompareLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(25);
+  const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
   const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
+  const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
+    new Set()
+  );
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
+  const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
 
   const listFilter = useCallback((): RunFilter => {
     const next: RunFilter = { ...filter };
@@ -91,6 +95,8 @@ export default function History() {
     } else {
       setSnapshots([]);
     }
+    setSelectedSnapshotIds(new Set());
+    snapshotRowRefs.current.clear();
   }, [selected]);
 
   const sorted = [...runs].sort((a, b) => {
@@ -217,6 +223,117 @@ export default function History() {
       alert(`Exported ${runs.length} run${runs.length === 1 ? "" : "s"} to:\n${path}`);
     } catch (e) {
       alert(e);
+    }
+  };
+
+  const snapshotByWave = useMemo(() => {
+    const map = new Map<number, SnapshotRow>();
+    for (const s of snapshots) {
+      map.set(s.wave, s);
+    }
+    return map;
+  }, [snapshots]);
+
+  const selectedWaves = useMemo(
+    () =>
+      snapshots
+        .filter((s) => selectedSnapshotIds.has(s.id))
+        .map((s) => s.wave),
+    [snapshots, selectedSnapshotIds]
+  );
+
+  const allSnapshotsChecked =
+    snapshots.length > 0 &&
+    snapshots.every((s) => selectedSnapshotIds.has(s.id));
+
+  const toggleSnapshotId = useCallback((id: string, wave: number) => {
+    setSelectedSnapshotIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        snapshotRowRefs.current.get(wave)?.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSnapshotWave = useCallback(
+    (wave: number) => {
+      const snap = snapshotByWave.get(wave);
+      if (snap) toggleSnapshotId(snap.id, wave);
+    },
+    [snapshotByWave, toggleSnapshotId]
+  );
+
+  const toggleAllSnapshots = () => {
+    if (allSnapshotsChecked) {
+      setSelectedSnapshotIds(new Set());
+      return;
+    }
+    setSelectedSnapshotIds(new Set(snapshots.map((s) => s.id)));
+  };
+
+  const ongoingRunNote = () =>
+    selected && !selected.ended_at
+      ? "\n\nThis run is still open — stop the scanner first or deleted waves may be recorded again."
+      : "";
+
+  const refreshSelectedRun = useCallback(async () => {
+    if (!selected) return;
+    const activeFilter = listFilter();
+    const [snaps, updatedRuns] = await Promise.all([
+      api.runSnapshots(selected.id),
+      api.listRuns(activeFilter),
+    ]);
+    setSnapshots(snaps);
+    setRuns(updatedRuns);
+    setSelected(updatedRuns.find((r) => r.id === selected.id) ?? selected);
+  }, [selected, listFilter]);
+
+  const deleteSelectedSnapshots = async () => {
+    if (!selected || selectedSnapshotIds.size === 0) return;
+    const n = selectedSnapshotIds.size;
+    if (
+      !confirm(
+        `Delete ${n} snapshot${n === 1 ? "" : "s"}?${ongoingRunNote()}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteSnapshots([...selectedSnapshotIds]);
+      setSelectedSnapshotIds(new Set());
+      await refreshSelectedRun();
+    } catch (e) {
+      alert(String(e));
+    }
+  };
+
+  const deleteSnapshot = async (snap: SnapshotRow) => {
+    if (!selected) return;
+    if (
+      !confirm(
+        `Delete snapshot for wave ${snap.wave} (${formatCoin(snap.coin_per_minute)})?${ongoingRunNote()}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteSnapshot(snap.id);
+      setSelectedSnapshotIds((prev) => {
+        if (!prev.has(snap.id)) return prev;
+        const next = new Set(prev);
+        next.delete(snap.id);
+        return next;
+      });
+      await refreshSelectedRun();
+    } catch (e) {
+      alert(String(e));
     }
   };
 
@@ -543,19 +660,123 @@ export default function History() {
       )}
 
       {selected && compareRuns.length < 2 && (
-        <div className="chart-card" ref={chartRef}>
-          <div className="chart-card-header">
-            <h3>
-              Run {new Date(selected.started_at).toLocaleString()} — avg coin/min vs
-              wave
-            </h3>
-            <ChartScreenshotActions
-              targetRef={chartRef}
-              disabled={chartData.length === 0}
+        <>
+          <div className="chart-card" ref={chartRef}>
+            <div className="chart-card-header">
+              <h3>
+                Run {new Date(selected.started_at).toLocaleString()} — avg coin/min vs
+                wave
+              </h3>
+              <ChartScreenshotActions
+                targetRef={chartRef}
+                disabled={chartData.length === 0}
+              />
+            </div>
+            <CoinVsWaveChart
+              mode="single"
+              data={chartData}
+              height={300}
+              selectedWaves={selectedWaves}
+              onPointClick={toggleSnapshotWave}
             />
           </div>
-          <CoinVsWaveChart mode="single" data={chartData} height={300} />
-        </div>
+
+          <div className="snapshot-panel">
+            <div className="snapshot-panel-header">
+              <h3>
+                Snapshots ({snapshots.length}
+                {selectedSnapshotIds.size > 0
+                  ? ` · ${selectedSnapshotIds.size} selected`
+                  : ""}
+                )
+              </h3>
+              <div className="snapshot-panel-actions">
+                <span className="muted">
+                  Click chart points or rows to select. Selected points show in gold.
+                </span>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={selectedSnapshotIds.size === 0}
+                  onClick={deleteSelectedSnapshots}
+                >
+                  Delete selected ({selectedSnapshotIds.size})
+                </button>
+              </div>
+            </div>
+            <div className="snapshot-table-wrap">
+              <table className="snapshot-table">
+                <thead>
+                  <tr>
+                    <th className="check-col">
+                      <input
+                        type="checkbox"
+                        checked={allSnapshotsChecked}
+                        onChange={toggleAllSnapshots}
+                        aria-label="Select all snapshots"
+                      />
+                    </th>
+                    <th>Wave</th>
+                    <th>Tier</th>
+                    <th>Coin/min</th>
+                    <th>Recorded</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {snapshots.map((s) => (
+                    <tr
+                      key={s.id}
+                      ref={(el) => {
+                        if (el) snapshotRowRefs.current.set(s.wave, el);
+                        else snapshotRowRefs.current.delete(s.wave);
+                      }}
+                      className={
+                        selectedSnapshotIds.has(s.id) ? "snapshot-selected" : ""
+                      }
+                      onClick={() => toggleSnapshotId(s.id, s.wave)}
+                    >
+                      <td
+                        className="check-col"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedSnapshotIds.has(s.id)}
+                          onChange={() => toggleSnapshotId(s.id, s.wave)}
+                          aria-label={`Select wave ${s.wave}`}
+                        />
+                      </td>
+                      <td>{s.wave}</td>
+                      <td>{s.tier ?? "—"}</td>
+                      <td>{formatCoin(s.coin_per_minute)}</td>
+                      <td>{new Date(s.recorded_at).toLocaleString()}</td>
+                      <td
+                        className="snapshot-actions"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => deleteSnapshot(s)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {snapshots.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="muted">
+                        No snapshots in this run.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
