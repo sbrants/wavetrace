@@ -19,7 +19,7 @@ export interface UpdateProgress {
 }
 
 export function isUpdaterEnabled(): boolean {
-  return import.meta.env.PROD;
+  return import.meta.env.PROD && !import.meta.env.VITE_STORE_DISTRIBUTION;
 }
 
 export async function fetchUpdate(): Promise<Update | null> {

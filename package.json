@@ -8,7 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:build:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-signed.ps1"
+    "tauri:build:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-signed.ps1",
+    "tauri:store:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-microsoft-store.ps1",
+    "tauri:store:build:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-microsoft-store.ps1 -LocalTest"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
