@@ -5,7 +5,9 @@ window, OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the
 wave advances, and charts coin/min against wave for the current and past runs.
 
 **Repository:** https://github.com/sbrants/wavetrace  
-**Releases:** https://github.com/sbrants/wavetrace/releases
+**Releases:** https://github.com/sbrants/wavetrace/releases  
+**Microsoft Store:** [WaveTrace](https://apps.microsoft.com/detail/9P9M9DHX1L76) — submitted for certification (v0.2.3)  
+**Privacy policy:** [PRIVACY.md](PRIVACY.md)
 
 Full product spec: [Goal.md](Goal.md). OCR regression corpus:
 [`fixtures/captured/manifest.json`](fixtures/captured/manifest.json).
@@ -69,6 +71,16 @@ cargo run --example label_corpus
 Reference PNGs at `fixtures/` root (game-mode edge cases) stay local-only and are not
 committed.
 
+## Install (end users)
+
+| Channel | How to get it | Updates |
+| ------- | ------------- | ------- |
+| **GitHub Releases** | Download the NSIS `.exe` (Windows) or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater (GitHub `latest.json`) |
+| **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) once published | Microsoft Store |
+| **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
+
+WaveTrace is local-only: no account, no cloud sync. See [PRIVACY.md](PRIVACY.md).
+
 ## Build a release bundle
 
 ```powershell
@@ -77,6 +89,18 @@ npm run tauri build
 
 Outputs: `src-tauri/target/release/wavetrace.exe` plus MSI/NSIS installers under
 `src-tauri/target/release/bundle/`.
+
+### Microsoft Store (MSIX)
+
+Package for Partner Center upload:
+
+```powershell
+npm run tauri:store:build
+```
+
+Output: `microsoft-store/out/Meringue.WaveTrace_<version>_x64.msix`. Store builds set
+`VITE_STORE_DISTRIBUTION` so the GitHub auto-updater is disabled; updates go through
+the Store. Full checklist: [microsoft-store/README.md](microsoft-store/README.md).
 
 ### Signed release (Microsoft Trusted Signing)
 
@@ -99,12 +123,14 @@ Regular `npm run tauri build` stays unsigned (no Azure credentials required).
 
 ### Auto-update
 
-Release builds check GitHub on startup and offer one-click updates (Settings →
-**Check for updates**).
+**GitHub / direct-download builds** check GitHub on startup and offer one-click updates
+(Settings → **Check for updates**). **Microsoft Store builds** skip this and receive
+updates through the Store only.
 
 | Platform | Update format |
 | -------- | ------------- |
-| Windows  | NSIS installer (`.exe`) |
+| Windows (GitHub) | NSIS installer (`.exe`) |
+| Windows (Store) | Microsoft Store |
 | Linux    | AppImage (works on Ubuntu, Arch, etc.) |
 | Arch pacman/AUR | Use your package manager — in-app updater targets AppImage |
 
