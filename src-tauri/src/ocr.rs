@@ -1,4 +1,4 @@
-//! Full-frame OCR via Windows.Media.Ocr (built into Windows 10+).
+//! Full-frame OCR: Windows.Media.Ocr on Windows, Tesseract elsewhere.
 
 #[cfg(windows)]
 use std::ptr;
@@ -38,8 +38,28 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
 }
 
 #[cfg(not(windows))]
-pub fn ocr_full_frame(_img: &RgbaImage) -> Result<Vec<String>, String> {
-    Err(windows_ocr_unavailable())
+pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
+    let dynamic = prepare_image(img);
+    let rgba = dynamic.to_rgba8();
+    let width = rgba.width() as i32;
+    let height = rgba.height() as i32;
+    let bytes_per_line = width
+        .checked_mul(4)
+        .ok_or_else(|| "Image row byte width overflow".to_string())?;
+    let text = tesseract::ocr_from_frame(
+        rgba.as_raw(),
+        width,
+        height,
+        4,
+        bytes_per_line,
+        "eng",
+    )
+    .map_err(|e| format!("Tesseract OCR failed: {e}"))?;
+    let lines = split_lines(&text);
+    if lines.is_empty() {
+        return Err("Tesseract OCR returned no text".into());
+    }
+    Ok(lines)
 }
 
 #[cfg(windows)]
@@ -161,10 +181,6 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
     Ok(bitmap)
 }
 
-#[cfg(not(windows))]
-fn windows_ocr_unavailable() -> String {
-    "Windows OCR (Windows.Media.Ocr) is only available on Windows".into()
-}
 
 /// Downscale large emulator frames so OCR stays responsive.
 fn prepare_image(img: &RgbaImage) -> image::DynamicImage {

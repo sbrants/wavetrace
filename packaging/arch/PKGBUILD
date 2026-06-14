@@ -1,0 +1,67 @@
+# Build on Arch Linux:
+#   git clone https://github.com/sbrants/thetower-perftracker.git
+#   cd thetower-perftracker/packaging/arch
+#   makepkg -si
+#
+# Or from a repo checkout:
+#   ./scripts/build-arch.sh
+
+pkgname=wavetrace
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Automatic per-wave tracker for The Tower"
+arch=('x86_64')
+url="https://github.com/sbrants/thetower-perftracker"
+license=('custom')
+options=('!strip')
+depends=(
+  'gtk3'
+  'webkit2gtk-4.1'
+  'tesseract'
+  'hicolor-icon-theme'
+)
+makedepends=(
+  'base-devel'
+  'cargo'
+  'git'
+  'nodejs'
+  'npm'
+  'patchelf'
+  'librsvg'
+  'libappindicator-gtk3'
+  'openssl'
+  'pkgconf'
+)
+source=("${url}.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd thetower-perftracker
+  printf '%s' "$(node -p "require('./package.json').version")"
+}
+
+build() {
+  cd thetower-perftracker
+  npm ci
+  npm run tauri build
+}
+
+package() {
+  cd thetower-perftracker
+
+  install -Dm755 "src-tauri/target/release/wavetrace" "${pkgdir}/usr/bin/wavetrace"
+
+  local deb_root="src-tauri/target/release/bundle/deb/WaveTrace_${pkgver}_amd64/data"
+  local desktop="${deb_root}/usr/share/applications"
+  local icon="${deb_root}/usr/share/icons/hicolor/128x128/apps"
+
+  if compgen -G "${desktop}/"*.desktop > /dev/null; then
+    install -Dm644 "${desktop}/"*.desktop "${pkgdir}/usr/share/applications/wavetrace.desktop"
+  fi
+
+  if compgen -G "${icon}/"*.png > /dev/null; then
+    install -Dm644 "${icon}/"*.png "${pkgdir}/usr/share/icons/hicolor/128x128/apps/wavetrace.png"
+  elif [[ -f "src-tauri/icons/128x128.png" ]]; then
+    install -Dm644 "src-tauri/icons/128x128.png" "${pkgdir}/usr/share/icons/hicolor/128x128/apps/wavetrace.png"
+  fi
+}

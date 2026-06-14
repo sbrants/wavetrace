@@ -100,6 +100,45 @@ Unsigned builds show Windows SmartScreen warnings. To sign installers with
 
 Regular `npm run tauri build` stays unsigned (no Azure credentials required).
 
+## Arch Linux
+
+WaveTrace is not built on Windows for Linux. Use an Arch machine, VM, or the
+`Release Linux` GitHub Actions workflow.
+
+### Quick build (Arch)
+
+```bash
+git clone https://github.com/sbrants/thetower-perftracker.git
+cd thetower-perftracker
+./scripts/build-arch.sh
+```
+
+Outputs:
+
+- `src-tauri/target/release/wavetrace`
+- `src-tauri/target/release/bundle/appimage/*.AppImage` (portable)
+- `src-tauri/target/release/bundle/deb/` (reference layout for packaging)
+
+### Arch package (pacman)
+
+```bash
+cd packaging/arch
+makepkg -si
+```
+
+Requires a `v0.1.0` git tag on the remote, or edit `PKGBUILD` to point at your
+branch/commit.
+
+### Runtime dependencies (Arch)
+
+- `webkit2gtk-4.1`, `gtk3` — Tauri webview
+- `tesseract`, `tesseract-data-eng` — OCR (Linux uses Tesseract instead of Windows OCR)
+
+### CI artifacts
+
+Push a `v*` tag or run **Release Linux** manually on GitHub Actions to publish an
+AppImage and an Arch-built binary artifact.
+
 
 ## Using the app
 
