@@ -37,7 +37,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyMTQzNjQ5NURDNzY5MzQKUldRMGFjZGRTVFlVVW5yVlpmSmo2N1RnakFvOWZiSEN2eVdwcmxuYWZvQ1RYM0dEOUZvemw1QWMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyMzdEMjBGMTFCM0MzMkQKUldRdHc3TVJEOUkzNHBxbm5mRERRTWFGR0QzVXVNdHVtRjBBNmJXSUo5R2haZ3JDWFJPOVhkMWkK",
       "endpoints": [
         "https://github.com/sbrants/thetower-perftracker/releases/latest/download/latest.json"
       ],
