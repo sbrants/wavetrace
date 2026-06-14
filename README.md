@@ -53,12 +53,6 @@ cargo run --example capture_fixtures -- --prune-misses   # drop frames with no /
 cargo test --release captured_corpus -- --nocapture
 ```
 
-**Seed reference fixtures** from `fixtures/expected.json` (keeps existing live captures):
-
-```powershell
-cargo run --example seed_captured_corpus -- --clear-seeded
-```
-
 **Re-run OCR** on saved PNGs after parser/classify changes:
 
 ```powershell

@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(parse_coin_line("85.8T/min"), CoinReading::Rate(85.8e12));
     }
 
-    // Raw values from fixtures/expected.json.
+    // Raw values from reference fixture screenshots (see Goal.md).
     #[test]
     fn coin_values_from_fixtures() {
         // Coin_per_minute.png, intro_sprint.png

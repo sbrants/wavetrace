@@ -9,12 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{capture, fields, parser::CoinReading, state_machine::GameMode};
 
-/// Minimum coin-rate detection rate for live captures (seeded fixtures excluded).
+/// Minimum coin-rate detection rate for captured frames.
 pub const LIVE_COIN_HIT_RATE_MIN: f64 = 0.80;
-
-pub fn is_seeded_entry(entry: &CaptureEntry) -> bool {
-    entry.window_title == "seeded_fixture"
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureExpect {
@@ -100,51 +96,7 @@ pub fn save_manifest(manifest: &CaptureManifest) -> Result<(), String> {
     std::fs::write(manifest_path(), json).map_err(|e| e.to_string())
 }
 
-/// Remove seeded reference fixtures, keeping live captures.
-pub fn clear_seeded_captures() -> Result<usize, String> {
-    let dir = captured_dir();
-    let mut manifest = load_manifest();
-    let removed: Vec<_> = manifest
-        .captures
-        .iter()
-        .filter(|e| is_seeded_entry(e))
-        .cloned()
-        .collect();
-    for entry in &removed {
-        let _ = std::fs::remove_file(dir.join(&entry.file));
-        if let Some(coin) = &entry.coin_crop_file {
-            let _ = std::fs::remove_file(dir.join(coin));
-        }
-    }
-    manifest.captures.retain(|e| !is_seeded_entry(e));
-    save_manifest(&manifest)?;
-    Ok(removed.len())
-}
-
-/// Remove live captures from the corpus, keeping seeded reference fixtures.
-pub fn clear_live_captures() -> Result<usize, String> {
-    let dir = captured_dir();
-    let mut manifest = load_manifest();
-    let removed: Vec<_> = manifest
-        .captures
-        .iter()
-        .filter(|e| e.window_title != "seeded_fixture")
-        .cloned()
-        .collect();
-    for entry in &removed {
-        let _ = std::fs::remove_file(dir.join(&entry.file));
-        if let Some(coin) = &entry.coin_crop_file {
-            let _ = std::fs::remove_file(dir.join(coin));
-        }
-    }
-    manifest
-        .captures
-        .retain(|e| e.window_title == "seeded_fixture");
-    save_manifest(&manifest)?;
-    Ok(removed.len())
-}
-
-/// Remove every capture (seeded + live) and delete all PNGs in `fixtures/captured/`.
+/// Remove every capture and delete all PNGs in `fixtures/captured/`.
 pub fn clear_all_captures() -> Result<usize, String> {
     let dir = captured_dir();
     let manifest = load_manifest();
@@ -167,14 +119,14 @@ pub fn clear_all_captures() -> Result<usize, String> {
     Ok(count)
 }
 
-/// Drop live captures where coin rate was not detected (keeps seeded entries).
+/// Drop captures where coin rate was not detected.
 pub fn prune_coin_misses() -> Result<(usize, usize), String> {
     let dir = captured_dir();
     let mut manifest = load_manifest();
     let removed: Vec<_> = manifest
         .captures
         .iter()
-        .filter(|e| !is_seeded_entry(e) && !e.classified.coin_rate_detected)
+        .filter(|e| !e.classified.coin_rate_detected)
         .cloned()
         .collect();
     for entry in &removed {
@@ -183,9 +135,9 @@ pub fn prune_coin_misses() -> Result<(usize, usize), String> {
             let _ = std::fs::remove_file(dir.join(coin));
         }
     }
-    manifest.captures.retain(|e| {
-        is_seeded_entry(e) || e.classified.coin_rate_detected
-    });
+    manifest
+        .captures
+        .retain(|e| e.classified.coin_rate_detected);
     let kept = manifest.captures.len();
     save_manifest(&manifest)?;
     Ok((removed.len(), kept))
@@ -344,12 +296,8 @@ fn next_sequence(dir: &Path, stamp: &str) -> u32 {
 #[derive(Debug, Clone)]
 pub struct CorpusReport {
     pub total: usize,
-    pub seeded_total: usize,
-    pub live_total: usize,
     pub coin_rate_hits: usize,
     pub coin_rate_misses: usize,
-    pub seeded_coin_rate_hits: usize,
-    pub live_coin_rate_hits: usize,
     pub labeled: usize,
     pub labeled_pass: usize,
     pub labeled_fail: usize,
@@ -443,12 +391,8 @@ pub fn label_detected_captures(manifest: &mut CaptureManifest) -> usize {
 pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     let mut report = CorpusReport {
         total: manifest.captures.len(),
-        seeded_total: 0,
-        live_total: 0,
         coin_rate_hits: 0,
         coin_rate_misses: 0,
-        seeded_coin_rate_hits: 0,
-        live_coin_rate_hits: 0,
         labeled: 0,
         labeled_pass: 0,
         labeled_fail: 0,
@@ -456,20 +400,8 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     };
 
     for entry in &manifest.captures {
-        let seeded = is_seeded_entry(entry);
-        if seeded {
-            report.seeded_total += 1;
-        } else {
-            report.live_total += 1;
-        }
-
         if entry.classified.coin_rate_detected {
             report.coin_rate_hits += 1;
-            if seeded {
-                report.seeded_coin_rate_hits += 1;
-            } else {
-                report.live_coin_rate_hits += 1;
-            }
         } else {
             report.coin_rate_misses += 1;
         }

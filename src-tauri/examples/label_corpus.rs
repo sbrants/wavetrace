@@ -29,8 +29,8 @@ fn main() {
         before + labeled
     );
     println!(
-        "corpus: seeded={} live={} labeled_pass={}/{}",
-        report.seeded_total, report.live_total, report.labeled_pass, report.labeled
+        "corpus: total={} labeled_pass={}/{}",
+        report.total, report.labeled_pass, report.labeled
     );
     for fail in &report.failures {
         println!("FAIL: {fail}");

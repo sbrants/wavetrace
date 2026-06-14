@@ -140,7 +140,7 @@ flowchart LR
 
 ## Game mode edge cases
 
-The game UI changes layout and labels depending on mode. The scanner must classify each poll into a **game mode** before parsing fields. Full-screenshot fixtures and expected behavior live in `[fixtures/expected.json](fixtures/expected.json)`.
+The game UI changes layout and labels depending on mode. The scanner must classify each poll into a **game mode** before parsing fields. OCR regression uses live captures in `fixtures/captured/manifest.json`; reference screenshots in `fixtures/` document edge-case layouts.
 
 ```mermaid
 flowchart TD
@@ -226,8 +226,8 @@ else → OCR failure; keep last known coin/min for display
 
 When adding a fixture to `fixtures/`:
 
-1. Save the screenshot or anchor PNG
-2. Add an entry to `fixtures/expected.json` with `game_mode`, `expect`, and `behavior`
+1. Save the screenshot or anchor PNG (local reference; not committed if under `fixtures/*.png`)
+2. Capture live frames into `fixtures/captured/` and set `expect` on entries for strict regression checks
 3. Document detection and handling in the table above
 
 ---
@@ -436,14 +436,14 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 ## Acceptance criteria (Phase 1)
 
 - User can select a target window and save it
-- User can calibrate parser behavior via fixture tests in `fixtures/expected.json` (not per-field anchor crops)
+- User can calibrate parser behavior via captured corpus tests in `fixtures/captured/manifest.json` (not per-field anchor crops)
 - App detects wave increase and writes a snapshot with UTC timestamp
 - Tournament runs are stored with `run_type = tournament` and filterable in run history
 - App detects run end via Retry text or wave reset; auto-starts new run at wave 1
 - Dashboard shows live values and coin/min vs wave chart for the current run
 - User can browse past runs and open a run's chart
 - User can export runs to CSV
-- OCR/parser tests pass against all entries in `fixtures/expected.json`
+- OCR/parser tests pass against the captured corpus (`fixtures/captured/manifest.json`)
 - Edge-case fixtures (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
 - Live dashboard shows a warning banner when `game_mode = total_coin`
 - Works on Windows 10+ (macOS/Linux in Phase 1b; mobile in Phase 3+)
@@ -452,17 +452,17 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ## Test fixtures
 
-The `fixtures/` folder contains reference crops and full screenshots for parser tests, game-mode detection, and OCR regression. `**fixtures/expected.json`** is the source of truth for expected parse results and per-frame behavior.
+The `fixtures/captured/` folder holds live window captures for OCR regression. `fixtures/captured/manifest.json` is the source of truth for classified values and optional `expect` labels on each frame.
 
-Anchor-kind entries in `expected.json` document HUD regions for reference; the live scanner uses **full-frame OCR**, not template matching.
+Reference crops and full screenshots under `fixtures/` (gitignored at repo root) document HUD regions and game-mode edge cases. The live scanner uses **full-frame OCR**, not template matching.
 
 Agents should:
 
-1. Load `expected.json` and run parser tests against every fixture
+1. Run `cargo test captured_corpus` against the committed capture corpus
 2. Implement game-mode detection per [Game mode edge cases](#game-mode-edge-cases)
-3. Integrate live capture only after fixture tests pass
+3. Add new captures with `capture_fixtures` when parser behavior changes
 
-### Fixture inventory
+### Reference fixture inventory (local)
 
 
 | File                           | Kind       | `game_mode`    | Purpose                              |
@@ -476,21 +476,17 @@ Agents should:
 | `end_of_run.png`               | screenshot | `end_of_run`   | GAME STATS + RETRY; ends run         |
 
 
-### expected.json schema
+### manifest.json schema
 
-Each entry in `fixtures/expected.json` contains:
+Each entry in `fixtures/captured/manifest.json` contains:
 
 
-| Field             | Description                                                                      |
-| ----------------- | -------------------------------------------------------------------------------- |
-| `file`            | PNG filename in `fixtures/`                                                      |
-| `kind`            | `anchor` or `screenshot`                                                         |
-| `game_mode`       | Mode classifier output (see edge-case section)                                   |
-| `scanning`        | `true` if scanner should actively parse this frame                               |
-| `expect`          | Expected `tier`, `wave`, `coin_per_minute_raw`, `coin_per_minute` (normalized)   |
-| `expect_run_type` | Expected `runs.run_type` when this frame starts a run (`normal` or `tournament`) |
-| `behavior`        | `record_snapshot`, `end_run`, `update_coin_per_minute`, `warn_user` flags        |
-| `notes`           | Human-readable context                                                           |
+| Field        | Description                                                                      |
+| ------------ | -------------------------------------------------------------------------------- |
+| `file`       | PNG filename in `fixtures/captured/`                                             |
+| `classified` | OCR output: `tier`, `wave`, `game_mode`, `coin_per_minute`, `coin_rate_detected` |
+| `expect`     | Optional expected `tier`, `wave`, `coin_per_minute` for strict regression        |
+| `notes`      | Human-readable context                                                           |
 
 
 ### Layout notes
@@ -498,7 +494,7 @@ Each entry in `fixtures/expected.json` contains:
 - **Wave and Tier** are parsed from lines containing those keywords anywhere in the OCR output
 - **Coin/Minute** uses the second `/min` line (first is usually cash); parser handles Windows OCR suffix quirks
 - Full screenshots are used for integration tests (mode detection + multi-field OCR)
-- When adding fixtures, always update `expected.json` and the edge-case table in Goal.md
+- When adding captures, update `manifest.json` and the edge-case table in Goal.md
 
 ---
 

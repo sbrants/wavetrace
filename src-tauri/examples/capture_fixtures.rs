@@ -12,7 +12,6 @@ fn main() {
     let mut interval_ms: u64 = 500;
     let mut title: Option<String> = None;
     let mut list_windows = false;
-    let mut clear_live = false;
     let mut clear_all = false;
     let mut label_detected = false;
 
@@ -33,8 +32,7 @@ fn main() {
                 title = args.get(i).cloned();
             }
             "--list-windows" | "-l" => list_windows = true,
-            "--clear-live" => clear_live = true,
-            "--clear-all" => clear_all = true,
+            "--clear-all" | "--clear-live" => clear_all = true,
             "--prune-misses" => {
                 let (dropped, kept) =
                     fixture_capture::prune_coin_misses().expect("prune coin misses");
@@ -49,9 +47,9 @@ fn main() {
                        --count, -n <N>       frames to capture (default 30)\n\
                        --interval, -i <ms>   delay between frames (default 500)\n\
                        --title, -t <text>    window title substring\n\
-                       --clear-live          remove prior live captures (keep seeded)\n\
-                       --clear-all           remove all captures (seeded + live)\n\
-                       --prune-misses        drop live frames with no coin/min detected\n\
+                       --clear-all           remove all prior captures before burst\n\
+                       --clear-live          alias for --clear-all\n\
+                       --prune-misses        drop frames with no coin/min detected\n\
                        --label-detected      auto-set expect when tier/wave/coin detected\n\
                        --list-windows, -l    show open windows and exit\n"
                 );
@@ -90,9 +88,6 @@ fn main() {
     if clear_all {
         let n = fixture_capture::clear_all_captures().expect("clear all captures");
         println!("Cleared all {n} capture(s) and reset manifest.");
-    } else if clear_live {
-        let n = fixture_capture::clear_live_captures().expect("clear live captures");
-        println!("Cleared {n} prior live capture(s).");
     }
 
     println!("Capturing {count} frames every {interval_ms}ms from \"{window_title}\"...");
