@@ -189,8 +189,7 @@ mod tests {
         }
 
         if report.live_total > 0 {
-            let live_hit_rate =
-                report.live_coin_rate_hits as f64 / report.live_total.max(1) as f64;
+            let live_hit_rate = report.live_coin_rate_hits as f64 / report.live_total.max(1) as f64;
             eprintln!(
                 "live coin detection hit rate: {:.0}% ({}/{})",
                 live_hit_rate * 100.0,

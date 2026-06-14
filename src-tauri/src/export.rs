@@ -39,7 +39,10 @@ fn export_stamp() -> String {
 }
 
 /// Flat CSV: one row per snapshot with parent run metadata.
-pub fn export_snapshots_csv(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<(String, usize, usize)> {
+pub fn export_snapshots_csv(
+    conn: &Connection,
+    filter: &RunFilter,
+) -> rusqlite::Result<(String, usize, usize)> {
     let runs = db::list_runs(conn, filter)?;
     let mut out = String::from(
         "run_id,started_at,ended_at,run_type,peak_tier,final_wave,run_comment,wave,tier,coin_per_minute,recorded_at\n",
@@ -238,8 +241,7 @@ mod tests {
         db::insert_snapshot(&conn, &id, 2, Some(11), Some(200.0)).unwrap();
         db::end_run(&conn, &id, Some(2), Some(11)).unwrap();
 
-        let (csv, runs, snaps) =
-            export_snapshots_csv(&conn, &db::RunFilter::default()).unwrap();
+        let (csv, runs, snaps) = export_snapshots_csv(&conn, &db::RunFilter::default()).unwrap();
         assert_eq!(runs, 1);
         assert_eq!(snaps, 2);
         assert_eq!(csv.matches('\n').count(), 3); // header + 2 rows

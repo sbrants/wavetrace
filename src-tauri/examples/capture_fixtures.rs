@@ -82,9 +82,7 @@ fn main() {
         println!("Cleared {n} prior live capture(s).");
     }
 
-    println!(
-        "Capturing {count} frames every {interval_ms}ms from \"{window_title}\"..."
-    );
+    println!("Capturing {count} frames every {interval_ms}ms from \"{window_title}\"...");
     if label_detected {
         println!("Auto-labeling captures where tier, wave, and coin rate are detected.");
     }

@@ -80,7 +80,8 @@ pub fn load_manifest() -> CaptureManifest {
     if !path.exists() {
         return CaptureManifest {
             version: 1,
-            description: "Live captures for OCR regression. Set expect on entries for strict tests.".into(),
+            description:
+                "Live captures for OCR regression. Set expect on entries for strict tests.".into(),
             captures: Vec::new(),
         };
     }
@@ -279,7 +280,9 @@ fn next_sequence(dir: &Path, stamp: &str) -> u32 {
         for ent in read.flatten() {
             let name = ent.file_name().to_string_lossy().into_owned();
             if name.starts_with(&prefix) && name.ends_with(".png") && !name.contains("_coin") {
-                if let Some(seq) = name.strip_prefix(&prefix).and_then(|s| s.strip_suffix(".png"))
+                if let Some(seq) = name
+                    .strip_prefix(&prefix)
+                    .and_then(|s| s.strip_suffix(".png"))
                 {
                     if let Ok(n) = seq.parse::<u32>() {
                         max = max.max(n);
@@ -437,7 +440,10 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
                 Some(v) if Some(v) == expect.coin_per_minute => {}
                 Some(v) => {
                     ok = false;
-                    reasons.push(format!("coin_per_minute {v} != {:?}", expect.coin_per_minute));
+                    reasons.push(format!(
+                        "coin_per_minute {v} != {:?}",
+                        expect.coin_per_minute
+                    ));
                 }
                 None => {
                     ok = false;
@@ -468,7 +474,9 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
             report.labeled_pass += 1;
         } else {
             report.labeled_fail += 1;
-            report.failures.push(format!("{}: {}", entry.id, reasons.join("; ")));
+            report
+                .failures
+                .push(format!("{}: {}", entry.id, reasons.join("; ")));
         }
     }
     report

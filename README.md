@@ -100,6 +100,32 @@ Unsigned builds show Windows SmartScreen warnings. To sign installers with
 
 Regular `npm run tauri build` stays unsigned (no Azure credentials required).
 
+### Auto-update
+
+Release builds check GitHub on startup and offer one-click updates (Settings →
+**Check for updates**).
+
+| Platform | Update format |
+| -------- | ------------- |
+| Windows  | NSIS installer (`.exe`) |
+| Linux    | AppImage (works on Ubuntu, Arch, etc.) |
+| Arch pacman/AUR | Use your package manager — in-app updater targets AppImage |
+
+**One-time setup** (repo maintainer):
+
+1. Generate an updater keypair: `powershell -File scripts/setup-updater-signing.ps1`
+2. Add GitHub secret **`TAURI_SIGNING_PRIVATE_KEY`** — paste the full contents of
+   `%USERPROFILE%\.tauri\wavetrace.key` (not the `.pub` file)
+3. Optional password: **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`**
+4. Push a `v*` tag — the **Release** workflow publishes installers, `latest.json`,
+   and `.sig` files for the updater
+
+The public key is embedded in `src-tauri/tauri.conf.json`. This is separate from
+Azure Trusted Signing (SmartScreen); both are used on Windows release builds.
+
+Local signed Windows builds can set `TAURI_SIGNING_PRIVATE_KEY_PATH` in
+`.env.signing` so updater artifacts are signed alongside the installer.
+
 ## Arch Linux
 
 WaveTrace is not built on Windows for Linux. Use an Arch machine, VM, or the
@@ -137,8 +163,8 @@ branch/commit.
 
 ### CI artifacts
 
-Push a `v*` tag or run **Release Linux** manually on GitHub Actions to publish an
-AppImage and an Arch-built binary artifact.
+Push a `v*` tag or run **Release** manually on GitHub Actions to publish Windows
+installers, Linux AppImage, Arch binary, and `latest.json` for auto-update.
 
 
 ## Using the app

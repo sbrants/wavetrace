@@ -131,10 +131,11 @@ fn cache_window_id(title_substring: &str, window_id: u32) {
 }
 
 fn capture_from_cached_id(windows: &[xcap::Window], title_substring: &str) -> Option<RgbaImage> {
-    let cached_id = WINDOW_CACHE
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().filter(|(t, _)| t == title_substring).map(|(_, id)| *id))?;
+    let cached_id = WINDOW_CACHE.lock().ok().and_then(|g| {
+        g.as_ref()
+            .filter(|(t, _)| t == title_substring)
+            .map(|(_, id)| *id)
+    })?;
 
     for w in windows {
         if w.id().ok() != Some(cached_id) {

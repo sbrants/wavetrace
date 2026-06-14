@@ -107,7 +107,9 @@ struct Debounced {
 
 impl Debounced {
     fn feed(&mut self, value: Option<u32>) -> Option<u32> {
-        let Some(v) = value else { return self.confirmed };
+        let Some(v) = value else {
+            return self.confirmed;
+        };
         if self.candidate == Some(v) {
             self.count += 1;
         } else {
@@ -362,7 +364,9 @@ impl RunStateMachine {
                 }
                 self.consecutive_total_coin_polls = 0;
             }
-            CoinReading::Total(_) if matches!(input.mode, GameMode::TotalCoin | GameMode::Tournament) => {
+            CoinReading::Total(_)
+                if matches!(input.mode, GameMode::TotalCoin | GameMode::Tournament) =>
+            {
                 self.consecutive_total_coin_polls += 1;
             }
             _ => {
@@ -446,11 +450,7 @@ impl RunStateMachine {
         }
 
         if let Some(run) = self.run.as_mut() {
-            accumulate_coin_sample(
-                run,
-                self.wave.confirmed,
-                self.last_coin_rate,
-            );
+            accumulate_coin_sample(run, self.wave.confirmed, self.last_coin_rate);
         }
 
         actions
@@ -553,14 +553,13 @@ mod tests {
         sm.resume_from_db(RunType::Farming, 42, Some(17));
         let coin = CoinReading::Rate(100.0);
         feed2(&mut sm, p(GameMode::Normal, 17, 43, coin));
-        let actions = feed2(&mut sm, p(GameMode::Normal, 17, 44, CoinReading::Rate(110.0)));
-        assert!(actions.iter().any(|a| matches!(
-            a,
-            Action::Snapshot {
-                wave: 43,
-                ..
-            }
-        )));
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 17, 44, CoinReading::Rate(110.0)),
+        );
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::Snapshot { wave: 43, .. })));
     }
 
     #[test]
@@ -602,12 +601,20 @@ mod tests {
     #[test]
     fn run_starts_at_wave_1_and_snapshots_increments() {
         let mut sm = RunStateMachine::new();
-        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(150.0)));
-        assert!(actions.contains(&Action::StartRun { run_type: RunType::Farming }));
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 1, CoinReading::Rate(150.0)),
+        );
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::Farming
+        }));
         assert!(!actions.iter().any(|a| matches!(a, Action::Snapshot { .. })));
 
         // Wave 1 is snapshotted when wave 2 is confirmed.
-        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)));
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)),
+        );
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
             tier: Some(12),
@@ -615,20 +622,39 @@ mod tests {
         }));
 
         // Collect more samples on wave 2 before advancing.
-        feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)));
-        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 3, CoinReading::Rate(150.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 2, CoinReading::Rate(150.0)),
+        );
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 3, CoinReading::Rate(150.0)),
+        );
         assert!(actions.iter().any(|a| matches!(
             a,
-            Action::Snapshot { wave: 2, coin_per_minute: Some(150.0), .. }
+            Action::Snapshot {
+                wave: 2,
+                coin_per_minute: Some(150.0),
+                ..
+            }
         )));
     }
 
     #[test]
     fn snapshot_averages_coin_rate_while_on_wave() {
         let mut sm = RunStateMachine::new();
-        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0)));
-        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(200.0)));
-        let actions = feed2(&mut sm, p(GameMode::Normal, 12, 2, CoinReading::Rate(200.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0)),
+        );
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 1, CoinReading::Rate(200.0)),
+        );
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 2, CoinReading::Rate(200.0)),
+        );
         let avg = actions.iter().find_map(|a| match a {
             Action::Snapshot {
                 wave: 1,
@@ -649,7 +675,10 @@ mod tests {
         // A drifting rate with one garbled-but-parseable frame in the middle.
         // The reported value must track the drift, not the outlier.
         let mut sm = RunStateMachine::new();
-        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(70.0e12)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 1, CoinReading::Rate(70.0e12)),
+        );
         sm.poll(p(GameMode::Normal, 12, 1, CoinReading::Rate(71.0e12)));
         // Outlier within the spike ratio (so it isn't gated as a 50× spike),
         // but well off the trend — median should keep us near ~70T.
@@ -665,8 +694,11 @@ mod tests {
     #[test]
     fn coin_rate_spike_requires_extra_confirmation() {
         let mut sm = RunStateMachine::new();
-        feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0e12))); // 100T
-        // Single misread at 6q — must not update.
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 1, CoinReading::Rate(100.0e12)),
+        ); // 100T
+           // Single misread at 6q — must not update.
         sm.poll(p(GameMode::Normal, 12, 1, CoinReading::Rate(6.0e15)));
         assert_eq!(sm.live_state().coin_per_minute, Some(100.0e12));
         // Even two frames isn't enough for a 60× spike (needs 3).
@@ -678,16 +710,25 @@ mod tests {
     fn debounce_filters_single_frame_misreads() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 12, 5, CoinReading::Rate(1.0)));
-        assert!(sm.run.is_none(), "wave 5 without wave 1 must not start a run");
+        assert!(
+            sm.run.is_none(),
+            "wave 5 without wave 1 must not start a run"
+        );
 
         feed2(&mut sm, p(GameMode::Normal, 12, 1, CoinReading::Rate(1.0)));
         assert!(sm.run.is_some());
 
         // 4321 -> 432 (misread, single frame) -> 4322
-        feed2(&mut sm, p(GameMode::Normal, 12, 4321, CoinReading::Rate(1.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 4321, CoinReading::Rate(1.0)),
+        );
         let a = sm.poll(p(GameMode::Normal, 12, 432, CoinReading::Rate(1.0)));
         assert!(a.is_empty(), "single misread frame must produce nothing");
-        let a = feed2(&mut sm, p(GameMode::Normal, 12, 4322, CoinReading::Rate(1.0)));
+        let a = feed2(
+            &mut sm,
+            p(GameMode::Normal, 12, 4322, CoinReading::Rate(1.0)),
+        );
         assert!(a.contains(&Action::Snapshot {
             wave: 4321,
             tier: Some(12),
@@ -698,7 +739,10 @@ mod tests {
     #[test]
     fn total_coin_mode_keeps_last_known_rate() {
         let mut sm = RunStateMachine::new();
-        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(500.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(500.0)),
+        );
         // total_coin.png scenario: balance shown, rate must not change.
         let actions = feed2(
             &mut sm,
@@ -712,21 +756,22 @@ mod tests {
         // feed2 above is two polls — warning should be on for sustained total_coin.
         assert!(sm.live_state().total_coin_warning);
         // Rate returns — warning clears immediately.
-        feed2(&mut sm, p(GameMode::Normal, 14, 2, CoinReading::Rate(500.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 2, CoinReading::Rate(500.0)),
+        );
         assert!(!sm.live_state().total_coin_warning);
     }
 
     #[test]
     fn intermittent_rate_resets_warning_streak() {
         let mut sm = RunStateMachine::new();
-        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)),
+        );
         // Single total_coin poll (simulates one OCR frame missing /min).
-        sm.poll(p(
-            GameMode::TotalCoin,
-            14,
-            2,
-            CoinReading::Total(1e15),
-        ));
+        sm.poll(p(GameMode::TotalCoin, 14, 2, CoinReading::Total(1e15)));
         assert!(!sm.live_state().total_coin_warning);
         // Rate returns on the next frame — streak clears.
         sm.poll(p(GameMode::Normal, 14, 2, CoinReading::Rate(100.0)));
@@ -793,24 +838,34 @@ mod tests {
         assert!(sm.run.is_none());
 
         // Stale high waves after the screen closes must not restart the run...
-        let a = feed2(&mut sm, p(GameMode::Normal, 11, 5002, CoinReading::Rate(1.0)));
+        let a = feed2(
+            &mut sm,
+            p(GameMode::Normal, 11, 5002, CoinReading::Rate(1.0)),
+        );
         assert!(a.is_empty());
         // ...but wave 1 starts the next one.
         let a = feed2(&mut sm, p(GameMode::Normal, 11, 1, CoinReading::Rate(1.0)));
-        assert!(a.contains(&Action::StartRun { run_type: RunType::Farming }));
+        assert!(a.contains(&Action::StartRun {
+            run_type: RunType::Farming
+        }));
     }
 
     #[test]
     fn wave_reset_to_1_ends_and_restarts() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(10.0)));
-        feed2(&mut sm, p(GameMode::Normal, 14, 450, CoinReading::Rate(10.0)));
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 450, CoinReading::Rate(10.0)),
+        );
         let actions = feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(10.0)));
         assert!(actions.contains(&Action::EndRun {
             final_wave: 450,
             peak_tier: Some(14)
         }));
-        assert!(actions.contains(&Action::StartRun { run_type: RunType::Farming }));
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::Farming
+        }));
     }
 
     #[test]

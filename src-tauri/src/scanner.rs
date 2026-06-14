@@ -111,13 +111,7 @@ impl Scanner {
         std::thread::spawn(move || {
             let log_path = db::app_data_dir().join("logs");
             std::fs::create_dir_all(&log_path).ok();
-            emit(
-                &app,
-                "starting",
-                &machine,
-                &current_run_id,
-                &cached_live,
-            );
+            emit(&app, "starting", &machine, &current_run_id, &cached_live);
 
             while running.load(Ordering::SeqCst) {
                 let tick = Instant::now();
@@ -142,8 +136,7 @@ impl Scanner {
                     }
                     Some(full) => {
                         let should_continue = || running.load(Ordering::SeqCst);
-                        let fields =
-                            fields::ocr_all_fields_cancellable(&full, &should_continue);
+                        let fields = fields::ocr_all_fields_cancellable(&full, &should_continue);
                         if !should_continue() {
                             break;
                         }

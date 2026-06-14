@@ -13,7 +13,7 @@ use windows::{
     core::Interface,
     Graphics::Imaging::{BitmapBufferAccessMode, BitmapPixelFormat, SoftwareBitmap},
     Media::Ocr::{OcrEngine, OcrResult},
-    Win32::System::WinRT::{RoInitialize, IMemoryBufferByteAccess, RO_INIT_MULTITHREADED},
+    Win32::System::WinRT::{IMemoryBufferByteAccess, RoInitialize, RO_INIT_MULTITHREADED},
 };
 
 #[cfg(windows)]
@@ -46,15 +46,8 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
     let bytes_per_line = width
         .checked_mul(4)
         .ok_or_else(|| "Image row byte width overflow".to_string())?;
-    let text = tesseract::ocr_from_frame(
-        rgba.as_raw(),
-        width,
-        height,
-        4,
-        bytes_per_line,
-        "eng",
-    )
-    .map_err(|e| format!("Tesseract OCR failed: {e}"))?;
+    let text = tesseract::ocr_from_frame(rgba.as_raw(), width, height, 4, bytes_per_line, "eng")
+        .map_err(|e| format!("Tesseract OCR failed: {e}"))?;
     let lines = split_lines(&text);
     if lines.is_empty() {
         return Err("Tesseract OCR returned no text".into());
@@ -66,8 +59,7 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
 fn init_winrt() -> Result<(), String> {
     WINRT_INIT
         .get_or_init(|| unsafe {
-            RoInitialize(RO_INIT_MULTITHREADED)
-                .map_err(|e| format!("RoInitialize failed: {e}"))
+            RoInitialize(RO_INIT_MULTITHREADED).map_err(|e| format!("RoInitialize failed: {e}"))
         })
         .clone()
 }
@@ -180,7 +172,6 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
 
     Ok(bitmap)
 }
-
 
 /// Downscale large emulator frames so OCR stays responsive.
 fn prepare_image(img: &RgbaImage) -> image::DynamicImage {

@@ -27,10 +27,7 @@ fn main() {
     }
     if report.seeded_total > 0 {
         let seeded_rate = report.seeded_coin_rate_hits as f64 / report.seeded_total as f64;
-        println!(
-            "seeded hit rate: {:.0}%",
-            seeded_rate * 100.0
-        );
+        println!("seeded hit rate: {:.0}%", seeded_rate * 100.0);
     }
     println!(
         "labeled: pass={}/{} fail={}",

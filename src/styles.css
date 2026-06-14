@@ -588,3 +588,36 @@ select {
   color: #6fdd8b;
   font-size: 13px;
 }
+
+.update-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: #1a2d4d;
+  border-bottom: 1px solid var(--border);
+}
+
+.update-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-progress {
+  width: 100%;
+  font-size: 12px;
+}
+
+.updater .update-notes {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  max-height: 200px;
+  overflow: auto;
+}

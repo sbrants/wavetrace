@@ -562,7 +562,7 @@ Never commit `.env.signing`.
 
 - Unsigned builds: tell testers **More info → Run anyway** (or Unblock on the file)
 - Signed builds: SmartScreen improves immediately; publisher reputation may still build over time
-- No in-app auto-updater yet — testers reinstall manually per version
+- In-app auto-update via GitHub Releases (`latest.json`); Windows NSIS + Linux AppImage
 
 ---
 

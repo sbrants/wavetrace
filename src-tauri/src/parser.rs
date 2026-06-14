@@ -26,9 +26,7 @@ pub fn suffix_multiplier(suffix: &str) -> Option<f64> {
         return Some(10f64.powi(idx as i32 * 3));
     }
     let bytes = suffix.as_bytes();
-    if bytes.len() == 2
-        && bytes.iter().all(|b| b.is_ascii_lowercase())
-    {
+    if bytes.len() == 2 && bytes.iter().all(|b| b.is_ascii_lowercase()) {
         let idx = 12 + (bytes[0] - b'a') as i32 * 26 + (bytes[1] - b'a') as i32;
         return Some(10f64.powi(idx * 3));
     }
@@ -38,9 +36,11 @@ pub fn suffix_multiplier(suffix: &str) -> Option<f64> {
 /// Coin-icon prefixes OCR'd from the in-game coin currency glyph.
 pub fn has_coin_icon_prefix(raw: &str) -> bool {
     let t = raw.trim();
-    ["@", "C ", "c ", "©", "G ", "(C)", "(c)", "(Cc)", "(cc)", "(CC)"]
-        .iter()
-        .any(|p| t.starts_with(p))
+    [
+        "@", "C ", "c ", "©", "G ", "(C)", "(c)", "(Cc)", "(cc)", "(CC)",
+    ]
+    .iter()
+    .any(|p| t.starts_with(p))
 }
 
 /// Suffix letters used for total coin *balance* (not typical /min rates at
@@ -150,9 +150,7 @@ fn normalize_coin_rate_ocr(text: &str) -> String {
         }
     }
     while let Some(first) = t.chars().next() {
-        if first.is_ascii_digit()
-            || matches!(first, '@' | 'C' | 'c' | 'O' | 'o' | '0')
-        {
+        if first.is_ascii_digit() || matches!(first, '@' | 'C' | 'c' | 'O' | 'o' | '0') {
             break;
         }
         let len = first.len_utf8();
@@ -389,8 +387,7 @@ pub fn is_wave_progress_line(raw: &str) -> bool {
     if parts.len() != 2 {
         return false;
     }
-    parts[0].chars().all(|c| c.is_ascii_digit())
-        && parts[1].chars().all(|c| c.is_ascii_digit())
+    parts[0].chars().all(|c| c.is_ascii_digit()) && parts[1].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Parse a coin/min line from the dedicated coin OCR crop (no $ cash line).
@@ -401,7 +398,9 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
     }
     let normalized = normalize_coin_rate_ocr(raw);
     let mut text = normalized.as_str();
-    for prefix in ["(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@"] {
+    for prefix in [
+        "(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@",
+    ] {
         if let Some(rest) = text.strip_prefix(prefix) {
             text = rest.trim_start();
             break;
@@ -443,7 +442,9 @@ pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
         return CoinReading::Rate(v);
     }
     let mut text = raw.trim();
-    for prefix in ["(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@"] {
+    for prefix in [
+        "(Cc)", "(CC)", "(cc)", "(C)", "(c)", "C ", "c ", "© ", "G ", "@ ", "@",
+    ] {
         if let Some(rest) = text.strip_prefix(prefix) {
             text = rest.trim_start();
             break;
@@ -587,13 +588,22 @@ mod tests {
     fn wave_progress_line_is_not_coin() {
         assert!(is_wave_progress_line("1933 / 2002"));
         assert!(is_wave_progress_line("2010 / 2071"));
-        assert_eq!(parse_coin_anchor_crop("1933 / 2002"), CoinReading::Unreadable);
+        assert_eq!(
+            parse_coin_anchor_crop("1933 / 2002"),
+            CoinReading::Unreadable
+        );
     }
 
     #[test]
     fn coin_crop_accepts_m_suffix_without_icon() {
-        assert_eq!(parse_coin_anchor_crop("512M/min"), CoinReading::Rate(512.0e6));
-        assert_eq!(parse_coin_anchor_crop("E408T/mi"), CoinReading::Rate(408.0e12));
+        assert_eq!(
+            parse_coin_anchor_crop("512M/min"),
+            CoinReading::Rate(512.0e6)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("E408T/mi"),
+            CoinReading::Rate(408.0e12)
+        );
     }
 
     #[test]
@@ -604,21 +614,54 @@ mod tests {
 
     #[test]
     fn coin_live_ocr_quirks() {
-        assert_eq!(parse_coin_anchor_crop("62.4T1mi"), CoinReading::Rate(62.4e12));
-        assert_eq!(parse_coin_anchor_crop("(Cc) 3 A8T /min="), CoinReading::Rate(3.48e12));
-        assert_eq!(parse_coin_anchor_crop("70.6T/rtf"), CoinReading::Rate(70.6e12));
-        assert_eq!(parse_coin_anchor_crop("542M/n'lin"), CoinReading::Rate(542.0e6));
-        assert_eq!(parse_coin_anchor_crop("546M(min"), CoinReading::Rate(546.0e6));
-        assert_eq!(parse_coin_anchor_crop(") 71T/nA1"), CoinReading::Rate(71.0e12));
-        assert_eq!(parse_coin_anchor_crop("492M/min"), CoinReading::Rate(492.0e6));
-        assert_eq!(parse_coin_anchor_crop("1933 / 2002"), CoinReading::Unreadable);
+        assert_eq!(
+            parse_coin_anchor_crop("62.4T1mi"),
+            CoinReading::Rate(62.4e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("(Cc) 3 A8T /min="),
+            CoinReading::Rate(3.48e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("70.6T/rtf"),
+            CoinReading::Rate(70.6e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("542M/n'lin"),
+            CoinReading::Rate(542.0e6)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("546M(min"),
+            CoinReading::Rate(546.0e6)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop(") 71T/nA1"),
+            CoinReading::Rate(71.0e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("492M/min"),
+            CoinReading::Rate(492.0e6)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("1933 / 2002"),
+            CoinReading::Unreadable
+        );
     }
 
     #[test]
     fn coin_anchor_crop_without_min_suffix() {
-        assert_eq!(parse_coin_anchor_crop("@ 3.48\\"), CoinReading::Rate(3.48e12));
-        assert_eq!(parse_coin_anchor_crop("@ 3.48T"), CoinReading::Rate(3.48e12));
-        assert_eq!(parse_coin_anchor_crop("@ 68.8Tz"), CoinReading::Rate(68.8e12));
+        assert_eq!(
+            parse_coin_anchor_crop("@ 3.48\\"),
+            CoinReading::Rate(3.48e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("@ 3.48T"),
+            CoinReading::Rate(3.48e12)
+        );
+        assert_eq!(
+            parse_coin_anchor_crop("@ 68.8Tz"),
+            CoinReading::Rate(68.8e12)
+        );
         assert_eq!(parse_coin_anchor_crop("@ O/min"), CoinReading::Rate(0.0));
     }
 
@@ -687,7 +730,7 @@ mod tests {
     #[test]
     fn wave_parsing() {
         assert_eq!(parse_wave("Wave 4321"), Some(4321));
-        assert_eq!(parse_wave("Wave 10"), Some(10));   // Wave_and_Tier.png
+        assert_eq!(parse_wave("Wave 10"), Some(10)); // Wave_and_Tier.png
         assert_eq!(parse_wave("Wave 650"), Some(650)); // intro_sprint.png
         assert_eq!(parse_wave("wave 865"), Some(865)); // tournament.png
         assert_eq!(parse_wave("4321"), Some(4321));
@@ -701,7 +744,7 @@ mod tests {
         assert_eq!(parse_tier("Tier 12"), Some((12, false)));
         assert_eq!(parse_tier("| Tier 12 160.52T"), Some((12, false)));
         assert_eq!(parse_tier("Tier 14"), Some((14, false))); // Wave_and_Tier.png
-        // tournament.png: "Tier 17+" -> 17, tournament
+                                                              // tournament.png: "Tier 17+" -> 17, tournament
         assert_eq!(parse_tier("Tier 17+"), Some((17, true)));
         assert_eq!(parse_tier("17+"), Some((17, true)));
         assert_eq!(parse_tier("Tier"), None);

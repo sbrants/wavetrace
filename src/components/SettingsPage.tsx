@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatCoin, Settings, WindowInfo } from "../api";
 import ScannerLogViewer from "./ScannerLogViewer";
+import AppUpdater from "./AppUpdater";
 
 const showDevTools = import.meta.env.DEV;
 
@@ -244,6 +245,8 @@ export default function SettingsPage() {
       </section>
 
       <ScannerLogViewer />
+
+      <AppUpdater />
 
       <div className="toolbar">
         <button className="primary" onClick={save}>

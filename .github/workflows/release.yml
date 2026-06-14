@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-24.04
+            args: "--bundles appimage"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libtesseract-dev \
+            tesseract-ocr-eng \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            lld \
+            libgbm-dev
+
+      - name: Build and publish release assets
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: WaveTrace ${{ github.ref_name }}
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/sbrants/thetower-perftracker/blob/main/CHANGELOG.md) for details.
+
+            **Auto-update:** release builds check GitHub for updates on startup.
+            - Windows: NSIS installer
+            - Linux (incl. Arch): AppImage
+          includeUpdaterJson: true
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  arch-binary:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Arch build dependencies
+        run: |
+          pacman -Syu --noconfirm \
+            base-devel git nodejs npm rust patchelf \
+            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
+            tesseract tesseract-data-eng openssl pkgconf \
+            pipewire libpipewire clang
+
+      - name: Build Arch binary
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci
+          npm run tauri build -- --bundles deb
+
+      - name: Upload Arch binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: src-tauri/target/release/wavetrace
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

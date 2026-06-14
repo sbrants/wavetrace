@@ -167,12 +167,7 @@ mod tests {
 
     #[test]
     fn windows_ocr_at_line_without_min_suffix() {
-        let input = classify(&s(&[
-            "$ 6.9M/9-",
-            "@ 3.48TVfnjn",
-            "Tier 12",
-            "Wave 4571",
-        ]));
+        let input = classify(&s(&["$ 6.9M/9-", "@ 3.48TVfnjn", "Tier 12", "Wave 4571"]));
         assert_eq!(input.tier, Some(12));
         assert_eq!(input.wave, Some(4571));
         assert_eq!(input.coin, CoinReading::Rate(3.48e12));
@@ -180,12 +175,7 @@ mod tests {
 
     #[test]
     fn uses_second_min_line_for_coin() {
-        let input = classify(&s(&[
-            "$ 6.9M/min",
-            "C 3.48T/min",
-            "Tier 12",
-            "Wave 4571",
-        ]));
+        let input = classify(&s(&["$ 6.9M/min", "C 3.48T/min", "Tier 12", "Wave 4571"]));
         assert_eq!(input.tier, Some(12));
         assert_eq!(input.wave, Some(4571));
         assert_eq!(input.coin, CoinReading::Rate(3.48e12));

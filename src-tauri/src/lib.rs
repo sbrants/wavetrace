@@ -20,6 +20,8 @@ pub fn run() {
     db::open().expect("failed to open database");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             scanner: scanner::Scanner::default(),
         })

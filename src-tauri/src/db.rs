@@ -238,29 +238,32 @@ pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<
     sql.push_str(" ORDER BY r.started_at DESC");
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |row| {
-        Ok(RunRow {
-            id: row.get(0)?,
-            started_at: row.get(1)?,
-            ended_at: row.get(2)?,
-            run_type: row.get(3)?,
-            peak_tier: row.get(4)?,
-            final_wave: row.get(5)?,
-            avg_coin_per_minute: row.get(6)?,
-            snapshot_count: row.get(7)?,
-            comment: row.get(8)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())),
+        |row| {
+            Ok(RunRow {
+                id: row.get(0)?,
+                started_at: row.get(1)?,
+                ended_at: row.get(2)?,
+                run_type: row.get(3)?,
+                peak_tier: row.get(4)?,
+                final_wave: row.get(5)?,
+                avg_coin_per_minute: row.get(6)?,
+                snapshot_count: row.get(7)?,
+                comment: row.get(8)?,
+            })
+        },
+    )?;
     rows.collect()
 }
 
-pub fn set_run_comment(
-    conn: &Connection,
-    run_id: &str,
-    comment: &str,
-) -> rusqlite::Result<()> {
+pub fn set_run_comment(conn: &Connection, run_id: &str, comment: &str) -> rusqlite::Result<()> {
     let trimmed = comment.trim();
-    let value: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let value: Option<&str> = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
     conn.execute(
         "UPDATE runs SET comment = ?2 WHERE id = ?1",
         params![run_id, value],
@@ -374,9 +377,8 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
 
     let mut combined_snapshots: Vec<SnapshotRow> = Vec::new();
     for (run_index, run) in source_runs.iter().enumerate() {
-        let snaps = run_snapshots(conn, &run.id).map_err(|_| {
-            CombineRunsError::RunNotFound(run.id.clone())
-        })?;
+        let snaps = run_snapshots(conn, &run.id)
+            .map_err(|_| CombineRunsError::RunNotFound(run.id.clone()))?;
         for snap in snaps {
             if let Some(prev) = combined_snapshots.last() {
                 if snap.wave <= prev.wave {
@@ -417,9 +419,9 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
     );
 
     let new_id = Uuid::new_v4().to_string();
-    let tx = conn.unchecked_transaction().map_err(|e| {
-        CombineRunsError::RunNotFound(e.to_string())
-    })?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
 
     tx.execute(
         "INSERT INTO runs (id, started_at, ended_at, run_type, peak_tier, final_wave, comment)
@@ -802,8 +804,22 @@ mod tests {
             "2024-01-01T10:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
-        insert_snapshot_at(&conn, &id1, 2, Some(10), Some(120.0), "2024-01-01T10:02:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T10:01:00Z",
+        );
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            2,
+            Some(10),
+            Some(120.0),
+            "2024-01-01T10:02:00Z",
+        );
 
         let id2 = insert_closed_run(
             &conn,
@@ -811,8 +827,22 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 3, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
-        insert_snapshot_at(&conn, &id2, 4, Some(11), Some(160.0), "2024-01-01T11:02:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            3,
+            Some(11),
+            Some(150.0),
+            "2024-01-01T11:01:00Z",
+        );
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            4,
+            Some(11),
+            Some(160.0),
+            "2024-01-01T11:02:00Z",
+        );
 
         let combined_id = combine_runs(&conn, &[id2.clone(), id1.clone()]).unwrap();
         assert_ne!(combined_id, id1);
@@ -843,8 +873,22 @@ mod tests {
             "2024-01-01T10:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
-        insert_snapshot_at(&conn, &id1, 50, Some(12), Some(200.0), "2024-01-01T10:02:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T10:01:00Z",
+        );
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            50,
+            Some(12),
+            Some(200.0),
+            "2024-01-01T10:02:00Z",
+        );
 
         let id2 = insert_closed_run(
             &conn,
@@ -852,7 +896,14 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 1, Some(10), Some(100.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T11:01:00Z",
+        );
 
         let err = combine_runs(&conn, &[id1, id2]).unwrap_err();
         assert!(matches!(
@@ -871,8 +922,22 @@ mod tests {
             "2024-01-01T10:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
-        insert_snapshot_at(&conn, &id1, 5, Some(10), Some(120.0), "2024-01-01T10:02:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T10:01:00Z",
+        );
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            5,
+            Some(10),
+            Some(120.0),
+            "2024-01-01T10:02:00Z",
+        );
 
         let id2 = insert_closed_run(
             &conn,
@@ -880,7 +945,14 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 5, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            5,
+            Some(11),
+            Some(150.0),
+            "2024-01-01T11:01:00Z",
+        );
 
         assert!(matches!(
             combine_runs(&conn, &[id1, id2]).unwrap_err(),
@@ -899,7 +971,14 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 2, Some(10), Some(120.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            2,
+            Some(10),
+            Some(120.0),
+            "2024-01-01T11:01:00Z",
+        );
 
         assert!(matches!(
             combine_runs(&conn, &[id1, id2]).unwrap_err(),
@@ -924,7 +1003,14 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "tournament",
         );
-        insert_snapshot_at(&conn, &id2, 2, Some(17), Some(500.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            2,
+            Some(17),
+            Some(500.0),
+            "2024-01-01T11:01:00Z",
+        );
 
         let combined_id = combine_runs(&conn, &[id1, id2]).unwrap();
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
@@ -941,7 +1027,14 @@ mod tests {
             "2024-01-01T10:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T10:01:00Z",
+        );
         set_run_comment(&conn, &id1, "morning farm").unwrap();
 
         let id2 = insert_closed_run(
@@ -950,7 +1043,14 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 2, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            2,
+            Some(11),
+            Some(150.0),
+            "2024-01-01T11:01:00Z",
+        );
 
         let combined_id = combine_runs(&conn, &[id1, id2]).unwrap();
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
@@ -967,7 +1067,14 @@ mod tests {
             "2024-01-01T10:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id1, 1, Some(10), Some(100.0), "2024-01-01T10:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id1,
+            1,
+            Some(10),
+            Some(100.0),
+            "2024-01-01T10:01:00Z",
+        );
         set_run_comment(&conn, &id1, "first half").unwrap();
 
         let id2 = insert_closed_run(
@@ -976,15 +1083,19 @@ mod tests {
             "2024-01-01T11:30:00Z",
             "farming",
         );
-        insert_snapshot_at(&conn, &id2, 2, Some(11), Some(150.0), "2024-01-01T11:01:00Z");
+        insert_snapshot_at(
+            &conn,
+            &id2,
+            2,
+            Some(11),
+            Some(150.0),
+            "2024-01-01T11:01:00Z",
+        );
         set_run_comment(&conn, &id2, "second half").unwrap();
 
         let combined_id = combine_runs(&conn, &[id2, id1]).unwrap();
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].id, combined_id);
-        assert_eq!(
-            runs[0].comment.as_deref(),
-            Some("first half · second half")
-        );
+        assert_eq!(runs[0].comment.as_deref(), Some("first half · second half"));
     }
 }

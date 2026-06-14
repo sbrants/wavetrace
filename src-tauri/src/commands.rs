@@ -161,8 +161,7 @@ pub fn export_csv(filter: RunFilter) -> Result<CsvExportPayload, String> {
 #[tauri::command]
 pub fn export_workbook(filter: RunFilter) -> Result<WorkbookExportPayload, String> {
     let conn = conn()?;
-    let (bytes, run_count, snapshot_count) =
-        export::export_workbook_ods_bytes(&conn, &filter)?;
+    let (bytes, run_count, snapshot_count) = export::export_workbook_ods_bytes(&conn, &filter)?;
     Ok(WorkbookExportPayload {
         filename: export::workbook_ods_filename(),
         data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -244,8 +243,7 @@ pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
 
     let max_lines = max_lines.clamp(10, 2000);
     let total_lines = count_lines_in_file(&path)?;
-    let (content, log_tail_truncated) =
-        read_file_tail_text(&path, MAX_SCANNER_LOG_TAIL_BYTES)?;
+    let (content, log_tail_truncated) = read_file_tail_text(&path, MAX_SCANNER_LOG_TAIL_BYTES)?;
     let all: Vec<&str> = content.lines().collect();
     let line_truncated = all.len() > max_lines;
     let start = all.len().saturating_sub(max_lines);
@@ -283,20 +281,25 @@ fn capture_fixture_once_blocking() -> Result<CaptureEntry, String> {
 
 /// Burst-capture frames for the OCR regression corpus.
 #[tauri::command]
-pub async fn capture_fixture_burst(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
+pub async fn capture_fixture_burst(
+    count: usize,
+    interval_ms: u64,
+) -> Result<CaptureBurstResult, String> {
     let count = count.clamp(1, 200);
     let interval_ms = interval_ms.clamp(100, 10_000);
-    tauri::async_runtime::spawn_blocking(move || {
-        capture_fixture_burst_blocking(count, interval_ms)
-    })
-    .await
-    .map_err(|e| format!("capture task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || capture_fixture_burst_blocking(count, interval_ms))
+        .await
+        .map_err(|e| format!("capture task failed: {e}"))?
 }
 
-fn capture_fixture_burst_blocking(count: usize, interval_ms: u64) -> Result<CaptureBurstResult, String> {
+fn capture_fixture_burst_blocking(
+    count: usize,
+    interval_ms: u64,
+) -> Result<CaptureBurstResult, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
-    let entries = fixture_capture::capture_burst(&target.title_substring, count, interval_ms, false)?;
+    let entries =
+        fixture_capture::capture_burst(&target.title_substring, count, interval_ms, false)?;
     let coin_rate_detected = entries
         .iter()
         .filter(|e| e.classified.coin_rate_detected)
@@ -304,8 +307,12 @@ fn capture_fixture_burst_blocking(count: usize, interval_ms: u64) -> Result<Capt
     Ok(CaptureBurstResult {
         saved: entries.len(),
         coin_rate_detected,
-        manifest_path: fixture_capture::manifest_path().to_string_lossy().to_string(),
-        captured_dir: fixture_capture::captured_dir().to_string_lossy().to_string(),
+        manifest_path: fixture_capture::manifest_path()
+            .to_string_lossy()
+            .to_string(),
+        captured_dir: fixture_capture::captured_dir()
+            .to_string_lossy()
+            .to_string(),
     })
 }
 
@@ -335,12 +342,7 @@ fn preview_thumbnail(img: &image::RgbaImage) -> image::RgbaImage {
     }
     let scale = MAX_W as f32 / img.width() as f32;
     let h = ((img.height() as f32) * scale).round() as u32;
-    image::imageops::resize(
-        img,
-        MAX_W,
-        h.max(1),
-        image::imageops::FilterType::Triangle,
-    )
+    image::imageops::resize(img, MAX_W, h.max(1), image::imageops::FilterType::Triangle)
 }
 
 /// One-shot capture + OCR for Settings diagnostics (runs off the UI thread).
@@ -449,9 +451,7 @@ pub async fn preview_capture() -> Result<String, String> {
 
 fn preview_capture_blocking() -> Result<String, String> {
     let cfg = settings::load(&conn()?);
-    let target = cfg
-        .target_window
-        .ok_or("No target window configured")?;
+    let target = cfg.target_window.ok_or("No target window configured")?;
     let img = capture::capture_by_title(&target.title_substring)
         .ok_or("Window not found or minimized")?;
     let thumb = preview_thumbnail(&img);

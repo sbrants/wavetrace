@@ -3,6 +3,7 @@ import { api, ScanStartMode, ScannerEvent } from "./api";
 import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
+import AppUpdater from "./components/AppUpdater";
 
 type Tab = "dashboard" | "history" | "settings";
 
@@ -102,6 +103,8 @@ export default function App() {
           )}
         </div>
       </header>
+
+      <AppUpdater autoCheck variant="banner" />
 
       {warning && (
         <div className="warning-banner">
