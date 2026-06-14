@@ -5,13 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+---
 
-- Embedded changelog in Settings (bundled from `CHANGELOG.md`)
+## [0.2.2] — 2026-06-14
+
+### Fixed
+
+- Release CI: correct Arch updater config path for `tauri build`
 
 ---
 
 ## [0.2.1] — 2026-06-14
+
+### Added
+
+- Embedded changelog in Settings (bundled from `CHANGELOG.md`)
 
 ### Fixed
 

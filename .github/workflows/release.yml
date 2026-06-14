@@ -101,7 +101,7 @@ jobs:
       - name: Build Arch binary
         run: |
           npm ci
-          npm run tauri build -- --config tauri.arch.ci.conf.json --bundles deb
+          npm run tauri build -- --config src-tauri/tauri.arch.ci.conf.json --bundles deb
 
       - name: Upload Arch binary to release
         uses: softprops/action-gh-release@v2
