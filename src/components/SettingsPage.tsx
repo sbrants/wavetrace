@@ -35,8 +35,6 @@ export default function SettingsPage() {
   const [windows, setWindows] = useState<WindowInfo[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [capturing, setCapturing] = useState(false);
-  const [captureResult, setCaptureResult] = useState<string | null>(null);
   const [probe, setProbe] = useState<Awaited<ReturnType<typeof api.probeOcr>> | null>(
     null
   );
@@ -221,38 +219,6 @@ export default function SettingsPage() {
             )}
           </div>
         )}
-      </section>
-      )}
-
-      {showDevTools && (
-      <section>
-        <h3>OCR test captures</h3>
-        <p className="muted">
-          Saves screenshots to <code>fixtures/captured/</code> with OCR metadata
-          in <code>manifest.json</code>. Keep the game visible while capturing.
-        </p>
-        <div className="row">
-          <button
-            disabled={capturing}
-            onClick={async () => {
-              setCapturing(true);
-              setCaptureResult(null);
-              try {
-                const r = await api.captureFixtureBurst(80, 400);
-                setCaptureResult(
-                  `Saved ${r.saved} frames (${r.coin_rate_detected} with coin/min detected). See ${r.captured_dir}`
-                );
-              } catch (e) {
-                alert(e);
-              } finally {
-                setCapturing(false);
-              }
-            }}
-          >
-            {capturing ? "Capturing…" : "Capture 80 test frames"}
-          </button>
-        </div>
-        {captureResult && <p className="muted">{captureResult}</p>}
       </section>
       )}
 
