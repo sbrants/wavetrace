@@ -33,6 +33,7 @@ makedepends=(
   'libappindicator-gtk3'
   'openssl'
   'pkgconf'
+  'clang'
 )
 source=("${url}.git#tag=v${pkgver}")
 sha256sums=('SKIP')

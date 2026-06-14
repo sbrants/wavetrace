@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   appimage:
-    runs-on: ubuntu-22.04
+    # xcap/libspa needs PipeWire 1.0+ (Ubuntu 22.04 ships 0.3.48).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +36,9 @@ jobs:
             libtesseract-dev \
             tesseract-ocr-eng \
             libpipewire-0.3-dev \
-            libspa-0.2-dev
+            libspa-0.2-dev \
+            lld \
+            libgbm-dev
 
       - name: Build AppImage
         run: |
@@ -62,7 +65,7 @@ jobs:
             base-devel git nodejs npm rust patchelf \
             gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
             tesseract tesseract-data-eng openssl pkgconf \
-            pipewire libpipewire
+            pipewire libpipewire clang
 
       - name: Build release binary
         run: |

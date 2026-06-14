@@ -14,7 +14,7 @@ sudo pacman -Syu --needed --noconfirm \
   base-devel git nodejs npm rust patchelf \
   gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
   tesseract tesseract-data-eng openssl pkgconf \
-  pipewire libpipewire
+  pipewire libpipewire clang
 
 npm ci
 npm run tauri build
