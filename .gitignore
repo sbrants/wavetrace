@@ -4,5 +4,9 @@ src-tauri/target/
 *.log
 .env.signing
 
-# Game screenshots — local only; never commit (privacy)
-fixtures/**/*.png
+# Reference screenshots at fixtures/ root — keep local unless explicitly added
+fixtures/*.png
+!fixtures/captured/
+fixtures/captured/*
+!fixtures/captured/*.png
+!fixtures/captured/manifest.json

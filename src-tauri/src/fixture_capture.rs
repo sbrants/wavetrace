@@ -167,6 +167,30 @@ pub fn clear_all_captures() -> Result<usize, String> {
     Ok(count)
 }
 
+/// Drop live captures where coin rate was not detected (keeps seeded entries).
+pub fn prune_coin_misses() -> Result<(usize, usize), String> {
+    let dir = captured_dir();
+    let mut manifest = load_manifest();
+    let removed: Vec<_> = manifest
+        .captures
+        .iter()
+        .filter(|e| !is_seeded_entry(e) && !e.classified.coin_rate_detected)
+        .cloned()
+        .collect();
+    for entry in &removed {
+        let _ = std::fs::remove_file(dir.join(&entry.file));
+        if let Some(coin) = &entry.coin_crop_file {
+            let _ = std::fs::remove_file(dir.join(coin));
+        }
+    }
+    manifest.captures.retain(|e| {
+        is_seeded_entry(e) || e.classified.coin_rate_detected
+    });
+    let kept = manifest.captures.len();
+    save_manifest(&manifest)?;
+    Ok((removed.len(), kept))
+}
+
 fn coin_reading_label(coin: CoinReading) -> (String, Option<f64>, bool) {
     match coin {
         CoinReading::Rate(v) => (format!("Rate({v})"), Some(v), true),

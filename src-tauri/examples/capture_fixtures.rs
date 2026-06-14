@@ -35,6 +35,12 @@ fn main() {
             "--list-windows" | "-l" => list_windows = true,
             "--clear-live" => clear_live = true,
             "--clear-all" => clear_all = true,
+            "--prune-misses" => {
+                let (dropped, kept) =
+                    fixture_capture::prune_coin_misses().expect("prune coin misses");
+                println!("Pruned {dropped} miss(es); {kept} capture(s) remain.");
+                return;
+            }
             "--label-detected" => label_detected = true,
             "--help" | "-h" => {
                 println!(
@@ -45,6 +51,7 @@ fn main() {
                        --title, -t <text>    window title substring\n\
                        --clear-live          remove prior live captures (keep seeded)\n\
                        --clear-all           remove all captures (seeded + live)\n\
+                       --prune-misses        drop live frames with no coin/min detected\n\
                        --label-detected      auto-set expect when tier/wave/coin detected\n\
                        --list-windows, -l    show open windows and exit\n"
                 );
