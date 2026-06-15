@@ -6,11 +6,11 @@ fn main() {
     let report = fixture_capture::reanalyze_all_captures().expect("reanalyze");
     println!("total={}", report.total);
     println!(
-        "coin_rate: {}/{}",
-        report.coin_rate_hits, report.total
+        "coin_rate: {}/{} (eligible {})",
+        report.coin_rate_hits, report.rate_eligible, report.rate_eligible
     );
-    if report.total > 0 {
-        let hit_rate = report.coin_rate_hits as f64 / report.total as f64;
+    if report.rate_eligible > 0 {
+        let hit_rate = report.coin_rate_hits as f64 / report.rate_eligible as f64;
         println!(
             "hit rate: {:.0}% (threshold {:.0}%)",
             hit_rate * 100.0,

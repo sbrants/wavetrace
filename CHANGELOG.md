@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.4] — 2026-06-15
+
+### Added
+
+- Reference game-mode fixtures committed (`fixtures/reference.json` + edge-case PNGs)
+- `total_coin_2.png` in OCR regression suite
+
+### Fixed
+
+- `total_coin` detection when `/min` is absent (bare balance lines like `2.72q`)
+- Corpus tests fail on missing capture PNGs instead of skipping them
+
+### Changed
+
+- All `fixtures/` paths removed from `.gitignore` — new fixture files are tracked automatically
+
+---
+
 ## [0.2.3] — 2026-06-14
 
 ### Added

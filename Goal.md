@@ -245,7 +245,7 @@ else → OCR failure; keep last known coin/min for display
 
 When extending game-mode handling:
 
-1. Save a reference screenshot under `fixtures/` root (local-only; gitignored)
+1. Save a reference screenshot under `fixtures/` root and add an entry to `fixtures/reference.json`
 2. Capture live frames into `fixtures/captured/` and set `expect` on entries for strict regression checks
 3. Document detection and handling in the table above
 
@@ -484,7 +484,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ## Test fixtures
 
-The `fixtures/captured/` folder holds live window captures for OCR regression. **`fixtures/captured/*.png` and `manifest.json` are committed** so CI and other developers can run corpus tests. Reference screenshots at `fixtures/` root (game-mode edge cases) stay **local-only** (gitignored).
+The `fixtures/captured/` folder holds live window captures for OCR regression. **`fixtures/captured/*.png` and `manifest.json` are committed** so CI and other developers can run corpus tests. Game-mode reference screenshots at `fixtures/` root (`reference.json` + PNGs) are also **committed**.
 
 `fixtures/captured/manifest.json` is the source of truth for classified values and optional `expect` labels on each frame. Legacy `fixtures/expected.json` and seeded-corpus tooling were removed in v0.2.3.
 

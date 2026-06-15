@@ -290,6 +290,7 @@ fn next_sequence(dir: &Path, stamp: &str) -> u32 {
 #[derive(Debug, Clone)]
 pub struct CorpusReport {
     pub total: usize,
+    pub rate_eligible: usize,
     pub coin_rate_hits: usize,
     pub coin_rate_misses: usize,
     pub labeled: usize,
@@ -339,7 +340,11 @@ pub fn reanalyze_all_captures() -> Result<CorpusReport, String> {
     for entry in &mut manifest.captures {
         let path = dir.join(&entry.file);
         if !path.exists() {
-            continue;
+            return Err(format!(
+                "capture png missing for {}: {}",
+                entry.id,
+                path.display()
+            ));
         }
         let img = image::open(&path).map_err(|e| e.to_string())?.to_rgba8();
         let fresh = analyze_frame(&img, &entry.window_title);
@@ -367,9 +372,15 @@ pub fn label_detected_captures(manifest: &mut CaptureManifest) -> usize {
     labeled
 }
 
+/// Frames where `/min` is expected (excludes total_coin, tournament, end_of_run).
+pub fn counts_toward_coin_hit_rate(game_mode: &str) -> bool {
+    !matches!(game_mode, "total_coin" | "tournament" | "end_of_run")
+}
+
 pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     let mut report = CorpusReport {
         total: manifest.captures.len(),
+        rate_eligible: 0,
         coin_rate_hits: 0,
         coin_rate_misses: 0,
         labeled: 0,
@@ -379,10 +390,13 @@ pub fn evaluate_manifest(manifest: &CaptureManifest) -> CorpusReport {
     };
 
     for entry in &manifest.captures {
-        if entry.classified.coin_rate_detected {
-            report.coin_rate_hits += 1;
-        } else {
-            report.coin_rate_misses += 1;
+        if counts_toward_coin_hit_rate(&entry.classified.game_mode) {
+            report.rate_eligible += 1;
+            if entry.classified.coin_rate_detected {
+                report.coin_rate_hits += 1;
+            } else {
+                report.coin_rate_misses += 1;
+            }
         }
 
         let Some(expect) = &entry.expect else {

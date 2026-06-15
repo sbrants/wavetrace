@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "Game-mode edge-case reference screenshots (fixtures/*.png). Committed for OCR regression on Windows.",
+  "fixtures": [
+    {
+      "file": "expected_state_full_game.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 12,
+        "wave": 4571,
+        "coin_per_minute": 3480000000000
+      },
+      "notes": "Baseline farming run — coin shows /min rate."
+    },
+    {
+      "file": "total_coin.png",
+      "game_mode": "total_coin",
+      "expect": {
+        "tier": 14,
+        "wave": 450,
+        "coin_per_minute": null
+      },
+      "notes": "Top bar shows total coin balance (7.38q), not /min."
+    },
+    {
+      "file": "total_coin_2.png",
+      "game_mode": "total_coin",
+      "expect": {
+        "tier": 14,
+        "wave": 3556,
+        "coin_per_minute": null
+      },
+      "notes": "Second total-coin layout — balance reads as 2.72q."
+    },
+    {
+      "file": "intro_sprint.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 14,
+        "wave": 650,
+        "coin_per_minute": 0
+      },
+      "notes": "Intro Sprint card; OCR often misses the label — tier/wave/0/min still parse."
+    },
+    {
+      "file": "tournament.png",
+      "game_mode": "tournament",
+      "expect": {
+        "tier": 17,
+        "wave": 865,
+        "coin_per_minute": null
+      },
+      "notes": "Tier 17+ tournament; top bar shows total coins."
+    },
+    {
+      "file": "end_of_run.png",
+      "game_mode": "end_of_run",
+      "expect": {
+        "tier": 11,
+        "wave": 5001,
+        "coin_per_minute": null
+      },
+      "notes": "GAME STATS + RETRY — ends run, no snapshot."
+    }
+  ]
+}

@@ -68,8 +68,8 @@ cargo run --example reanalyze_corpus
 cargo run --example label_corpus
 ```
 
-Reference PNGs at `fixtures/` root (game-mode edge cases) stay local-only and are not
-committed.
+Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
+(`fixtures/reference.json`).
 
 ## Install (end users)
 
@@ -176,7 +176,7 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.3`), or edit
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.4`), or edit
 `PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)

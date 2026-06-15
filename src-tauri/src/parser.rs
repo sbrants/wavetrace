@@ -45,7 +45,7 @@ pub fn has_coin_icon_prefix(raw: &str) -> bool {
 
 /// Suffix letters used for total coin *balance* (not typical /min rates at
 /// mid-game). OCR often appends a spurious "/min" to these, e.g. "@ 6.00q/min".
-fn is_balance_tier_suffix(suffix: &str) -> bool {
+pub fn is_balance_tier_suffix(suffix: &str) -> bool {
     matches!(suffix, "q" | "Q" | "s" | "S" | "O" | "N" | "D")
         || (suffix.len() == 2 && suffix.bytes().all(|b| b.is_ascii_lowercase()))
 }
@@ -381,6 +381,82 @@ pub fn parse_coin_line(raw: &str) -> CoinReading {
     }
 }
 
+/// Fragments to try when the top bar shows total coins instead of `/min`.
+fn coin_balance_fragments(line: &str) -> Vec<String> {
+    let t = line.trim();
+    let mut out = vec![t.to_string()];
+    if let Some(idx) = t.find('/') {
+        out.push(t[..idx].trim().to_string());
+    }
+    for sep in [' ', '@'] {
+        if let Some(idx) = t.rfind(sep) {
+            let tail = t[idx + sep.len_utf8()..].trim();
+            if !tail.is_empty() {
+                out.push(tail.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn is_plausible_balance_fragment(fragment: &str, full_line: &str) -> bool {
+    let Some((num, suffix)) = split_number_suffix(fragment.trim()) else {
+        return false;
+    };
+    if is_balance_tier_suffix(&suffix) && num < 10_000.0 {
+        // "2.22s" on upgrade panels is usually seconds, not coin balance.
+        if matches!(suffix.as_str(), "s" | "S") && num < 60.0 && !has_coin_icon_prefix(full_line) {
+            return false;
+        }
+        return true;
+    }
+    if has_coin_icon_prefix(full_line) && matches!(suffix.as_str(), "T" | "q" | "Q") {
+        return true;
+    }
+    false
+}
+
+/// Parse a total-coin balance from OCR when `/min` is absent (Goal.md `total_coin`).
+pub fn try_parse_balance_line(raw: &str) -> Option<CoinReading> {
+    let t = raw.trim();
+    if t.is_empty() || t.contains('$') || is_wave_progress_line(t) {
+        return None;
+    }
+    let lower = t.to_lowercase();
+    if lower.contains("tier")
+        || lower.contains("wave")
+        || lower.contains("utility")
+        || lower.contains("recovery")
+        || lower.contains("enemy")
+    {
+        return None;
+    }
+    let mut best: Option<(i32, CoinReading)> = None;
+    for fragment in coin_balance_fragments(t) {
+        if let CoinReading::Total(v) = parse_coin_line(&fragment) {
+            if !is_plausible_balance_fragment(&fragment, t) {
+                continue;
+            }
+            let mut score = 0;
+            if has_coin_icon_prefix(t) {
+                score += 10;
+            }
+            if let Some((_, suffix)) = split_number_suffix(fragment.trim()) {
+                if is_balance_tier_suffix(&suffix) {
+                    score += 20;
+                }
+            }
+            if fragment.trim() == t {
+                score += 5;
+            }
+            if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
+                best = Some((score, CoinReading::Total(v)));
+            }
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
 /// Wave progress counter OCR'd into the coin crop, e.g. "1933 / 2002".
 pub fn is_wave_progress_line(raw: &str) -> bool {
     let parts: Vec<&str> = raw.split('/').map(str::trim).collect();
@@ -560,6 +636,15 @@ mod tests {
         assert_eq!(parse_coin_line("C 1.23K/min"), CoinReading::Rate(1230.0));
         assert_eq!(parse_coin_line("1.23K/min"), CoinReading::Rate(1230.0));
         assert_eq!(parse_coin_line("85.8T/min"), CoinReading::Rate(85.8e12));
+    }
+
+    #[test]
+    fn try_parse_balance_rejects_seconds_timer() {
+        assert_eq!(
+            try_parse_balance_line("2.22s"),
+            None,
+            "upgrade panel timers are not coin balances"
+        );
     }
 
     // Raw values from reference fixture screenshots (see Goal.md).

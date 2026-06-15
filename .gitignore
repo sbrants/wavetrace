@@ -9,10 +9,3 @@ microsoft-store/staging/
 microsoft-store/out/
 microsoft-store/devcert.pfx
 microsoft-store/*.msix
-
-# Reference screenshots at fixtures/ root — keep local unless explicitly added
-fixtures/*.png
-!fixtures/captured/
-fixtures/captured/*
-!fixtures/captured/*.png
-!fixtures/captured/manifest.json

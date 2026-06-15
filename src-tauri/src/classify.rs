@@ -154,7 +154,29 @@ fn extract_coin_second_min(lines: &[String], prefer_total: bool) -> CoinReading 
         }
     }
 
-    CoinReading::Unreadable
+    extract_coin_balance(lines)
+}
+
+/// When `/min` and `@` heuristics miss, scan for bare total-coin balances (e.g. `2.72q`).
+fn extract_coin_balance(lines: &[String]) -> CoinReading {
+    let mut best: Option<(i32, CoinReading)> = None;
+    for line in lines {
+        if let Some(reading) = crate::parser::try_parse_balance_line(line) {
+            let mut score = 0;
+            if crate::parser::has_coin_icon_prefix(line) {
+                score += 10;
+            }
+            if line.trim().chars().filter(|c| *c == '.').count() <= 1
+                && !line.contains('/')
+            {
+                score += 5;
+            }
+            if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
+                best = Some((score, reading));
+            }
+        }
+    }
+    best.map(|(_, r)| r).unwrap_or(CoinReading::Unreadable)
 }
 
 #[cfg(test)]
@@ -226,5 +248,21 @@ mod tests {
         let labeled = classify(&s(&["Tier 14", "Wave 1900"]));
         assert_eq!(labeled.tier, Some(14));
         assert_eq!(labeled.wave, Some(1900));
+    }
+
+    #[test]
+    fn total_coin_balance_without_min_suffix() {
+        let input = classify(&s(&["$ 6.9M/min", "2.72q", "Tier 14", "Wave 3556"]));
+        assert_eq!(input.mode, GameMode::TotalCoin);
+        assert_eq!(input.tier, Some(14));
+        assert_eq!(input.wave, Some(3556));
+        assert_eq!(input.coin, CoinReading::Total(2.72e15));
+    }
+
+    #[test]
+    fn total_coin_balance_in_slash_compound_line() {
+        let input = classify(&s(&["7.38q / 970.63T", "Tier 14", "Wave 450"]));
+        assert_eq!(input.mode, GameMode::TotalCoin);
+        assert_eq!(input.coin, CoinReading::Total(7.38e15));
     }
 }
