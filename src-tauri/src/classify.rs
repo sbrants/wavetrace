@@ -102,6 +102,9 @@ fn extract_coin_second_min(lines: &[String], prefer_total: bool) -> CoinReading 
             if lower.contains("/min") {
                 return true;
             }
+            if crate::parser::is_spawn_rate_line(l) {
+                return false;
+            }
             has_coin_icon_prefix(l) && (lower.contains("/mi") || lower.contains("/m"))
         })
         .collect();
@@ -118,6 +121,7 @@ fn extract_coin_second_min(lines: &[String], prefer_total: bool) -> CoinReading 
         .filter(|l| {
             let t = l.trim();
             !t.contains('$')
+                && !crate::parser::is_spawn_rate_line(t)
                 && (t.starts_with('@')
                     || t.starts_with("C ")
                     || t.starts_with("c ")
@@ -264,5 +268,24 @@ mod tests {
         let input = classify(&s(&["7.38q / 970.63T", "Tier 14", "Wave 450"]));
         assert_eq!(input.mode, GameMode::TotalCoin);
         assert_eq!(input.coin, CoinReading::Total(7.38e15));
+    }
+
+    #[test]
+    fn total_coin_3_rejects_spawn_rate_and_balance_as_coin_per_min() {
+        let lines = s(&[
+            "$ 69.02B",
+            "24.07q / 3.17q",
+            "390.79M' 69.76T/s @",
+            "2.47q / 151.10T",
+            "7.06q",
+            "Tier 14",
+            "Wave 4217",
+        ]);
+        let input = classify(&lines);
+        assert_eq!(input.mode, GameMode::TotalCoin);
+        assert_eq!(input.tier, Some(14));
+        assert_eq!(input.wave, Some(4217));
+        assert_eq!(input.coin, CoinReading::Total(7.06e15));
+        assert!(!matches!(input.coin, CoinReading::Rate(_)));
     }
 }

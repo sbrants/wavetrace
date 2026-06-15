@@ -466,6 +466,12 @@ pub fn is_wave_progress_line(raw: &str) -> bool {
     parts[0].chars().all(|c| c.is_ascii_digit()) && parts[1].chars().all(|c| c.is_ascii_digit())
 }
 
+/// Enemy/spawn stat row — `69.76T/s`, not coin/min.
+pub fn is_spawn_rate_line(raw: &str) -> bool {
+    let lower = raw.to_lowercase();
+    !lower.contains("/min") && lower.contains("/s")
+}
+
 /// Parse a coin/min line from the dedicated coin OCR crop (no $ cash line).
 /// Accepts M/B suffixes that full-frame parsing rejects as cash.
 fn parse_coin_crop_rate(raw: &str) -> CoinReading {
@@ -508,8 +514,11 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
 /// Parse coin/min from a tight anchor crop where OCR often drops "/min"
 /// or appends junk, e.g. "@ 3.48\\" or "@ 3.48T".
 pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
-    if is_wave_progress_line(raw) {
+    if is_wave_progress_line(raw) || is_spawn_rate_line(raw) {
         return CoinReading::Unreadable;
+    }
+    if let Some(balance) = try_parse_balance_line(raw) {
+        return balance;
     }
     if let reading @ CoinReading::Rate(_) = parse_coin_crop_rate(raw) {
         return reading;
@@ -644,6 +653,15 @@ mod tests {
             try_parse_balance_line("2.22s"),
             None,
             "upgrade panel timers are not coin balances"
+        );
+    }
+
+    #[test]
+    fn spawn_rate_line_is_not_coin_per_min() {
+        assert!(is_spawn_rate_line("390.79M' 69.76T/s @"));
+        assert_eq!(
+            parse_coin_anchor_crop("390.79M' 69.76T/s @"),
+            CoinReading::Unreadable
         );
     }
 

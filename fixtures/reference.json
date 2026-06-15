@@ -33,6 +33,16 @@
       "notes": "Second total-coin layout — balance reads as 2.72q."
     },
     {
+      "file": "total_coin_3.png",
+      "game_mode": "total_coin",
+      "expect": {
+        "tier": 14,
+        "wave": 4217,
+        "coin_per_minute": null
+      },
+      "notes": "False-positive guard — spawn row 69.76T/s and balance 7.06q must not parse as /min."
+    },
+    {
       "file": "intro_sprint.png",
       "game_mode": "normal",
       "expect": {
