@@ -288,6 +288,7 @@ impl RunStateMachine {
         // even if it is > 1.
         self.wave = Debounced::default();
         self.tournament_seen = false;
+        self.reset_coin_tracking();
         actions.push(Action::StartRun {
             run_type: RunType::Farming,
         });
@@ -418,6 +419,7 @@ impl RunStateMachine {
                                 RunType::Farming
                             };
                             actions.push(Action::StartRun { run_type });
+                            self.reset_coin_tracking();
                             self.run = Some(new_active_run(run_type));
                         }
                     }
@@ -440,6 +442,7 @@ impl RunStateMachine {
                             };
                             self.tournament_seen = run_type == RunType::Tournament;
                             actions.push(Action::StartRun { run_type });
+                            self.reset_coin_tracking();
                             self.run = Some(new_active_run(run_type));
                         }
                         // Confirmed decreases (other than reset to 1) are ignored as
@@ -454,6 +457,14 @@ impl RunStateMachine {
         }
 
         actions
+    }
+
+    /// Drop coin/min from the previous run so a fresh run starts clean.
+    fn reset_coin_tracking(&mut self) {
+        self.coin_rate = DebouncedCoinRate::default();
+        self.last_coin_rate = None;
+        self.last_seen_coin = None;
+        self.consecutive_total_coin_polls = 0;
     }
 }
 
@@ -848,6 +859,34 @@ mod tests {
         assert!(a.contains(&Action::StartRun {
             run_type: RunType::Farming
         }));
+    }
+
+    #[test]
+    fn manual_new_run_clears_stale_coin_rate() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 100, CoinReading::Rate(500.0e12)),
+        );
+        assert_eq!(sm.live_state().coin_per_minute, Some(500.0e12));
+
+        sm.manual_new_run();
+        assert_eq!(sm.live_state().coin_per_minute, None);
+
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(10.0)));
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 2, CoinReading::Rate(10.0)),
+        );
+        let coin = actions.iter().find_map(|a| match a {
+            Action::Snapshot {
+                wave: 1,
+                coin_per_minute,
+                ..
+            } => *coin_per_minute,
+            _ => None,
+        });
+        assert_eq!(coin, Some(10.0), "first snapshot must not reuse prior run rate");
     }
 
     #[test]
