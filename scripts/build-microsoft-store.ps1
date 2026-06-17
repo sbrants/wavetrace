@@ -11,6 +11,7 @@ $outDir = Join-Path $storeRoot "out"
 $manifestSource = Join-Path $storeRoot "Package.appxmanifest"
 $iconSource = Join-Path $repoRoot "src-tauri\icons\128x128.png"
 $exeSource = Join-Path $repoRoot "src-tauri\target\release\wavetrace.exe"
+$resourcesSource = Join-Path $repoRoot "src-tauri\target\release\resources"
 
 function Find-MakeAppx {
     $kits = "C:\Program Files (x86)\Windows Kits\10\bin"
@@ -47,6 +48,48 @@ function Sync-StoreAssets([string]$assetsDir) {
     }
 }
 
+function Get-FrontendFingerprint {
+    $distIndex = Join-Path $repoRoot "dist\index.html"
+    if (-not (Test-Path $distIndex)) {
+        throw "dist/index.html missing. Run: npm run build"
+    }
+    $indexHtml = Get-Content $distIndex -Raw
+    if ($indexHtml -match 'src="\./assets/([^"]+\.js)"') {
+        return $matches[1]
+    }
+    throw "Could not read frontend bundle name from dist/index.html"
+}
+
+function Verify-ReleaseExe([string]$exePath) {
+    if (-not (Test-Path $exePath)) {
+        throw "Release binary not found: $exePath"
+    }
+    $fingerprint = Get-FrontendFingerprint
+    $bytes = [System.IO.File]::ReadAllBytes($exePath)
+    $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+    if (-not $text.Contains("tauri.localhost")) {
+        throw @"
+Store build verification failed: wavetrace.exe does not embed production assets (tauri.localhost missing).
+Ensure dist/ exists and run: npm run build && npm run tauri build -- --no-bundle --config src-tauri/tauri.microsoftstore.conf.json
+"@
+    }
+    if (-not $text.Contains($fingerprint)) {
+        throw @"
+Store build verification failed: wavetrace.exe does not embed the current dist/ build ($fingerprint missing).
+Run a clean release build: npm run tauri:store:build
+Do not package a debug build or an exe built before npm run build.
+"@
+    }
+    Write-Host "Verified release exe embeds production frontend ($fingerprint, tauri.localhost)."
+}
+
+function Copy-StoreRuntimeFiles([string]$stagingDir, [string]$exePath, [string]$resourcesDir) {
+    Copy-Item $exePath (Join-Path $stagingDir "wavetrace.exe") -Force
+    if (Test-Path $resourcesDir) {
+        Copy-Item $resourcesDir (Join-Path $stagingDir "resources") -Recurse -Force
+        Write-Host "Copied resources/ alongside wavetrace.exe"
+    }
+}
 function Update-ManifestVersion([string]$manifestPath, [string]$msixVersion) {
     $xml = [System.IO.File]::ReadAllText($manifestPath)
     if ($xml -match '<Identity\b[\s\S]*?\bVersion="([^"]+)"' -and $matches[1] -eq $msixVersion) {
@@ -68,6 +111,7 @@ $msixVersion = Get-TauriVersion
 Write-Host "Building WaveTrace for Microsoft Store (MSIX $msixVersion)..."
 
 $env:VITE_STORE_DISTRIBUTION = "true"
+$env:CARGO_TARGET_DIR = Join-Path $repoRoot "src-tauri\target"
 Push-Location $repoRoot
 try {
     npm run tauri build -- --no-bundle --config src-tauri/tauri.microsoftstore.conf.json
@@ -76,11 +120,13 @@ try {
 finally {
     Pop-Location
     Remove-Item Env:VITE_STORE_DISTRIBUTION -ErrorAction SilentlyContinue
+    Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path $exeSource)) {
     throw "Release binary not found: $exeSource"
 }
+Verify-ReleaseExe $exeSource
 
 if (Test-Path $staging) {
     Remove-Item $staging -Recurse -Force
@@ -88,7 +134,7 @@ if (Test-Path $staging) {
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-Copy-Item $exeSource (Join-Path $staging "wavetrace.exe") -Force
+Copy-StoreRuntimeFiles $staging $exeSource $resourcesSource
 Sync-StoreAssets (Join-Path $staging "Assets")
 
 $manifestStaging = Join-Path $staging "AppxManifest.xml"
@@ -136,4 +182,5 @@ Write-Host "MSIX ready: $msixPath"
 Write-Host "Partner Center -> Packages -> upload this file (unsigned is OK; Microsoft re-signs after certification)."
 if ($LocalTest) {
     Write-Host "Local test: winapp cert install $storeRoot\devcert.pfx  (admin), then double-click the MSIX."
+    Write-Host "Confirm the app shows Dashboard/Settings - not 'localhost refused to connect'."
 }

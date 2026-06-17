@@ -49,6 +49,18 @@ winapp cert install microsoft-store\devcert.pfx   # admin, once
 4. **Age ratings** — complete IARC questionnaire
 5. **Submit for certification**
 
+### Certification failure: "localhost refused to connect"
+
+Microsoft's launch test (policy **10.1.2.10**) failed if the MSIX packaged a **dev or stale build** of
+`wavetrace.exe` — WebView2 tries to load `http://localhost:1420` (Vite dev server) instead of the
+embedded production UI (`tauri.localhost`). The submitted `0.2.3.0` package had this problem.
+
+Before uploading:
+
+1. `npm run tauri:store:build` — the script verifies the release exe embeds production assets
+2. `npm run tauri:store:build:local` — install the MSIX locally and confirm the UI loads
+3. Bump MSIX version in `package.json` / `tauri.conf.json` for each resubmission
+
 ### Reviewer notes (recommended)
 
 > WaveTrace is a companion utility for the idle game *The Tower*. The user selects their emulator or game window in Settings. The app captures that window locally, runs OCR, and stores stats in local SQLite. It does not modify the game.
