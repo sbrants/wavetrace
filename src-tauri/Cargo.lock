@@ -5885,7 +5885,7 @@ dependencies = [
 
 [[package]]
 name = "wavetrace"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "arboard",
  "base64 0.22.1",

@@ -61,6 +61,19 @@ Before uploading:
 2. `npm run tauri:store:build:local` — install the MSIX locally and confirm the UI loads
 3. Bump MSIX version in `package.json` / `tauri.conf.json` for each resubmission
 
+### Certification failure: undisclosed Visual C++ Redistributable
+
+Policy **10.2.4.1 (Software Dependencies)** — the app links against the MSVC runtime. You must:
+
+1. **Manifest** — `Package.appxmanifest` declares `Microsoft.VCLibs.140.00.UWPDesktop` so the Store installs the framework package automatically (do not bundle `VCRUNTIME*.dll` in the MSIX).
+2. **Store listing** — disclose the dependency in the **first two lines** of the product description in Partner Center, for example:
+
+   > Requires the Microsoft Visual C++ Redistributable (installed automatically from the Microsoft Store with this app).
+   >
+   > WaveTrace is a companion utility for the idle game *The Tower*…
+
+   Update **every language listing** you submit.
+
 ### Reviewer notes (recommended)
 
 > WaveTrace is a companion utility for the idle game *The Tower*. The user selects their emulator or game window in Settings. The app captures that window locally, runs OCR, and stores stats in local SQLite. It does not modify the game.
