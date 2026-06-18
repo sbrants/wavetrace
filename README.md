@@ -6,7 +6,7 @@ wave advances, and charts coin/min against wave for the current and past runs.
 
 **Repository:** https://github.com/sbrants/wavetrace  
 **Releases:** https://github.com/sbrants/wavetrace/releases  
-**Microsoft Store:** [WaveTrace](https://apps.microsoft.com/detail/9P9M9DHX1L76) — submitted for certification (v0.2.3)  
+**Microsoft Store:** [WaveTrace](https://apps.microsoft.com/detail/9P9M9DHX1L76) (latest MSIX built on each `v*` tag)  
 **Privacy policy:** [PRIVACY.md](PRIVACY.md)
 
 Full product spec: [Goal.md](Goal.md). OCR regression corpus:
@@ -76,7 +76,7 @@ Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
 | Channel | How to get it | Updates |
 | ------- | ------------- | ------- |
 | **GitHub Releases** | Download the NSIS `.exe` (Windows) or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater (GitHub `latest.json`) |
-| **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) once published | Microsoft Store |
+| **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) | Microsoft Store (Settings explains this; no GitHub in-app updater) |
 | **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
 
 WaveTrace is local-only: no account, no cloud sync. See [PRIVACY.md](PRIVACY.md).
@@ -99,8 +99,9 @@ npm run tauri:store:build
 ```
 
 Output: `microsoft-store/out/Meringue.WaveTrace_<version>_x64.msix`. Store builds set
-`VITE_STORE_DISTRIBUTION` so the GitHub auto-updater is disabled; updates go through
-the Store. Full checklist: [microsoft-store/README.md](microsoft-store/README.md).
+`VITE_STORE_DISTRIBUTION` so the GitHub auto-updater is disabled; Settings shows
+Store-specific update guidance instead. Updates go through the Store. Full checklist:
+[microsoft-store/README.md](microsoft-store/README.md).
 
 On each `v*` tag push, the [Release workflow](.github/workflows/release.yml) also builds an
 unsigned MSIX and attaches it to the GitHub release (no extra secrets required).
@@ -127,8 +128,8 @@ Regular `npm run tauri build` stays unsigned (no Azure credentials required).
 ### Auto-update
 
 **GitHub / direct-download builds** check GitHub on startup and offer one-click updates
-(Settings → **Check for updates**). **Microsoft Store builds** skip this and receive
-updates through the Store only.
+(Settings → **Check for updates**). **Microsoft Store builds** skip the GitHub updater
+and show that updates are delivered through the Store.
 
 | Platform | Update format |
 | -------- | ------------- |
@@ -179,7 +180,7 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.4`), or edit
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.8`), or edit
 `PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)
@@ -197,14 +198,27 @@ installers, Linux AppImage, Arch binary, and `latest.json` for auto-update.
 
 1. **Settings** tab: pick the emulator/game window and save. Use **Probe OCR** to
    verify capture before scanning.
-2. Press **New run** (or **Resume run** to continue the last open run).
+2. Press **New run** (or **Resume run** to continue the last open run) in the header.
 3. Play. Snapshots are written as the wave advances; the run closes on the Retry
    screen or a wave reset.
 4. Press **Stop** when you are done scanning.
 5. **Dashboard** shows live values and the coin/min-vs-wave chart.
    **History** lists past runs with filtering, sorting, CSV/ODS export, and chart
-   screenshots. **Settings** also includes the scanner log viewer and embedded
-   changelog.
+   screenshots.
+6. **Settings** also includes backup/restore, system tray and notification options,
+   the scanner log viewer (Advanced), update checks, and an embedded changelog.
+
+### System tray (optional)
+
+With **Minimize to tray when the window is closed** enabled (default), closing the
+window hides WaveTrace while scanning can continue. Use **Exit** in the header (or
+**Quit** in the tray menu) to fully close the app.
+
+### Backup & restore
+
+Settings → **Backup & restore** exports your full local database (runs, snapshots,
+settings) as a zip. Stop the scanner first. Restore replaces the database and keeps
+a safety copy of the previous file under `%APPDATA%\wavetrace\backups\`.
 
 Data lives in `%APPDATA%/wavetrace/wavetrace.db` (migrates from `wavewatch/` or
 `towerrun/` on first launch); scanner diagnostics in

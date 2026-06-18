@@ -16,7 +16,7 @@ WaveTrace is a **local-only** companion app. It watches a **window you choose** 
 
 - **Target window** — a window title substring and optional process name you pick in Settings so the app knows which window to watch.
 - **Run comments** — optional notes you type in History.
-- **Settings** — polling interval and UI preferences (for example the “Advanced” checkbox).
+- **Settings** — polling interval and UI preferences (for example tray, notifications, and the “Advanced” checkbox).
 
 ### Data collected automatically (on your device)
 
@@ -38,6 +38,7 @@ All app data is stored **locally** on your PC, typically:
 
 - **Windows:** `%APPDATA%\wavetrace\`
   - `wavetrace.db` — run and snapshot database
+  - `backups\` — optional safety copies before restore
   - `logs\scanner.log` — optional diagnostic log
 
 Data is not synced to a cloud service operated by Meringue.
@@ -46,7 +47,7 @@ Data is not synced to a cloud service operated by Meringue.
 
 | Channel | Network activity |
 | ------- | ---------------- |
-| **Microsoft Store build** | No gameplay data is sent to us. Updates are delivered by the Microsoft Store. |
+| **Microsoft Store build** | No gameplay data is sent to us. Updates are delivered by the Microsoft Store (Settings shows this; the GitHub in-app updater is not used). |
 | **Direct download (GitHub Releases)** | The app may check `https://github.com/sbrants/wavetrace` for optional software updates (version metadata and, if you accept, an installer download). No gameplay database or screenshots are transmitted. |
 
 WaveTrace does **not** include analytics, advertising, or third-party tracking SDKs.
@@ -65,6 +66,7 @@ WaveTrace does **not** include analytics, advertising, or third-party tracking S
 - **Stop scanning** — ends new captures immediately.
 - **Delete runs or individual snapshots** — in History.
 - **Export** — CSV/ODS exports are files you save where you choose.
+- **Backup** — Settings can export a zip of your local database; restore stays on your device. A safety copy of the previous database may be kept locally before restore.
 - **Remove all local data** — delete the `%APPDATA%\wavetrace\` folder while the app is closed.
 
 ## Children

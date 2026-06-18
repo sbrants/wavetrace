@@ -43,9 +43,9 @@ Extend existing run overlay and combine: “best coin/min at wave N”, “best 
 
 Saved window + poll interval per profile (“BlueStacks”, “phone mirror”) so switching setups isn’t all manual.
 
-### 8. Smarter export / portable backup
+### 8. Smarter export / portable backup ✅ shipped (v0.2.7)
 
-Single `.wavetrace` backup (DB + settings), import on another PC — still local-only, easier than raw SQLite for reinstalls.
+Zip backup of `wavetrace.db` + manifest via Settings → **Backup & restore**. Google Drive or other cloud upload remains a possible follow-up (same bundle format).
 
 ### 9. Auto-start on login (optional)
 
@@ -71,12 +71,12 @@ Separate app, MediaProjection / ReplayKit, different OCR stack. Not an extension
 
 ## Tauri capabilities (`desktop.json`)
 
-Current permissions: `core:default`, `updater:default`, `process:default`. Add permissions **only when a feature needs them**:
+Current permissions: `core:default`, `core:tray:default`, `updater:default`, `process:default`, `notification:default`. Add permissions **only when a feature needs them**:
 
 | When you build… | Likely add |
 | --------------- | ---------- |
-| Tray icon, minimize on close | `core:tray` (often in default set) |
-| Run-end / window-lost alerts | `notification:default` |
+| Tray icon, minimize on close | `core:tray:default` ✅ |
+| Run-end / window-lost alerts | `notification:default` ✅ |
 | Start with Windows | `autostart:default` |
 | “Save export as…” from UI | `dialog:default`, scoped `fs:allow-write-*` |
 | Open docs / GitHub in browser | `shell:allow-open` |
@@ -87,10 +87,11 @@ Keep exports on the Rust side (as today) if you want fewer Store surface-area qu
 
 ## Suggested priority after Store certification
 
-1. ~~**Tray + notifications**~~ — done
-2. **Background capture** — hardest, but matches the product promise
-3. **macOS** — expands audience with a known checklist
-4. **End-of-run stats capture** — builds on existing `end_of_run` work
+1. ~~**Tray + notifications**~~ — done (v0.2.6)
+2. ~~**Local backup / restore**~~ — done (v0.2.7)
+3. **Background capture** — hardest, but matches the product promise
+4. **macOS** — expands audience with a known checklist
+5. **End-of-run stats capture** — builds on existing `end_of_run` work
 
 Defer cloud/mobile until there’s clear demand; WaveTrace’s strength is **local, focused, and trustworthy**.
 

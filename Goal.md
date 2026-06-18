@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.3):** Phase 1 is **shipped on Windows 10+** via GitHub Releases. **Microsoft Store** listing submitted for certification (MSIX `Meringue.WaveTrace`, product `9P9M9DHX1L76`). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. macOS remains Phase 1b. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.8):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store** ([listing](https://apps.microsoft.com/detail/9P9M9DHX1L76)). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. macOS remains Phase 1b. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -25,10 +25,10 @@
 ### Distribution
 
 
-| Channel | Windows artifact | Updates | Status (v0.2.3) |
+| Channel | Windows artifact | Updates | Status (v0.2.8) |
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
-| Microsoft Store | MSIX (`runFullTrust`) | Store | **Submitted** for certification |
+| Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
 | Arch | `PKGBUILD` / binary | Package manager | **Shipped** (maintainer-built) |
 | Linux | AppImage | In-app updater (AppImage) | **Shipped** (CI) |
 
@@ -419,7 +419,9 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Preview captured window
 - **Probe OCR** — full-frame OCR on live capture (tier, wave, coin/min, raw lines)
 - **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail `{app_data}/logs/scanner.log`, capped at 2 MiB)
-- **Check for updates** — GitHub/direct-download builds only (GitHub Releases `latest.json`; Windows NSIS, Linux AppImage). Disabled on Microsoft Store builds (`VITE_STORE_DISTRIBUTION`)
+- **Background** — minimize to tray on window close; desktop notifications (run ended, window lost, optional wave milestones); **Exit** in the header when tray mode is on
+- **Backup & restore** — export/import full local database as a zip (`manifest.json` + `wavetrace.db`); safety copy before restore
+- **Check for updates** — GitHub/direct-download builds only (`latest.json`; Windows NSIS, Linux AppImage). Microsoft Store builds show Store update guidance (`VITE_STORE_DISTRIBUTION`)
 - Embedded **changelog** (from `CHANGELOG.md`)
 - Dev builds only (`import.meta.env.DEV`): OCR fixture capture burst controls
 
@@ -455,7 +457,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 - Background capture when game is occluded (stretch; document per-OS limits) — **not started**
 
-**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3; submitted for certification)
+**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3+), system tray + notifications (v0.2.6+), local backup/restore (v0.2.7+)
 
 ### Phase 3 — future
 
@@ -611,7 +613,8 @@ Never commit `.env.signing`.
 
 GitHub and direct-download release builds check GitHub on startup and offer one-click
 updates (Settings → **Check for updates**). Microsoft Store builds disable the GitHub
-updater at compile time; those users receive updates through the Store.
+updater at compile time (`VITE_STORE_DISTRIBUTION`); Settings explains that updates
+come through the Microsoft Store.
 
 | Platform | Update artifact |
 | -------- | --------------- |
@@ -626,10 +629,9 @@ This is separate from Azure Trusted Signing (SmartScreen for fresh downloads); b
 
 ---
 
-## Microsoft Store (v0.2.3)
+## Microsoft Store (v0.2.3+)
 
-**Status:** MSIX submitted to Partner Center for certification. Listing:
-[apps.microsoft.com/detail/9P9M9DHX1L76](https://apps.microsoft.com/detail/9P9M9DHX1L76).
+**Listing:** [apps.microsoft.com/detail/9P9M9DHX1L76](https://apps.microsoft.com/detail/9P9M9DHX1L76).
 
 | Item | Value |
 | ---- | ----- |
@@ -640,14 +642,15 @@ This is separate from Azure Trusted Signing (SmartScreen for fresh downloads); b
 | Config | `src-tauri/tauri.microsoftstore.conf.json`, `microsoft-store/Package.appxmanifest` |
 
 Upload unsigned MSIX to Partner Center; Microsoft re-signs after certification. Bump
-four-part version (`0.2.3.0`) in `package.json` / `tauri.conf.json` before each Store
-submission. Maintainer workflow: [microsoft-store/README.md](microsoft-store/README.md).
+four-part version (`0.2.8.0`) in `package.json` / `tauri.conf.json` before each Store
+submission. CI attaches an MSIX to each GitHub release on `v*` tag push. Maintainer
+workflow: [microsoft-store/README.md](microsoft-store/README.md).
 
 ---
 
 ## Open questions
 
-- Microsoft Store certification outcome and post-publish listing maintenance
+- Microsoft Store listing maintenance and certification for new MSIX versions
 - macOS Phase 1b timeline and signing/notarization approach
 - Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
 - Background capture when game window is occluded (Phase 2)

@@ -29,7 +29,7 @@ npm run tauri:store:build
 Output: `microsoft-store/out/Meringue.WaveTrace_<version>_x64.msix`
 
 - Upload **unsigned** MSIX to Partner Center → **Packages**. Microsoft re-signs after certification.
-- Store builds disable the GitHub auto-updater (updates go through the Store).
+- Store builds set `VITE_STORE_DISTRIBUTION` so the GitHub auto-updater is disabled; Settings shows Microsoft Store update guidance (not a dev-build message).
 - **CI:** pushing a `v*` tag runs [.github/workflows/release.yml](../.github/workflows/release.yml) job `store-msix`, which attaches `Meringue.WaveTrace_<version>_x64.msix` to the GitHub release.
 
 ### Local install test (optional)
@@ -81,4 +81,4 @@ Policy **10.2.4.1 (Software Dependencies)** — the app links against the MSVC r
 
 ## Version bumps
 
-MSIX uses four-part versions (`0.2.3.0`). Bump `version` in `src-tauri/tauri.conf.json` and `package.json` before each Store submission; the build script syncs the manifest automatically.
+MSIX uses four-part versions (`0.2.8.0`). Bump `version` in `src-tauri/tauri.conf.json` and `package.json` before each Store submission; the build script syncs the manifest automatically.
