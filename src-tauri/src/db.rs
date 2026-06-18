@@ -60,7 +60,7 @@ pub fn app_data_dir() -> PathBuf {
     new_dir
 }
 
-fn database_path() -> PathBuf {
+pub fn database_path() -> PathBuf {
     let dir = app_data_dir();
     let preferred = dir.join("wavetrace.db");
     for candidate in ["wavetrace.db", "wavewatch.db", "towerrun.db"] {
@@ -89,7 +89,7 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS runs (
             id          TEXT PRIMARY KEY,

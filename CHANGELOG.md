@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.7] — 2026-06-18
+
+### Added
+
+- **Local backup & restore** — export/import full database as a zip (Settings → Backup & restore); safety copy before restore
+- **Header Exit** — quit completely when close-to-tray is enabled (next to scan controls)
+
+---
+
 ## [0.2.6] — 2026-06-18
 
 ### Added

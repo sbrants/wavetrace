@@ -116,7 +116,23 @@ export interface WorkbookExport {
   snapshot_count: number;
 }
 
+export interface BackupExport {
+  filename: string;
+  data_base64: string;
+  run_count: number;
+  snapshot_count: number;
+}
+
+export interface BackupRestore {
+  run_count: number;
+  snapshot_count: number;
+  safety_copy_path: string | null;
+  backup_created_at: string | null;
+  backup_app_version: string | null;
+}
+
 export const api = {
+  quitApp: () => invoke<void>("quit_app"),
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
@@ -146,6 +162,9 @@ export const api = {
     invoke<CsvExport>("export_csv", { filter }),
   exportWorkbook: (filter: RunFilter) =>
     invoke<WorkbookExport>("export_workbook", { filter }),
+  exportBackup: () => invoke<BackupExport>("export_backup"),
+  restoreBackup: (dataBase64: string) =>
+    invoke<BackupRestore>("restore_backup", { dataBase64 }),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
   previewCapture: () => invoke<string>("preview_capture"),

@@ -12,6 +12,7 @@ export default function App() {
   const [scannerEvent, setScannerEvent] = useState<ScannerEvent | null>(null);
   const [running, setRunning] = useState(false);
   const [canResume, setCanResume] = useState(false);
+  const [minimizeToTray, setMinimizeToTray] = useState(true);
 
   const refreshCanResume = useCallback(() => {
     api.hasResumableRun().then(setCanResume).catch(() => setCanResume(false));
@@ -30,6 +31,13 @@ export default function App() {
     refreshCanResume();
     return () => unlisten?.();
   }, [refreshCanResume]);
+
+  useEffect(() => {
+    api
+      .getSettings()
+      .then((s) => setMinimizeToTray(s.minimize_to_tray ?? true))
+      .catch(() => setMinimizeToTray(true));
+  }, [tab]);
 
   const startScanning = (mode: ScanStartMode) => {
     api
@@ -66,41 +74,53 @@ export default function App() {
           <span className={`status status-${scannerEvent?.status ?? "stopped"}`}>
             {running ? scannerEvent?.status ?? "starting…" : "stopped"}
           </span>
-          {running ? (
-            <button
-              onClick={() => {
-                setRunning(false);
-                setScannerEvent((prev) => ({
-                  status: "stopped",
-                  live: prev?.live ?? null,
-                  current_run_id: prev?.current_run_id ?? null,
-                }));
-                api.stopScanner();
-              }}
-            >
-              Stop
-            </button>
-          ) : (
-            <div className="header-actions">
+          <div className="header-actions">
+            {running ? (
               <button
-                className="primary"
-                onClick={() => startScanning("new_run")}
+                onClick={() => {
+                  setRunning(false);
+                  setScannerEvent((prev) => ({
+                    status: "stopped",
+                    live: prev?.live ?? null,
+                    current_run_id: prev?.current_run_id ?? null,
+                  }));
+                  api.stopScanner();
+                }}
               >
-                New run
+                Stop
               </button>
+            ) : (
+              <>
+                <button
+                  className="primary"
+                  onClick={() => startScanning("new_run")}
+                >
+                  New run
+                </button>
+                <button
+                  disabled={!canResume}
+                  title={
+                    canResume
+                      ? "Continue the last open run"
+                      : "No open run to resume"
+                  }
+                  onClick={() => startScanning("resume_previous")}
+                >
+                  Resume run
+                </button>
+              </>
+            )}
+            {minimizeToTray && (
               <button
-                disabled={!canResume}
-                title={
-                  canResume
-                    ? "Continue the last open run"
-                    : "No open run to resume"
-                }
-                onClick={() => startScanning("resume_previous")}
+                type="button"
+                className="danger"
+                title="Close the app completely (window close keeps running in the tray)"
+                onClick={() => api.quitApp()}
               >
-                Resume run
+                Exit
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
 

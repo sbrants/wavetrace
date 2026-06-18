@@ -69,6 +69,13 @@ impl Scanner {
         }
     }
 
+    /// Clear in-memory scan state after the database file was replaced.
+    pub fn reset_after_db_restore(&self) {
+        *self.machine.lock().unwrap() = RunStateMachine::new();
+        *self.current_run_id.lock().unwrap() = None;
+        *self.cached_live.lock().unwrap() = LiveState::idle();
+    }
+
     pub fn has_resumable_run(&self) -> Result<bool, String> {
         if self.machine.lock().unwrap().has_active_run() {
             return Ok(true);

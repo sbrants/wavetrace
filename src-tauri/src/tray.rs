@@ -54,7 +54,6 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .clone();
 
     let allow_exit = Arc::new(AtomicBool::new(false));
-    let allow_exit_menu = allow_exit.clone();
 
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
@@ -62,7 +61,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .tooltip("WaveTrace — stopped")
         .on_menu_event(move |app, event| {
-            on_menu_event(app, event.id.as_ref(), allow_exit_menu.clone());
+            on_menu_event(app, event.id.as_ref());
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -154,7 +153,7 @@ pub fn update_scanner_ui(app: &AppHandle, status: &str, live: &LiveState) {
     let _ = tray.stop_item.set_enabled(running);
 }
 
-fn on_menu_event(app: &AppHandle, id: &str, allow_exit: Arc<AtomicBool>) {
+fn on_menu_event(app: &AppHandle, id: &str) {
     match id {
         "tray_show" => show_main_window(app),
         "tray_new_run" => {
@@ -182,15 +181,20 @@ fn on_menu_event(app: &AppHandle, id: &str, allow_exit: Arc<AtomicBool>) {
                 state.scanner.stop();
             }
         }
-        "tray_quit" => {
-            allow_exit.store(true, Ordering::SeqCst);
-            if let Some(state) = app.try_state::<AppState>() {
-                state.scanner.stop();
-            }
-            app.exit(0);
-        }
+        "tray_quit" => exit_app(app),
         _ => {}
     }
+}
+
+/// Fully exit the app (bypass close-to-tray). Used by the tray menu and in-app exit control.
+pub fn exit_app(app: &AppHandle) {
+    if let Some(tray) = app.try_state::<TrayController>() {
+        tray.allow_exit.store(true, Ordering::SeqCst);
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        state.scanner.stop();
+    }
+    app.exit(0);
 }
 
 pub fn show_main_window(app: &AppHandle) {

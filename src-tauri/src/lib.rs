@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod capture;
 pub mod classify;
 pub mod commands;
@@ -40,6 +41,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_windows,
+            commands::quit_app,
             commands::get_settings,
             commands::save_settings,
             commands::has_resumable_run,
@@ -58,6 +60,8 @@ pub fn run() {
             commands::current_run_snapshots,
             commands::export_csv,
             commands::export_workbook,
+            commands::export_backup,
+            commands::restore_backup,
             commands::preview_capture,
             commands::probe_ocr,
             #[cfg(debug_assertions)]

@@ -3,6 +3,7 @@
 use base64::Engine;
 use tauri::{AppHandle, Manager, State};
 
+use crate::backup::{self, BackupExport, BackupRestore};
 use crate::db::{self, RunFilter, RunRow, SnapshotRow};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
@@ -18,6 +19,11 @@ pub struct AppState {
 
 fn conn() -> Result<rusqlite::Connection, String> {
     db::open().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    crate::tray::exit_app(&app);
 }
 
 #[tauri::command]
@@ -173,6 +179,42 @@ pub fn export_workbook(filter: RunFilter) -> Result<WorkbookExportPayload, Strin
         run_count,
         snapshot_count,
     })
+}
+
+fn ensure_scanner_stopped(state: &State<AppState>) -> Result<(), String> {
+    if state.scanner.is_running() {
+        return Err("Stop the scanner before backing up or restoring.".into());
+    }
+    Ok(())
+}
+
+fn reset_scanner_state(state: &State<AppState>) {
+    state.scanner.reset_after_db_restore();
+}
+
+/// Full database backup as a zip for browser download.
+#[tauri::command]
+pub fn export_backup(state: State<AppState>) -> Result<BackupExport, String> {
+    ensure_scanner_stopped(&state)?;
+    let (bytes, manifest) = backup::create_backup_zip()?;
+    Ok(BackupExport {
+        filename: backup::backup_filename(),
+        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        run_count: manifest.run_count,
+        snapshot_count: manifest.snapshot_count,
+    })
+}
+
+/// Replace the local database from a backup zip (base64).
+#[tauri::command]
+pub fn restore_backup(state: State<AppState>, data_base64: String) -> Result<BackupRestore, String> {
+    ensure_scanner_stopped(&state)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| format!("Invalid backup data: {e}"))?;
+    let result = backup::restore_backup_zip(&bytes)?;
+    reset_scanner_state(&state);
+    Ok(result)
 }
 
 #[derive(Serialize)]

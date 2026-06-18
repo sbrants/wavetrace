@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatCoin, Settings, WindowInfo } from "../api";
+import { downloadBase64File } from "../exportDownload";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
@@ -62,6 +63,9 @@ export default function SettingsPage() {
   const [probeStatus, setProbeStatus] = useState<string | null>(null);
   const [probeElapsed, setProbeElapsed] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const [loadedSettings, listedWindows] = await Promise.all([
@@ -101,6 +105,72 @@ export default function SettingsPage() {
       setPreview(await api.previewCapture());
     } catch (e) {
       alert(e);
+    }
+  };
+
+  const exportBackup = async () => {
+    setBackupBusy(true);
+    setBackupStatus(null);
+    try {
+      const running = await api.scannerRunning();
+      if (running) {
+        setBackupStatus("Stop the scanner before backing up.");
+        return;
+      }
+      const result = await api.exportBackup();
+      downloadBase64File(
+        result.data_base64,
+        result.filename,
+        "application/zip"
+      );
+      setBackupStatus(
+        `Backup saved (${result.run_count} runs, ${result.snapshot_count} snapshots).`
+      );
+    } catch (e) {
+      setBackupStatus(String(e));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const onRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    const ok = window.confirm(
+      "Restore from this backup? Your current database will be replaced. " +
+        "A copy of the current database is saved in the app data backups folder first."
+    );
+    if (!ok) return;
+
+    setBackupBusy(true);
+    setBackupStatus(null);
+    try {
+      const running = await api.scannerRunning();
+      if (running) {
+        setBackupStatus("Stop the scanner before restoring.");
+        return;
+      }
+      const bytes = await file.arrayBuffer();
+      const dataBase64 = btoa(
+        Array.from(new Uint8Array(bytes), (b) => String.fromCharCode(b)).join("")
+      );
+      const result = await api.restoreBackup(dataBase64);
+      await load();
+      const when = result.backup_created_at
+        ? ` from ${new Date(result.backup_created_at).toLocaleString()}`
+        : "";
+      setBackupStatus(
+        `Restored${when}: ${result.run_count} runs, ${result.snapshot_count} snapshots.` +
+          (result.safety_copy_path
+            ? ` Previous data saved to backups folder.`
+            : "")
+      );
+    } catch (err) {
+      setBackupStatus(String(err));
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -246,6 +316,7 @@ export default function SettingsPage() {
         <h3>Background</h3>
         <p className="muted">
           Keep WaveTrace in the system tray while scanning. Notifications are local only.
+          When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
         </p>
         <label className="checkbox-inline">
           <input
@@ -297,6 +368,35 @@ export default function SettingsPage() {
             />
           </label>
         </div>
+      </section>
+
+      <section>
+        <h3>Backup &amp; restore</h3>
+        <p className="muted">
+          Save or restore your full local database (runs, snapshots, and settings).
+          Stop the scanner first. Backups are zip files you can copy to another PC or
+          external drive.
+        </p>
+        <div className="toolbar">
+          <button disabled={backupBusy} onClick={exportBackup}>
+            Back up now…
+          </button>
+          <button
+            disabled={backupBusy}
+            className="danger"
+            onClick={() => restoreInputRef.current?.click()}
+          >
+            Restore from file…
+          </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={onRestoreFile}
+          />
+        </div>
+        {backupStatus && <p className="muted">{backupStatus}</p>}
       </section>
 
       <section className="settings-advanced-toggle">

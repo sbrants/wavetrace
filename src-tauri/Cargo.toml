@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.2.6"
+version = "0.2.7"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 
@@ -26,6 +26,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
 uuid = { version = "1.23.3", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 pollster = "0.4"
