@@ -10,7 +10,39 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WaveTrace ${{ github.ref_name }}
+          body: |
+            See [CHANGELOG.md](https://github.com/sbrants/wavetrace/blob/main/CHANGELOG.md) for details.
+
+            **Auto-update:** release builds check GitHub for updates on startup.
+            - Windows: NSIS installer
+            - Linux (incl. Arch): AppImage
+
+            **Microsoft Store:** unsigned `Meringue.WaveTrace_*_x64.msix` is attached by CI — upload to Partner Center (see [microsoft-store/README.md](https://github.com/sbrants/wavetrace/blob/main/microsoft-store/README.md)).
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -68,24 +100,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: WaveTrace ${{ github.ref_name }}
-          releaseBody: |
-            See [CHANGELOG.md](https://github.com/sbrants/wavetrace/blob/main/CHANGELOG.md) for details.
-
-            **Auto-update:** release builds check GitHub for updates on startup.
-            - Windows: NSIS installer
-            - Linux (incl. Arch): AppImage
-
-            **Microsoft Store:** unsigned `Meringue.WaveTrace_*_x64.msix` is attached by CI — upload to Partner Center (see [microsoft-store/README.md](https://github.com/sbrants/wavetrace/blob/main/microsoft-store/README.md)).
-          includeUpdaterJson: true
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
           args: ${{ matrix.args }}
 
   store-msix:
+    needs: create-release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -112,8 +136,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   arch-binary:
+    needs: create-release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     container:
       image: archlinux:latest
       options: --privileged
