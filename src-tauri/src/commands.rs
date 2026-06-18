@@ -1,7 +1,7 @@
 //! Tauri commands exposed to the frontend.
 
 use base64::Engine;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::db::{self, RunFilter, RunRow, SnapshotRow};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
@@ -66,15 +66,20 @@ pub fn live_state(state: State<AppState>) -> LiveState {
 }
 
 #[tauri::command]
-pub fn manual_new_run(state: State<AppState>) -> Result<(), String> {
+pub fn manual_new_run(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     let actions = state.scanner.machine.lock().unwrap().manual_new_run();
     let c = conn()?;
+    let action_refs = actions.as_slice();
     scanner::apply_actions(
         &c,
         &state.scanner.current_run_id,
-        &actions,
+        action_refs,
         &db::app_data_dir().join("logs"),
     );
+    scanner::notify_scanner_actions(&app, action_refs);
+    if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
+        notify.reset_run_tracking();
+    }
     Ok(())
 }
 

@@ -555,6 +555,7 @@ tbody tr.selected {
   margin: 0;
 }
 
+.settings section label.checkbox-inline,
 .checkbox-inline {
   display: inline-flex;
   align-items: center;
@@ -563,6 +564,7 @@ tbody tr.selected {
   color: var(--text);
   cursor: pointer;
   user-select: none;
+  margin: 0.35rem 0;
 }
 
 .checkbox-inline input[type="checkbox"] {

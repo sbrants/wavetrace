@@ -10,7 +10,9 @@
   ],
   "permissions": [
     "core:default",
+    "core:tray:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    "notification:default"
   ]
 }

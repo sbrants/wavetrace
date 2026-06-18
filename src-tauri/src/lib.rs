@@ -6,13 +6,17 @@ pub mod export;
 pub mod fields;
 pub mod fixture_capture;
 pub mod fixture_corpus;
+pub mod notifications;
 pub mod ocr;
 pub mod parser;
 pub mod scanner;
 pub mod settings;
 pub mod state_machine;
+pub mod tray;
 
 use commands::AppState;
+use notifications::NotifyState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,9 +25,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(NotifyState::default())
         .manage(AppState {
             scanner: scanner::Scanner::default(),
+        })
+        .setup(|app| {
+            tray::setup(app)?;
+            if let Some(notify) = app.try_state::<NotifyState>() {
+                notify.ensure_permission(app.handle());
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_windows,
@@ -54,6 +67,9 @@ pub fn run() {
             commands::copy_image_to_clipboard,
             commands::read_scanner_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            tray::on_run_event(app, &event);
+        });
 }

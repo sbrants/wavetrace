@@ -1,0 +1,99 @@
+# Future capabilities (reference)
+
+Ideas to revisit when planning releases. Not a commitment — prioritize based on user feedback and Store/cert constraints after the initial Microsoft Store launch.
+
+See also: [Goal.md](../Goal.md) (phases, acceptance criteria, open questions).
+
+---
+
+## Near term — biggest user impact
+
+### 1. Background / occluded capture (Phase 2)
+
+Still the main gap vs “real” companion usage. Today the emulator must stay visible. Improving capture when another window is on top (or documenting hard OS limits) would matter more than most chart tweaks.
+
+### 2. macOS (Phase 1b)
+
+Natural parity play after Store/GitHub Windows. Plan for notarization, screen-capture permissions, and whether to use native OCR or Tesseract on macOS.
+
+### 3. System tray + “scan in background” ✅ shipped
+
+### 4. Notifications ✅ shipped
+
+Lightweight wins: run ended, target window lost for N minutes, optional “wave X” milestone. Local-only, no cloud. On Tauri that likely means the **notification** plugin plus a capability entry when added.
+
+### 5. More tracked fields (carefully)
+
+Tier / Wave / Coin-min are the initial set. Good next candidates are **stable, OCR-friendly** values:
+
+- Round / session coins (from end-of-run screen — `end_of_run` is already detected)
+- Cash/min vs coin/min if the UI exposes both reliably
+
+Avoid chasing every HUD stat until there are fixtures and mode rules like `total_coin` / `tournament`.
+
+---
+
+## Medium term — power users
+
+### 6. Personal bests & run comparison
+
+Extend existing run overlay and combine: “best coin/min at wave N”, “best run this tier”, compare two runs on the same wave axis.
+
+### 7. Profiles per emulator/window
+
+Saved window + poll interval per profile (“BlueStacks”, “phone mirror”) so switching setups isn’t all manual.
+
+### 8. Smarter export / portable backup
+
+Single `.wavetrace` backup (DB + settings), import on another PC — still local-only, easier than raw SQLite for reinstalls.
+
+### 9. Auto-start on login (optional)
+
+Common for idle-game tools. **Autostart** plugin; off by default with a clear Settings toggle (Store-friendly).
+
+### 10. OCR confidence / quality hints
+
+Surface “low confidence” polls in the scanner log or dashboard when classification is shaky — builds trust without new game fields.
+
+---
+
+## Long term (Phase 3+) — only if scope should grow
+
+### 11. Cloud sync + auth
+
+Multi-device history, shared links, community stats. Biggest architectural shift (API, privacy policy, Store disclosure). Only worth it if users explicitly ask.
+
+### 12. Android / iOS
+
+Separate app, MediaProjection / ReplayKit, different OCR stack. Not an extension of the Tauri desktop app.
+
+---
+
+## Tauri capabilities (`desktop.json`)
+
+Current permissions: `core:default`, `updater:default`, `process:default`. Add permissions **only when a feature needs them**:
+
+| When you build… | Likely add |
+| --------------- | ---------- |
+| Tray icon, minimize on close | `core:tray` (often in default set) |
+| Run-end / window-lost alerts | `notification:default` |
+| Start with Windows | `autostart:default` |
+| “Save export as…” from UI | `dialog:default`, scoped `fs:allow-write-*` |
+| Open docs / GitHub in browser | `shell:allow-open` |
+
+Keep exports on the Rust side (as today) if you want fewer Store surface-area questions.
+
+---
+
+## Suggested priority after Store certification
+
+1. ~~**Tray + notifications**~~ — done
+2. **Background capture** — hardest, but matches the product promise
+3. **macOS** — expands audience with a known checklist
+4. **End-of-run stats capture** — builds on existing `end_of_run` work
+
+Defer cloud/mobile until there’s clear demand; WaveTrace’s strength is **local, focused, and trustworthy**.
+
+---
+
+*Captured from planning discussion, 2026-06.*

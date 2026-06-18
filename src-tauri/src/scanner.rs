@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state_machine::{Action, LiveState, RunStateMachine, RunType};
 use crate::{capture, db, fields, settings};
@@ -100,6 +100,7 @@ impl Scanner {
         };
         if !start_actions.is_empty() {
             apply_actions(&conn, &self.current_run_id, &start_actions, &log_path);
+            notify_scanner_actions(&app, &start_actions);
         }
 
         let running = self.running.clone();
@@ -159,6 +160,7 @@ impl Scanner {
                         let actions = machine.lock().unwrap().poll(input);
                         if !actions.is_empty() {
                             apply_actions(&conn, &current_run_id, &actions, &log_path);
+                            notify_scanner_actions(&app, &actions);
                         }
                         "scanning"
                     }
@@ -258,12 +260,22 @@ fn emit(
 ) {
     let live = machine.lock().unwrap().live_state();
     *cached_live.lock().unwrap() = live.clone();
+    if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
+        notify.on_scanner_status(app, status);
+    }
+    crate::tray::update_scanner_ui(app, status, &live);
     let event = ScannerEvent {
         status: status.to_string(),
         live: Some(live),
         current_run_id: current_run_id.lock().unwrap().clone(),
     };
     app.emit("scanner-update", event).ok();
+}
+
+pub fn notify_scanner_actions(app: &AppHandle, actions: &[Action]) {
+    if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
+        notify.on_actions(app, actions);
+    }
 }
 
 fn sleep_remainder(tick: Instant, interval_ms: u64) {

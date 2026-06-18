@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const host = process.env.TAURI_DEV_HOST;
+const devTarget = "es2022";
 
 // Tauri expects a fixed dev port; production needs relative asset paths.
 export default defineConfig({
@@ -9,6 +10,14 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_"],
+  optimizeDeps: {
+    esbuildOptions: {
+      target: devTarget,
+    },
+  },
+  esbuild: {
+    target: devTarget,
+  },
   server: {
     port: 1420,
     strictPort: true,

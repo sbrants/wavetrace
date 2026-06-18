@@ -242,6 +242,63 @@ export default function SettingsPage() {
       </section>
       )}
 
+      <section>
+        <h3>Background</h3>
+        <p className="muted">
+          Keep WaveTrace in the system tray while scanning. Notifications are local only.
+        </p>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.minimize_to_tray ?? true}
+            onChange={(e) =>
+              setSettings({ ...settings, minimize_to_tray: e.target.checked })
+            }
+          />
+          Minimize to tray when the window is closed
+        </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_run_ended ?? true}
+            onChange={(e) =>
+              setSettings({ ...settings, notify_run_ended: e.target.checked })
+            }
+          />
+          Notify when a run ends
+        </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_window_lost ?? true}
+            onChange={(e) =>
+              setSettings({ ...settings, notify_window_lost: e.target.checked })
+            }
+          />
+          Notify when the game window is not found
+        </label>
+        <div className="row">
+          <label>
+            Wave milestone (every N waves, optional)
+            <input
+              type="number"
+              min={0}
+              step={100}
+              placeholder="off"
+              value={settings.notify_wave_every ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                setSettings({
+                  ...settings,
+                  notify_wave_every:
+                    raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
+                });
+              }}
+            />
+          </label>
+        </div>
+      </section>
+
       <section className="settings-advanced-toggle">
         <label className="checkbox-inline">
           <input

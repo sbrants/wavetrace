@@ -33,6 +33,10 @@ export interface WindowInfo {
 export interface Settings {
   target_window: { title_substring: string; process_name: string } | null;
   poll_interval_ms: number;
+  minimize_to_tray: boolean;
+  notify_run_ended: boolean;
+  notify_window_lost: boolean;
+  notify_wave_every: number | null;
 }
 
 export interface RunRow {

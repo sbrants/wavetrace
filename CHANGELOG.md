@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.6] — 2026-06-18
+
+### Added
+
+- **System tray** — icon with scanner status tooltip; menu for Show, New run, Resume, Stop, Quit
+- **Close to tray** — closing the window hides to the tray (optional in Settings)
+- **Desktop notifications** — run ended, game window lost, optional wave milestones (Settings → Background)
+- [docs/future-capabilities.md](docs/future-capabilities.md) — roadmap reference for later releases
+
+### Fixed
+
+- Vite dev server esbuild target (`es2022`) so Recharts/d3 pre-bundling works with `tauri dev`
+
+---
+
 ## [0.2.4] — 2026-06-15
 
 ### Added

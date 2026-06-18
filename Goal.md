@@ -651,4 +651,5 @@ submission. Maintainer workflow: [microsoft-store/README.md](microsoft-store/REA
 - macOS Phase 1b timeline and signing/notarization approach
 - Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
 - Background capture when game window is occluded (Phase 2)
+- Future feature ideas: [docs/future-capabilities.md](docs/future-capabilities.md)
 

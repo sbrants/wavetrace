@@ -16,6 +16,18 @@ pub struct TargetWindow {
 pub struct Settings {
     pub target_window: Option<TargetWindow>,
     pub poll_interval_ms: u64,
+    #[serde(default = "default_true")]
+    pub minimize_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub notify_run_ended: bool,
+    #[serde(default = "default_true")]
+    pub notify_window_lost: bool,
+    #[serde(default)]
+    pub notify_wave_every: Option<u32>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -23,6 +35,10 @@ impl Default for Settings {
         Self {
             target_window: None,
             poll_interval_ms: 1500,
+            minimize_to_tray: true,
+            notify_run_ended: true,
+            notify_window_lost: true,
+            notify_wave_every: None,
         }
     }
 }
@@ -52,6 +68,24 @@ pub fn load(conn: &Connection) -> Settings {
         if let Ok(ms) = v.parse() {
             s.poll_interval_ms = ms;
         }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "minimize_to_tray") {
+        if let Ok(on) = v.parse() {
+            s.minimize_to_tray = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_run_ended") {
+        if let Ok(on) = v.parse() {
+            s.notify_run_ended = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_window_lost") {
+        if let Ok(on) = v.parse() {
+            s.notify_window_lost = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_wave_every") {
+        s.notify_wave_every = v.parse().ok();
     }
     s
 }
@@ -120,6 +154,14 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         )?;
     }
     db::set_setting(conn, "poll_interval_ms", &s.poll_interval_ms.to_string())?;
+    db::set_setting(conn, "minimize_to_tray", &s.minimize_to_tray.to_string())?;
+    db::set_setting(conn, "notify_run_ended", &s.notify_run_ended.to_string())?;
+    db::set_setting(conn, "notify_window_lost", &s.notify_window_lost.to_string())?;
+    if let Some(n) = s.notify_wave_every {
+        db::set_setting(conn, "notify_wave_every", &n.to_string())?;
+    } else {
+        db::set_setting(conn, "notify_wave_every", "")?;
+    }
     Ok(())
 }
 
@@ -134,5 +176,14 @@ mod tests {
             "The Tower"
         );
         assert_eq!(normalize_target_substring("NoxPlayer"), "noxplayer");
+    }
+
+    #[test]
+    fn default_notify_and_tray_settings() {
+        let s = Settings::default();
+        assert!(s.minimize_to_tray);
+        assert!(s.notify_run_ended);
+        assert!(s.notify_window_lost);
+        assert_eq!(s.notify_wave_every, None);
     }
 }
