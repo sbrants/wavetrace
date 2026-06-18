@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import {
   fetchUpdate,
+  getUpdateChannel,
   installUpdate,
   isUpdaterEnabled,
   type UpdateProgress,
@@ -33,6 +34,7 @@ export default function AppUpdater({
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [pending, setPending] = useState<Update | null>(null);
   const [progress, setProgress] = useState<UpdateProgress>({ phase: "idle" });
+  const channel = getUpdateChannel();
   const enabled = isUpdaterEnabled();
 
   const runCheck = useCallback(async () => {
@@ -80,13 +82,30 @@ export default function AppUpdater({
     return (
       <section className="updater">
         <h3>Updates</h3>
-        <p className="muted">
-          Auto-update is enabled in release builds only (not dev mode).
-        </p>
-        {appVersion && (
-          <p className="muted">
-            Dev build version: <strong>{appVersion}</strong>
-          </p>
+        {channel === "store" ? (
+          <>
+            <p className="muted">
+              This copy was installed from the <strong>Microsoft Store</strong>.
+              Updates are delivered through the Store — open the Store app and check
+              Library for updates.
+            </p>
+            {appVersion && (
+              <p className="muted">
+                Installed version: <strong>{appVersion}</strong>
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="muted">
+              Auto-update is enabled in release builds only (not dev mode).
+            </p>
+            {appVersion && (
+              <p className="muted">
+                Dev build version: <strong>{appVersion}</strong>
+              </p>
+            )}
+          </>
         )}
       </section>
     );
@@ -165,10 +184,12 @@ export default function AppUpdater({
       {progress.phase === "error" && (
         <p className="error">{progress.error}</p>
       )}
-      <p className="muted">
-        Windows installs via NSIS; Linux uses AppImage (including on Arch).
-        Pacman/AUR installs are updated through your package manager.
-      </p>
+      {channel === "github" && (
+        <p className="muted">
+          Windows installs via NSIS; Linux uses AppImage (including on Arch).
+          Pacman/AUR installs are updated through your package manager.
+        </p>
+      )}
     </section>
   );
 }

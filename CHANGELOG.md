@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.8] — 2026-06-18
+
+### Fixed
+
+- **Microsoft Store** — Settings no longer labels Store installs as a dev build; shows Store-specific update guidance instead
+
+---
+
 ## [0.2.7] — 2026-06-18
 
 ### Added

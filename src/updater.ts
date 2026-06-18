@@ -18,8 +18,20 @@ export interface UpdateProgress {
   error?: string;
 }
 
+export type UpdateChannel = "dev" | "store" | "github";
+
+export function getUpdateChannel(): UpdateChannel {
+  if (import.meta.env.DEV) return "dev";
+  if (import.meta.env.VITE_STORE_DISTRIBUTION === "true") return "store";
+  return "github";
+}
+
+export function isStoreDistribution(): boolean {
+  return getUpdateChannel() === "store";
+}
+
 export function isUpdaterEnabled(): boolean {
-  return import.meta.env.PROD && !import.meta.env.VITE_STORE_DISTRIBUTION;
+  return getUpdateChannel() === "github";
 }
 
 export async function fetchUpdate(): Promise<Update | null> {
