@@ -76,10 +76,40 @@ jobs:
             **Auto-update:** release builds check GitHub for updates on startup.
             - Windows: NSIS installer
             - Linux (incl. Arch): AppImage
+
+            **Microsoft Store:** unsigned `Meringue.WaveTrace_*_x64.msix` is attached by CI — upload to Partner Center (see [microsoft-store/README.md](https://github.com/sbrants/wavetrace/blob/main/microsoft-store/README.md)).
           includeUpdaterJson: true
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  store-msix:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Microsoft Store MSIX
+        shell: pwsh
+        run: npm run tauri:store:build
+
+      - name: Upload MSIX to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: microsoft-store/out/*.msix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   arch-binary:
     if: startsWith(github.ref, 'refs/tags/v')

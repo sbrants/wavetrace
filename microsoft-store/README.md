@@ -30,6 +30,7 @@ Output: `microsoft-store/out/Meringue.WaveTrace_<version>_x64.msix`
 
 - Upload **unsigned** MSIX to Partner Center → **Packages**. Microsoft re-signs after certification.
 - Store builds disable the GitHub auto-updater (updates go through the Store).
+- **CI:** pushing a `v*` tag runs [.github/workflows/release.yml](../.github/workflows/release.yml) job `store-msix`, which attaches `Meringue.WaveTrace_<version>_x64.msix` to the GitHub release.
 
 ### Local install test (optional)
 

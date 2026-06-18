@@ -102,6 +102,9 @@ Output: `microsoft-store/out/Meringue.WaveTrace_<version>_x64.msix`. Store build
 `VITE_STORE_DISTRIBUTION` so the GitHub auto-updater is disabled; updates go through
 the Store. Full checklist: [microsoft-store/README.md](microsoft-store/README.md).
 
+On each `v*` tag push, the [Release workflow](.github/workflows/release.yml) also builds an
+unsigned MSIX and attaches it to the GitHub release (no extra secrets required).
+
 ### Signed release (Microsoft Trusted Signing)
 
 Unsigned builds show Windows SmartScreen warnings. To sign installers with
