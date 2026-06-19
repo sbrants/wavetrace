@@ -28,6 +28,31 @@ static OCR_ENGINE: OnceLock<Result<OcrEngine, String>> = OnceLock::new();
 #[cfg(windows)]
 static OCR_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(not(windows))]
+static TESSDATA_INIT: OnceLock<()> = OnceLock::new();
+
+#[cfg(not(windows))]
+fn ensure_tesseract_paths() {
+    TESSDATA_INIT.get_or_init(|| {
+        if std::env::var_os("TESSDATA_PREFIX").is_some() {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(resources) = exe
+                .parent()
+                .and_then(|macos| macos.parent())
+                .map(|contents| contents.join("Resources"))
+            {
+                let tessdata = resources.join("tessdata");
+                if tessdata.is_dir() {
+                    std::env::set_var("TESSDATA_PREFIX", tessdata);
+                }
+            }
+        }
+    });
+}
+
 /// OCR the entire capture and return every non-empty text line discovered.
 #[cfg(windows)]
 pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
@@ -39,6 +64,7 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
 
 #[cfg(not(windows))]
 pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
+    ensure_tesseract_paths();
     let dynamic = prepare_image(img);
     let rgba = dynamic.to_rgba8();
     let width = rgba.width() as i32;

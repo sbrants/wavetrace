@@ -31,6 +31,7 @@ jobs:
 
             **Auto-update:** release builds check GitHub for updates on startup.
             - Windows: NSIS installer
+            - macOS: `.dmg` (Apple Silicon + Intel)
             - Linux (incl. Arch): AppImage
 
             **Microsoft Store:** unsigned `Meringue.WaveTrace_*_x64.msix` is attached by CI — upload to Partner Center (see [microsoft-store/README.md](https://github.com/sbrants/wavetrace/blob/main/microsoft-store/README.md)).
@@ -103,6 +104,56 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
           args: ${{ matrix.args }}
+
+  build-macos:
+    needs: create-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install macOS build dependencies
+        run: brew install tesseract dylibbundler
+
+      - name: Build macOS app bundle
+        run: |
+          npm run tauri build -- --target ${{ matrix.target }} --bundles app --config src-tauri/tauri.macos.ci.conf.json
+
+      - name: Bundle Tesseract into .app
+        run: bash scripts/bundle-macos-deps.sh ${{ matrix.target }}
+
+      - name: Create DMG
+        run: bash scripts/package-macos-dmg.sh ${{ matrix.target }} ${{ matrix.arch }}
+
+      - name: Upload macOS DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: src-tauri/target/${{ matrix.target }}/release/bundle/macos/WaveTrace_*_macos_${{ matrix.arch }}.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   store-msix:
     needs: create-release

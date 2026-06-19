@@ -75,9 +75,10 @@ Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
 
 | Channel | How to get it | Updates |
 | ------- | ------------- | ------- |
-| **GitHub Releases** | Download the NSIS `.exe` (Windows) or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater (GitHub `latest.json`) |
+| **GitHub Releases** | Download the NSIS `.exe` (Windows), `.dmg` (macOS Apple Silicon or Intel), or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater on Windows & Linux (GitHub `latest.json`) |
 | **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) | Microsoft Store (Settings explains this; no GitHub in-app updater) |
 | **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
+| **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew | Rebuild from source or download DMG from Releases |
 
 WaveTrace is local-only: no account, no cloud sync. See [PRIVACY.md](PRIVACY.md).
 
@@ -135,6 +136,7 @@ and show that updates are delivered through the Store.
 | -------- | ------------- |
 | Windows (GitHub) | NSIS installer (`.exe`) |
 | Windows (Store) | Microsoft Store |
+| macOS | DMG (download from Releases; in-app updater planned) |
 | Linux    | AppImage (works on Ubuntu, Arch, etc.) |
 | Arch pacman/AUR | Use your package manager — in-app updater targets AppImage |
 
@@ -153,6 +155,32 @@ Azure Trusted Signing (SmartScreen); both are used on Windows release builds.
 
 Local signed Windows builds can set `TAURI_SIGNING_PRIVATE_KEY_PATH` in
 `.env.signing` so updater artifacts are signed alongside the installer.
+
+## macOS
+
+WaveTrace on macOS uses Tesseract OCR (same path as Linux). CI builds **two DMGs** per
+release: `WaveTrace_<version>_macos_aarch64.dmg` (Apple Silicon) and
+`WaveTrace_<version>_macos_x86_64.dmg` (Intel).
+
+### Prerequisites (macOS 10.15+)
+
+- Xcode Command Line Tools (`xcode-select --install`)
+- Node.js 18+, Rust (`rustup`)
+- Homebrew: `brew install tesseract dylibbundler`
+
+### Build locally
+
+```bash
+git clone https://github.com/sbrants/wavetrace.git
+cd wavetrace
+./scripts/build-macos.sh
+```
+
+Output: `src-tauri/target/<arch>-apple-darwin/release/bundle/macos/WaveTrace_*_macos_*.dmg`
+
+Grant **Screen Recording** in System Settings → Privacy & Security on first launch.
+Unsigned or ad-hoc-signed builds may require right-click → **Open** once (Developer ID
+notarization is planned).
 
 ## Arch Linux
 
@@ -180,7 +208,7 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.8`), or edit
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.9`), or edit
 `PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)
@@ -192,7 +220,8 @@ Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.8`), or edit
 ### CI artifacts
 
 Push a `v*` tag or run **Release** manually on GitHub Actions to publish Windows
-installers, Linux AppImage, Arch binary, and `latest.json` for auto-update.
+installers, macOS DMGs (Apple Silicon + Intel), Linux AppImage, Arch binary, and
+`latest.json` for auto-update.
 
 ## Using the app
 
@@ -220,9 +249,10 @@ Settings → **Backup & restore** exports your full local database (runs, snapsh
 settings) as a zip. Stop the scanner first. Restore replaces the database and keeps
 a safety copy of the previous file under `%APPDATA%\wavetrace\backups\`.
 
-Data lives in `%APPDATA%/wavetrace/wavetrace.db` (migrates from `wavewatch/` or
-`towerrun/` on first launch); scanner diagnostics in
-`%APPDATA%/wavetrace/logs/scanner.log`.
+Data lives in `%APPDATA%/wavetrace/wavetrace.db` on Windows (migrates from
+`wavewatch/` or `towerrun/` on first launch), `~/Library/Application Support/wavetrace/`
+on macOS, or the XDG data dir on Linux; scanner diagnostics in `logs/scanner.log`
+under that folder.
 
 ## Notes
 

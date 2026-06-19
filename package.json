@@ -1,7 +1,7 @@
 {
   "name": "wavetrace",
   "private": true,
-  "version": "0.2.8",
+  "version": "0.2.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "tauri:build:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-signed.ps1",
     "tauri:store:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-microsoft-store.ps1",
-    "tauri:store:build:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-microsoft-store.ps1 -LocalTest"
+    "tauri:store:build:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-microsoft-store.ps1 -LocalTest",
+    "tauri:macos:build": "bash scripts/build-macos.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

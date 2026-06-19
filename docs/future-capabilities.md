@@ -12,9 +12,9 @@ See also: [Goal.md](../Goal.md) (phases, acceptance criteria, open questions).
 
 Still the main gap vs “real” companion usage. Today the emulator must stay visible. Improving capture when another window is on top (or documenting hard OS limits) would matter more than most chart tweaks.
 
-### 2. macOS (Phase 1b)
+### 2. macOS (Phase 1b) ✅ shipped (v0.2.9)
 
-Natural parity play after Store/GitHub Windows. Plan for notarization, screen-capture permissions, and whether to use native OCR or Tesseract on macOS.
+DMGs for Apple Silicon and Intel on GitHub Releases. Follow-ups: Developer ID signing/notarization, in-app updater, optional Apple Vision OCR vs Tesseract tuning.
 
 ### 3. System tray + “scan in background” ✅ shipped
 
@@ -89,8 +89,8 @@ Keep exports on the Rust side (as today) if you want fewer Store surface-area qu
 
 1. ~~**Tray + notifications**~~ — done (v0.2.6)
 2. ~~**Local backup / restore**~~ — done (v0.2.7)
-3. **Background capture** — hardest, but matches the product promise
-4. **macOS** — expands audience with a known checklist
+3. ~~**macOS DMGs**~~ — done (v0.2.9); signing/notarization + macOS updater remain
+4. **Background capture** — hardest, but matches the product promise
 5. **End-of-run stats capture** — builds on existing `end_of_run` work
 
 Defer cloud/mobile until there’s clear demand; WaveTrace’s strength is **local, focused, and trustworthy**.

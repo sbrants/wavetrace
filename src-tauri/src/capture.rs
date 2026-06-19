@@ -75,6 +75,11 @@ fn is_emulator_window(app_name: &str, title: &str) -> bool {
         || a.contains("bluestacks")
         || a.contains("ldplayer")
         || a.contains("mumu")
+        || a.contains("parallels")
+        || a.contains("qemu")
+        || a.contains("android")
+        || t.contains("parallels")
+        || t.contains("android emulator")
         || t.contains("noxplayer")
         || t.contains("bluestacks")
 }

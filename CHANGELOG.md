@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.9] — 2026-06-18
+
+### Added
+
+- **macOS builds** — Apple Silicon (`aarch64`) and Intel (`x86_64`) DMGs via CI; Tesseract OCR bundled in the app
+- Screen Recording permission string and macOS entitlements for window capture
+- `npm run tauri:macos:build` / `scripts/build-macos.sh` for local Mac builds
+
+### Notes
+
+- macOS DMGs are ad-hoc signed in CI; Gatekeeper may require right-click → Open until Developer ID notarization is configured
+- In-app auto-update on macOS is not enabled yet (download new DMG from GitHub Releases)
+
+---
+
 ## [0.2.8] — 2026-06-18
 
 ### Fixed

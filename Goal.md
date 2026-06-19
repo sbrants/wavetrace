@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.8):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store** ([listing](https://apps.microsoft.com/detail/9P9M9DHX1L76)). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. macOS remains Phase 1b. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.9):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs) shipped in v0.2.9. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -18,17 +18,18 @@
 | ----- | --------------------- | ------------------------------------------------------------ | ------ |
 | 1     | Windows 10+           | Emulator or game window                                      | **Shipped** (v0.1.0+) |
 | 1b    | Linux                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.1.2+) |
-| 1b    | macOS                 | Same as Phase 1                                              | Planned |
+| 1b    | macOS                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.2.9+) |
 | 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done**    | Partial |
 | 3+    | Android, iOS          | Direct app capture (separate implementation)                 | Future |
 
 ### Distribution
 
 
-| Channel | Windows artifact | Updates | Status (v0.2.8) |
+| Channel | Windows artifact | Updates | Status (v0.2.9) |
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
+| macOS (GitHub) | `.dmg` (arm64 + x86_64) | Download from Releases | **Shipped** (v0.2.9+) |
 | Arch | `PKGBUILD` / binary | Package manager | **Shipped** (maintainer-built) |
 | Linux | AppImage | In-app updater (AppImage) | **Shipped** (CI) |
 
@@ -448,10 +449,10 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Resume run; chart screenshots; scanner log viewer
 - OCR regression corpus in `fixtures/captured/`
 
-### Phase 1b — Linux ✅ shipped (v0.1.2+); macOS planned
+### Phase 1b — Linux ✅ shipped (v0.1.2+); macOS ✅ shipped (v0.2.9+)
 
 - **Linux:** AppImage (Ubuntu 24.04 CI), Arch `x86_64` binary, Tesseract OCR, PKGBUILD
-- **macOS:** same feature set as Phase 1 (not yet built)
+- **macOS:** DMG for Apple Silicon and Intel; Tesseract OCR bundled in CI builds; Screen Recording permission required
 
 ### Phase 2 — partial
 
@@ -480,7 +481,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - [x] Live dashboard shows a warning banner when `game_mode = total_coin`
 - [x] Works on Windows 10+
 - [x] Works on Linux (Tesseract OCR; Phase 1b)
-- [ ] macOS build (Phase 1b)
+- [x] macOS build (Phase 1b; v0.2.9 — DMG, Tesseract, screen capture permission)
 
 ---
 
@@ -620,6 +621,7 @@ come through the Microsoft Store.
 | -------- | --------------- |
 | Windows (GitHub) | NSIS installer (`.exe`) |
 | Windows (Store) | Microsoft Store |
+| macOS (GitHub) | DMG (in-app updater not yet enabled) |
 | Linux    | AppImage |
 | Arch     | Use pacman/AUR — updater targets AppImage |
 
@@ -651,7 +653,7 @@ workflow: [microsoft-store/README.md](microsoft-store/README.md).
 ## Open questions
 
 - Microsoft Store listing maintenance and certification for new MSIX versions
-- macOS Phase 1b timeline and signing/notarization approach
+- macOS Developer ID signing + notarization for frictionless Gatekeeper installs
 - Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
 - Background capture when game window is occluded (Phase 2)
 - Future feature ideas: [docs/future-capabilities.md](docs/future-capabilities.md)

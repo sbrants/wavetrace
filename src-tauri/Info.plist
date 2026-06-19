@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>WaveTrace captures your selected game window to read tier, wave, and coin stats with OCR.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>WaveTrace may need automation access to detect the selected game window.</string>
+</dict>
+</plist>

@@ -40,6 +40,7 @@ All app data is stored **locally** on your PC, typically:
   - `wavetrace.db` — run and snapshot database
   - `backups\` — optional safety copies before restore
   - `logs\scanner.log` — optional diagnostic log
+- **macOS:** `~/Library/Application Support/wavetrace/` (same file names as Windows)
 
 Data is not synced to a cloud service operated by Meringue.
 
