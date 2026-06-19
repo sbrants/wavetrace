@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.11] — 2026-06-13
+
+### Added
+
+- **macOS auto-update** — signed `.app.tar.gz` updater bundles for Apple Silicon and Intel; CI publishes unified `latest.json` for all platforms
+
+### Changed
+
+- Release CI assembles `latest.json` in a single job (avoids parallel upload races on Windows/Linux/macOS)
+
+---
+
 ## [0.2.10] — 2026-06-19
 
 ### Fixed

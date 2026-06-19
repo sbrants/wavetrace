@@ -75,7 +75,7 @@ Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
 
 | Channel | How to get it | Updates |
 | ------- | ------------- | ------- |
-| **GitHub Releases** | Download the NSIS `.exe` (Windows), `.dmg` (macOS Apple Silicon or Intel), or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater on Windows & Linux (GitHub `latest.json`) |
+| **GitHub Releases** | Download the NSIS `.exe` (Windows), `.dmg` (macOS Apple Silicon or Intel), or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater on Windows, macOS & Linux (GitHub `latest.json`) |
 | **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) | Microsoft Store (Settings explains this; no GitHub in-app updater) |
 | **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
 | **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew | Rebuild from source or download DMG from Releases |
@@ -136,7 +136,7 @@ and show that updates are delivered through the Store.
 | -------- | ------------- |
 | Windows (GitHub) | NSIS installer (`.exe`) |
 | Windows (Store) | Microsoft Store |
-| macOS | DMG (download from Releases; in-app updater planned) |
+| macOS | `.app.tar.gz` in-app (first install via DMG) |
 | Linux    | AppImage (works on Ubuntu, Arch, etc.) |
 | Arch pacman/AUR | Use your package manager — in-app updater targets AppImage |
 

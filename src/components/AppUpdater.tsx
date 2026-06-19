@@ -186,9 +186,8 @@ export default function AppUpdater({
       )}
       {channel === "github" && (
         <p className="muted">
-          Windows installs via NSIS; macOS via DMG (Apple Silicon or Intel); Linux uses
-          AppImage (including on Arch). Pacman/AUR installs are updated through your
-          package manager.
+          Windows installs via NSIS; macOS and Linux update in-app (first macOS install
+          is still via DMG). Pacman/AUR installs are updated through your package manager.
         </p>
       )}
     </section>

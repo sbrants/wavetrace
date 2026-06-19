@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.9):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs) shipped in v0.2.9. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.11):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -29,7 +29,7 @@
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
-| macOS (GitHub) | `.dmg` (arm64 + x86_64) | Download from Releases | **Shipped** (v0.2.9+) |
+| macOS (GitHub) | `.dmg` (arm64 + x86_64) | In-app updater (`latest.json`) | **Shipped** (v0.2.11+) |
 | Arch | `PKGBUILD` / binary | Package manager | **Shipped** (maintainer-built) |
 | Linux | AppImage | In-app updater (AppImage) | **Shipped** (CI) |
 
@@ -422,7 +422,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail `{app_data}/logs/scanner.log`, capped at 2 MiB)
 - **Background** — minimize to tray on window close; desktop notifications (run ended, window lost, optional wave milestones); **Exit** in the header when tray mode is on
 - **Backup & restore** — export/import full local database as a zip (`manifest.json` + `wavetrace.db`); safety copy before restore
-- **Check for updates** — GitHub/direct-download builds only (`latest.json`; Windows NSIS, Linux AppImage). Microsoft Store builds show Store update guidance (`VITE_STORE_DISTRIBUTION`)
+- **Check for updates** — GitHub/direct-download builds only (`latest.json`; Windows NSIS, macOS, Linux AppImage). Microsoft Store builds show Store update guidance (`VITE_STORE_DISTRIBUTION`)
 - Embedded **changelog** (from `CHANGELOG.md`)
 - Dev builds only (`import.meta.env.DEV`): OCR fixture capture burst controls
 
@@ -605,7 +605,7 @@ Never commit `.env.signing`.
 
 - Unsigned builds: tell testers **More info → Run anyway** (or Unblock on the file)
 - Signed builds: SmartScreen improves immediately; publisher reputation may still build over time
-- In-app auto-update via GitHub Releases (`latest.json`); Windows NSIS + Linux AppImage
+- In-app auto-update via GitHub Releases (`latest.json`); Windows NSIS, macOS `.app.tar.gz`, Linux AppImage
 - Arch/pacman users install via package manager; in-app updater targets AppImage
 
 ---
@@ -621,7 +621,7 @@ come through the Microsoft Store.
 | -------- | --------------- |
 | Windows (GitHub) | NSIS installer (`.exe`) |
 | Windows (Store) | Microsoft Store |
-| macOS (GitHub) | DMG (in-app updater not yet enabled) |
+| macOS (GitHub) | DMG for first install; in-app updater (Apple Silicon + Intel) |
 | Linux    | AppImage |
 | Arch     | Use pacman/AUR — updater targets AppImage |
 

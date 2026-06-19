@@ -31,7 +31,7 @@ jobs:
 
             **Auto-update:** release builds check GitHub for updates on startup.
             - Windows: NSIS installer
-            - macOS: `.dmg` (Apple Silicon + Intel)
+            - macOS: in-app update (Apple Silicon + Intel)
             - Linux (incl. Arch): AppImage
 
             **Microsoft Store:** unsigned `Meringue.WaveTrace_*_x64.msix` is attached by CI — upload to Partner Center (see [microsoft-store/README.md](https://github.com/sbrants/wavetrace/blob/main/microsoft-store/README.md)).
@@ -102,7 +102,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
+          # latest.json is assembled once in publish-latest-json (avoids parallel upload races).
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
 
   build-macos:
@@ -136,25 +137,75 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Require updater signing secret
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. Add the contents of wavetrace.key to GitHub Actions secrets (see README)."
+            exit 1
+          fi
+
       - name: Install macOS build dependencies
         run: brew install tesseract dylibbundler leptonica
 
       - name: Build macOS app bundle
         run: |
-          chmod +x scripts/bundle-macos-deps.sh scripts/package-macos-dmg.sh
+          chmod +x scripts/bundle-macos-deps.sh scripts/package-macos-dmg.sh scripts/package-macos-updater.sh
           npm run tauri build -- --target ${{ matrix.target }} --bundles app --config src-tauri/tauri.macos.ci.conf.json
 
       - name: Bundle Tesseract into .app
         run: bash scripts/bundle-macos-deps.sh ${{ matrix.target }}
 
+      - name: Create updater bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/package-macos-updater.sh ${{ matrix.target }} ${{ matrix.arch }}
+
       - name: Create DMG
         run: bash scripts/package-macos-dmg.sh ${{ matrix.target }} ${{ matrix.arch }}
 
-      - name: Upload macOS DMG to release
+      - name: Upload macOS release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: src-tauri/target/${{ matrix.target }}/release/bundle/macos/WaveTrace_*_macos_${{ matrix.arch }}.dmg
+          files: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/WaveTrace_*_macos_${{ matrix.arch }}.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/WaveTrace_*_macos_${{ matrix.arch }}.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/WaveTrace_*_macos_${{ matrix.arch }}.app.tar.gz.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-latest-json:
+    needs: [create-release, build, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${{ github.ref_name }}" --dir release-assets --repo "${{ github.repository }}"
+
+      - name: Build latest.json
+        run: node scripts/publish-latest-json.mjs release-assets > latest.json
+
+      - name: Upload latest.json
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

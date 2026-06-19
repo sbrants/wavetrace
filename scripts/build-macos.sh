@@ -28,6 +28,11 @@ rustup target add "$TARGET" >/dev/null 2>&1 || true
 npm ci
 npm run tauri build -- --target "$TARGET" --bundles app --config src-tauri/tauri.macos.ci.conf.json
 bash scripts/bundle-macos-deps.sh "$TARGET"
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  bash scripts/package-macos-updater.sh "$TARGET" "$LABEL"
+else
+  echo "Skipping updater bundle (set TAURI_SIGNING_PRIVATE_KEY to create one)"
+fi
 bash scripts/package-macos-dmg.sh "$TARGET" "$LABEL"
 
 echo "Done. DMG under src-tauri/target/$TARGET/release/bundle/macos/"

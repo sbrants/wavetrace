@@ -14,7 +14,7 @@ Still the main gap vs “real” companion usage. Today the emulator must stay v
 
 ### 2. macOS (Phase 1b) ✅ shipped (v0.2.9)
 
-DMGs for Apple Silicon and Intel on GitHub Releases. Follow-ups: Developer ID signing/notarization, in-app updater, optional Apple Vision OCR vs Tesseract tuning.
+DMGs for Apple Silicon and Intel on GitHub Releases. Follow-ups: Developer ID signing/notarization, optional Apple Vision OCR vs Tesseract tuning. In-app updater shipped in v0.2.11.
 
 ### 3. System tray + “scan in background” ✅ shipped
 
@@ -89,7 +89,7 @@ Keep exports on the Rust side (as today) if you want fewer Store surface-area qu
 
 1. ~~**Tray + notifications**~~ — done (v0.2.6)
 2. ~~**Local backup / restore**~~ — done (v0.2.7)
-3. ~~**macOS DMGs**~~ — done (v0.2.9); signing/notarization + macOS updater remain
+3. ~~**macOS DMGs**~~ — done (v0.2.9); ~~macOS updater~~ — done (v0.2.11); Developer ID signing/notarization remains
 4. **Background capture** — hardest, but matches the product promise
 5. **End-of-run stats capture** — builds on existing `end_of_run` work
 
