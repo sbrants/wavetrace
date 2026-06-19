@@ -116,9 +116,11 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             arch: aarch64
+            runner: macos-14
           - target: x86_64-apple-darwin
             arch: x86_64
-    runs-on: macos-14
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -135,10 +137,11 @@ jobs:
         run: npm ci
 
       - name: Install macOS build dependencies
-        run: brew install tesseract dylibbundler
+        run: brew install tesseract dylibbundler leptonica
 
       - name: Build macOS app bundle
         run: |
+          chmod +x scripts/bundle-macos-deps.sh scripts/package-macos-dmg.sh
           npm run tauri build -- --target ${{ matrix.target }} --bundles app --config src-tauri/tauri.macos.ci.conf.json
 
       - name: Bundle Tesseract into .app

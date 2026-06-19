@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.10] — 2026-06-19
+
+### Fixed
+
+- **macOS CI** — bundle Tesseract from correct Homebrew `share/tessdata` path; build Intel DMG on `macos-15-intel` instead of cross-compiling on arm64
+
+---
+
 ## [0.2.9] — 2026-06-18
 
 ### Added

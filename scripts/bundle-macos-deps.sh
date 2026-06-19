@@ -22,33 +22,67 @@ if [[ ${#apps[@]} -eq 0 ]]; then
 fi
 
 APP="${apps[0]}"
-BIN="$APP/Contents/MacOS/wavetrace"
+MACOS_DIR="$APP/Contents/MacOS"
 FRAMEWORKS="$APP/Contents/Frameworks"
 RESOURCES="$APP/Contents/Resources"
 
-if [[ ! -x "$BIN" ]]; then
-  echo "Missing executable: $BIN" >&2
+BIN="$(find "$MACOS_DIR" -maxdepth 1 -type f -perm +111 | head -1)"
+if [[ -z "$BIN" ]]; then
+  echo "No executable found in $MACOS_DIR" >&2
   exit 1
 fi
 
 mkdir -p "$FRAMEWORKS" "$RESOURCES/tessdata"
 
-TESS_PREFIX="$(brew --prefix tesseract 2>/dev/null || brew --prefix)"
-ENG_DATA="$TESS_PREFIX/share/tessdata/eng.traineddata"
-if [[ ! -f "$ENG_DATA" ]]; then
-  echo "eng.traineddata not found at $ENG_DATA (brew install tesseract)" >&2
+BREW_PREFIX="$(brew --prefix)"
+ENG_DATA=""
+for candidate in \
+  "$BREW_PREFIX/share/tessdata/eng.traineddata" \
+  "$BREW_PREFIX/opt/tesseract/share/tessdata/eng.traineddata" \
+  "/opt/homebrew/share/tessdata/eng.traineddata" \
+  "/usr/local/share/tessdata/eng.traineddata"; do
+  if [[ -f "$candidate" ]]; then
+    ENG_DATA="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$ENG_DATA ]]; then
+  echo "eng.traineddata not found (brew install tesseract)" >&2
   exit 1
 fi
 cp "$ENG_DATA" "$RESOURCES/tessdata/"
 
 if command -v dylibbundler >/dev/null 2>&1; then
-  dylibbundler -of -b -x -d "$FRAMEWORKS" -p @executable_path/../Frameworks "$BIN"
+  if ! dylibbundler -of -b -x -d "$FRAMEWORKS" -p @executable_path/../Frameworks "$BIN"; then
+    echo "dylibbundler failed; copying Homebrew OCR libs manually" >&2
+    for lib in "$BREW_PREFIX"/lib/libtesseract*.dylib "$BREW_PREFIX"/lib/libleptonica*.dylib; do
+      [[ -f "$lib" ]] || continue
+      cp "$lib" "$FRAMEWORKS/"
+    done
+    for lib in "$FRAMEWORKS"/*.dylib; do
+      [[ -f "$lib" ]] || continue
+      install_name_tool -id "@executable_path/../Frameworks/$(basename "$lib")" "$lib"
+    done
+    for dep in libtesseract leptonica; do
+      while IFS= read -r bad; do
+        base="$(basename "$bad")"
+        if [[ -f "$FRAMEWORKS/$base" ]]; then
+          install_name_tool -change "$bad" "@executable_path/../Frameworks/$base" "$BIN" || true
+        fi
+      done < <(otool -L "$BIN" | awk '/opt\/homebrew|usr\/local/ {print $1}' | grep -i "$dep" || true)
+    done
+  fi
 else
-  echo "dylibbundler not installed; OCR may fail on machines without Homebrew Tesseract" >&2
+  echo "dylibbundler not installed; copying Homebrew OCR libs" >&2
+  for lib in "$BREW_PREFIX"/lib/libtesseract*.dylib "$BREW_PREFIX"/lib/libleptonica*.dylib; do
+    [[ -f "$lib" ]] || continue
+    cp "$lib" "$FRAMEWORKS/"
+  done
 fi
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP" || true
 fi
 
-echo "Bundled Tesseract into $APP"
+echo "Bundled Tesseract into $APP (binary: $(basename "$BIN"))"
