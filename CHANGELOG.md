@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.12] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — replace `find -perm +111` (illegal on BSD/macOS runners, exit code 2) with direct binary detection in `bundle-macos-deps.sh`
+
+---
+
 ## [0.2.11] — 2026-06-13
 
 ### Added

@@ -26,7 +26,20 @@ MACOS_DIR="$APP/Contents/MacOS"
 FRAMEWORKS="$APP/Contents/Frameworks"
 RESOURCES="$APP/Contents/Resources"
 
-BIN="$(find "$MACOS_DIR" -maxdepth 1 -type f -perm +111 | head -1)"
+BIN=""
+for candidate in "$MACOS_DIR/WaveTrace" "$MACOS_DIR/wavetrace"; do
+  if [[ -f "$candidate" && -x "$candidate" ]]; then
+    BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$BIN" ]]; then
+  for candidate in "$MACOS_DIR"/*; do
+    [[ -f "$candidate" && -x "$candidate" ]] || continue
+    BIN="$candidate"
+    break
+  done
+fi
 if [[ -z "$BIN" ]]; then
   echo "No executable found in $MACOS_DIR" >&2
   exit 1
@@ -62,7 +75,7 @@ if command -v dylibbundler >/dev/null 2>&1; then
     done
     for lib in "$FRAMEWORKS"/*.dylib; do
       [[ -f "$lib" ]] || continue
-      install_name_tool -id "@executable_path/../Frameworks/$(basename "$lib")" "$lib"
+      install_name_tool -id "@executable_path/../Frameworks/$(basename "$lib")" "$lib" || true
     done
     for dep in libtesseract leptonica; do
       while IFS= read -r bad; do
