@@ -57,51 +57,143 @@ if ! curl -fsSL -o "$RESOURCES/tessdata/eng.traineddata" "$TESSDATA_URL"; then
   exit 1
 fi
 
+BREW_PREFIX="$(brew --prefix)"
+
+is_system_lib() {
+  case "$1" in
+    /usr/lib/* | /System/* | @*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+needs_bundling() {
+  case "$1" in
+    *homebrew* | *usr/local* | /opt/homebrew/* | /usr/local/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+resolve_dylib() {
+  local ref="$1"
+  local base resolved candidate
+
+  if [[ -f "$ref" ]]; then
+    echo "$ref"
+    return 0
+  fi
+
+  base="$(basename "$ref")"
+  for candidate in \
+    "$BREW_PREFIX/lib/$base" \
+    "$BREW_PREFIX/opt/libarchive/lib/$base" \
+    "$BREW_PREFIX/opt/tesseract/lib/$base" \
+    "$BREW_PREFIX/opt/leptonica/lib/$base" \
+    "$BREW_PREFIX/opt/libpng/lib/$base" \
+    "$BREW_PREFIX/opt/jpeg-turbo/lib/$base" \
+    "$BREW_PREFIX/opt/webp/lib/$base" \
+    "$BREW_PREFIX/opt/libtiff/lib/$base" \
+    "$BREW_PREFIX/opt/zstd/lib/$base" \
+    "$BREW_PREFIX/opt/xz/lib/$base" \
+    "$BREW_PREFIX/opt/lz4/lib/$base" \
+    "$BREW_PREFIX/opt/little-cms2/lib/$base" \
+    "$BREW_PREFIX/opt/openjpeg/lib/$base" \
+    "$BREW_PREFIX/opt/giflib/lib/$base" \
+    "/opt/homebrew/lib/$base" \
+    "/usr/local/lib/$base"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  shopt -s nullglob
+  for candidate in "$BREW_PREFIX"/opt/*/lib/"$base"; do
+    if [[ -f "$candidate" ]]; then
+      shopt -u nullglob
+      echo "$candidate"
+      return 0
+    fi
+  done
+  shopt -u nullglob
+
+  return 1
+}
+
 copy_lib() {
   local lib="$1"
-  [[ -f "$lib" ]] || return 0
   local base dest
+  [[ -f "$lib" ]] || return 0
   base="$(basename "$lib")"
   dest="$FRAMEWORKS/$base"
   cp -f "$lib" "$dest"
   install_name_tool -id "@executable_path/../Frameworks/$base" "$dest" 2>/dev/null || true
 }
 
-copy_dylibs_from() {
-  local dir="$1"
-  local pattern="$2"
-  [[ -d "$dir" ]] || return 0
-  local lib
-  shopt -s nullglob
-  for lib in "$dir"/$pattern; do
-    copy_lib "$lib"
+seen_file() {
+  local needle="$1"
+  local item
+  for item in "${SEEN[@]:-}"; do
+    [[ "$item" == "$needle" ]] && return 0
   done
-  shopt -u nullglob
+  return 1
 }
 
-BREW_PREFIX="$(brew --prefix)"
-TESS_PREFIX="$(brew --prefix tesseract 2>/dev/null || true)"
-LEPT_PREFIX="$(brew --prefix leptonica 2>/dev/null || true)"
+mark_seen() {
+  SEEN+=("$1")
+}
 
-if [[ -n "$TESS_PREFIX" ]]; then
-  copy_dylibs_from "$TESS_PREFIX/lib" "libtesseract*.dylib"
-fi
-if [[ -n "$LEPT_PREFIX" ]]; then
-  copy_dylibs_from "$LEPT_PREFIX/lib" "libleptonica*.dylib"
-fi
-copy_dylibs_from "$BREW_PREFIX/lib" "libtesseract*.dylib"
-copy_dylibs_from "$BREW_PREFIX/lib" "libleptonica*.dylib"
-copy_dylibs_from "$BREW_PREFIX/opt/tesseract/lib" "libtesseract*.dylib"
-copy_dylibs_from "$BREW_PREFIX/opt/leptonica/lib" "libleptonica*.dylib"
+bundle_dylibs_recursive() {
+  local -a queue=("$BIN")
+  local target dep resolved base dest
 
-otool_lines="$(otool -L "$BIN" 2>/dev/null | awk '/opt\/homebrew|usr\/local/ {print $1}' || true)"
-while IFS= read -r bad; do
-  [[ -n "$bad" ]] || continue
-  base="$(basename "$bad")"
-  if [[ -f "$FRAMEWORKS/$base" ]]; then
-    install_name_tool -change "$bad" "@executable_path/../Frameworks/$base" "$BIN" 2>/dev/null || true
-  fi
-done <<< "$otool_lines"
+  SEEN=()
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    target="${queue[0]}"
+    queue=("${queue[@]:1}")
+    seen_file "$target" && continue
+    mark_seen "$target"
+
+    while IFS= read -r dep; do
+      [[ -n "$dep" ]] || continue
+      is_system_lib "$dep" && continue
+      needs_bundling "$dep" || continue
+      resolved="$(resolve_dylib "$dep" || true)"
+      [[ -n "$resolved" && -f "$resolved" ]] || continue
+      base="$(basename "$resolved")"
+      dest="$FRAMEWORKS/$base"
+      if [[ ! -f "$dest" ]]; then
+        copy_lib "$resolved"
+        queue+=("$dest")
+      fi
+    done < <(otool -L "$target" 2>/dev/null | tail -n +2 | awk '{print $1}')
+  done
+}
+
+fix_dylib_paths() {
+  local file="$1"
+  local dep base
+  while IFS= read -r dep; do
+    [[ -n "$dep" ]] || continue
+    is_system_lib "$dep" && continue
+    base="$(basename "$dep")"
+    if [[ -f "$FRAMEWORKS/$base" ]]; then
+      install_name_tool -change "$dep" "@executable_path/../Frameworks/$base" "$file" 2>/dev/null || true
+    fi
+  done < <(otool -L "$file" 2>/dev/null | tail -n +2 | awk '{print $1}')
+}
+
+bundle_dylibs_recursive
+
+fix_dylib_paths "$BIN"
+shopt -s nullglob
+for lib in "$FRAMEWORKS"/*.dylib; do
+  fix_dylib_paths "$lib"
+done
+shopt -u nullglob
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP" 2>/dev/null || true
@@ -109,7 +201,7 @@ fi
 
 dylib_count=0
 shopt -s nullglob
-for _ in "$FRAMEWORKS"/libtesseract*.dylib "$FRAMEWORKS"/libleptonica*.dylib; do
+for _ in "$FRAMEWORKS"/*.dylib; do
   dylib_count=$((dylib_count + 1))
 done
 shopt -u nullglob

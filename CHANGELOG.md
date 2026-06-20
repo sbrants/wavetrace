@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.18] — 2026-06-20
+
+### Fixed
+
+- **macOS launch crash** — bundle all Homebrew dylib dependencies (e.g. `libarchive`) into the app, not only Tesseract/Leptonica
+
+---
+
 ## [0.2.17] — 2026-06-13
 
 ### Fixed
