@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.14] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — broaden Homebrew tessdata/dylib discovery and only require dylibs when the binary links them dynamically
+
+---
+
 ## [0.2.13] — 2026-06-13
 
 ### Fixed
