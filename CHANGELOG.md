@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.17] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — fix bash quoting syntax error in `bundle-macos-deps.sh` (exit code 2)
+
+---
+
 ## [0.2.16] — 2026-06-13
 
 ### Fixed

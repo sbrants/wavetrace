@@ -67,21 +67,32 @@ copy_lib() {
   install_name_tool -id "@executable_path/../Frameworks/$base" "$dest" 2>/dev/null || true
 }
 
+copy_dylibs_from() {
+  local dir="$1"
+  local pattern="$2"
+  [[ -d "$dir" ]] || return 0
+  local lib
+  shopt -s nullglob
+  for lib in "$dir"/$pattern; do
+    copy_lib "$lib"
+  done
+  shopt -u nullglob
+}
+
 BREW_PREFIX="$(brew --prefix)"
 TESS_PREFIX="$(brew --prefix tesseract 2>/dev/null || true)"
 LEPT_PREFIX="$(brew --prefix leptonica 2>/dev/null || true)"
 
-shopt -s nullglob
-for lib in \
-  "${TESS_PREFIX:+$TESS_PREFIX/lib/libtesseract"*.dylib} \
-  "${LEPT_PREFIX:+$LEPT_PREFIX/lib/libleptonica"*.dylib} \
-  "$BREW_PREFIX/lib/libtesseract"*.dylib \
-  "$BREW_PREFIX/lib/libleptonica"*.dylib \
-  "$BREW_PREFIX/opt/tesseract/lib/libtesseract"*.dylib \
-  "$BREW_PREFIX/opt/leptonica/lib/libleptonica"*.dylib; do
-  copy_lib "$lib"
-done
-shopt -u nullglob
+if [[ -n "$TESS_PREFIX" ]]; then
+  copy_dylibs_from "$TESS_PREFIX/lib" "libtesseract*.dylib"
+fi
+if [[ -n "$LEPT_PREFIX" ]]; then
+  copy_dylibs_from "$LEPT_PREFIX/lib" "libleptonica*.dylib"
+fi
+copy_dylibs_from "$BREW_PREFIX/lib" "libtesseract*.dylib"
+copy_dylibs_from "$BREW_PREFIX/lib" "libleptonica*.dylib"
+copy_dylibs_from "$BREW_PREFIX/opt/tesseract/lib" "libtesseract*.dylib"
+copy_dylibs_from "$BREW_PREFIX/opt/leptonica/lib" "libleptonica*.dylib"
 
 otool_lines="$(otool -L "$BIN" 2>/dev/null | awk '/opt\/homebrew|usr\/local/ {print $1}' || true)"
 while IFS= read -r bad; do
