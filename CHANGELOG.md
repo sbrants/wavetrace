@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.19] — 2026-06-20
+
+### Fixed
+
+- **macOS launch crash** — rewrite `@rpath` references between bundled Frameworks dylibs to `@loader_path`; verify no Homebrew/`@rpath` deps remain at bundle time
+
+---
+
 ## [0.2.18] — 2026-06-20
 
 ### Fixed

@@ -61,7 +61,7 @@ BREW_PREFIX="$(brew --prefix)"
 
 is_system_lib() {
   case "$1" in
-    /usr/lib/* | /System/* | @*)
+    /usr/lib/* | /System/*)
       return 0
       ;;
   esac
@@ -70,7 +70,7 @@ is_system_lib() {
 
 needs_bundling() {
   case "$1" in
-    *homebrew* | *usr/local* | /opt/homebrew/* | /usr/local/*)
+    *homebrew* | *usr/local* | /opt/homebrew/* | /usr/local/* | @rpath/* | @loader_path/*)
       return 0
       ;;
   esac
@@ -79,7 +79,7 @@ needs_bundling() {
 
 resolve_dylib() {
   local ref="$1"
-  local base resolved candidate
+  local base candidate
 
   if [[ -f "$ref" ]]; then
     echo "$ref"
@@ -87,6 +87,11 @@ resolve_dylib() {
   fi
 
   base="$(basename "$ref")"
+  if [[ -f "$FRAMEWORKS/$base" ]]; then
+    echo "$FRAMEWORKS/$base"
+    return 0
+  fi
+
   for candidate in \
     "$BREW_PREFIX/lib/$base" \
     "$BREW_PREFIX/opt/libarchive/lib/$base" \
@@ -130,7 +135,7 @@ copy_lib() {
   base="$(basename "$lib")"
   dest="$FRAMEWORKS/$base"
   cp -f "$lib" "$dest"
-  install_name_tool -id "@executable_path/../Frameworks/$base" "$dest" 2>/dev/null || true
+  install_name_tool -id "@loader_path/$base" "$dest" 2>/dev/null || true
 }
 
 seen_file() {
@@ -173,16 +178,27 @@ bundle_dylibs_recursive() {
   done
 }
 
+framework_ref_for() {
+  local file="$1"
+  local base="$2"
+  if [[ "$file" == "$FRAMEWORKS"/* ]]; then
+    echo "@loader_path/$base"
+  else
+    echo "@executable_path/../Frameworks/$base"
+  fi
+}
+
 fix_dylib_paths() {
   local file="$1"
-  local dep base
+  local dep base new_path
   while IFS= read -r dep; do
     [[ -n "$dep" ]] || continue
     is_system_lib "$dep" && continue
     base="$(basename "$dep")"
-    if [[ -f "$FRAMEWORKS/$base" ]]; then
-      install_name_tool -change "$dep" "@executable_path/../Frameworks/$base" "$file" 2>/dev/null || true
-    fi
+    [[ -f "$FRAMEWORKS/$base" ]] || continue
+    new_path="$(framework_ref_for "$file" "$base")"
+    [[ "$dep" == "$new_path" ]] && continue
+    install_name_tool -change "$dep" "$new_path" "$file" 2>/dev/null || true
   done < <(otool -L "$file" 2>/dev/null | tail -n +2 | awk '{print $1}')
 }
 
@@ -194,6 +210,29 @@ for lib in "$FRAMEWORKS"/*.dylib; do
   fix_dylib_paths "$lib"
 done
 shopt -u nullglob
+
+verify_bundle() {
+  local file dep bad=0
+  shopt -s nullglob
+  for file in "$BIN" "$FRAMEWORKS"/*.dylib; do
+    while IFS= read -r dep; do
+      [[ -n "$dep" ]] || continue
+      case "$dep" in
+        *homebrew* | *usr/local* | @rpath/*)
+          echo "Unresolved dependency in $file: $dep" >&2
+          bad=1
+          ;;
+      esac
+    done < <(otool -L "$file" 2>/dev/null | tail -n +2 | awk '{print $1}')
+  done
+  shopt -u nullglob
+  return "$bad"
+}
+
+if ! verify_bundle; then
+  echo "Dylib bundling verification failed" >&2
+  exit 1
+fi
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP" 2>/dev/null || true
