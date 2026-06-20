@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.13] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — rewrite Tesseract bundling without `dylibbundler` / fragile `find -perm`; manual dylib copy with safer `otool` handling
+
+---
+
 ## [0.2.12] — 2026-06-13
 
 ### Fixed

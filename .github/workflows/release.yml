@@ -104,6 +104,7 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           # latest.json is assembled once in publish-latest-json (avoids parallel upload races).
           includeUpdaterJson: false
+          retryAttempts: 3
           args: ${{ matrix.args }}
 
   build-macos:
@@ -148,7 +149,7 @@ jobs:
           fi
 
       - name: Install macOS build dependencies
-        run: brew install tesseract dylibbundler leptonica
+        run: brew install tesseract leptonica
 
       - name: Build macOS app bundle
         run: |
