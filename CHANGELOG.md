@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.16] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — simplify Tesseract bundling (always fetch tessdata, drop pipefail/dylib hard-fail)
+
+---
+
 ## [0.2.15] — 2026-06-13
 
 ### Fixed
