@@ -37,7 +37,8 @@ done
 if [[ -z "$BIN" ]]; then
   shopt -s nullglob
   for candidate in "$MACOS_DIR"/*; do
-    if [[ -f "$candidate" ]]; then
+    [[ -f "$candidate" ]] || continue
+    if file "$candidate" 2>/dev/null | grep -q 'Mach-O'; then
       BIN="$candidate"
       chmod +x "$BIN" 2>/dev/null || true
       break
@@ -73,8 +74,10 @@ if [[ -z "$ENG_DATA" ]]; then
   ENG_DATA="$(find "$BREW_PREFIX" -path '*/tessdata/eng.traineddata' 2>/dev/null | head -1 || true)"
 fi
 if [[ -z "$ENG_DATA" ]]; then
-  echo "eng.traineddata not found (brew install tesseract)" >&2
-  exit 1
+  echo "eng.traineddata not in Homebrew; downloading tessdata_fast eng.traineddata" >&2
+  curl -fsSL -o "$RESOURCES/tessdata/eng.traineddata" \
+    https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+  ENG_DATA="$RESOURCES/tessdata/eng.traineddata"
 fi
 cp "$ENG_DATA" "$RESOURCES/tessdata/"
 

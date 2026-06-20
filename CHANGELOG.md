@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.15] — 2026-06-13
+
+### Fixed
+
+- **macOS CI** — download `eng.traineddata` when Homebrew omits it; detect app binary via Mach-O `file` probe
+
+---
+
 ## [0.2.14] — 2026-06-13
 
 ### Fixed
