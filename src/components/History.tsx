@@ -361,7 +361,7 @@ export default function History() {
 
   const selectedRunId = selected?.id ?? null;
   const hasOngoingSelectedRun =
-    selectedRunId != null && !selected.ended_at && compareRuns.length < 2;
+    selected != null && !selected.ended_at && compareRuns.length < 2;
 
   const refreshSelectedRun = useCallback(async () => {
     if (!selectedRunId) return;

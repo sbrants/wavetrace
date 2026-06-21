@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.21] — 2026-06-21
+
+### Fixed
+
+- **CI** — TypeScript null check in History live-refresh guard (`selected` possibly null)
+
+---
+
 ## [0.2.20] — 2026-06-21
 
 ### Added
