@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.20] — 2026-06-21
+
+### Added
+
+- **History live charts** — compare view and single-run detail auto-refresh while a run is ongoing (poll + scanner events)
+
+### Fixed
+
+- **History selection** — snapshot picks for deletion no longer clear or jump on live refresh
+
+---
+
 ## [0.2.19] — 2026-06-20
 
 ### Fixed

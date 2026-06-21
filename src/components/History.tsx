@@ -92,14 +92,15 @@ export default function History() {
   }, [reload]);
 
   useEffect(() => {
-    if (selected) {
-      api.runSnapshots(selected.id).then(setSnapshots).catch(() => {});
+    const runId = selected?.id ?? null;
+    if (runId) {
+      api.runSnapshots(runId).then(setSnapshots).catch(() => {});
     } else {
       setSnapshots([]);
     }
     setSelectedSnapshotIds(new Set());
     snapshotRowRefs.current.clear();
-  }, [selected]);
+  }, [selected?.id]);
 
   const sorted = [...runs].sort((a, b) => {
     const av = a[sortKey] ?? "";
@@ -190,6 +191,56 @@ export default function History() {
       setCompareLoading(false);
     }
   };
+
+  const compareRunIdsKey = compareRuns.map((r) => r.id).join(",");
+  const compareRunIds = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
+  const hasOngoingCompareRun = compareRuns.some((r) => !r.ended_at);
+
+  const refreshCompare = useCallback(async () => {
+    const ids = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
+    if (ids.length < 2) return;
+    try {
+      const activeFilter = listFilter();
+      const [entries, updatedRuns] = await Promise.all([
+        Promise.all(
+          ids.map(async (id) => [id, await api.runSnapshots(id)] as const)
+        ),
+        api.listRuns(activeFilter),
+      ]);
+      setCompareSnapshots(Object.fromEntries(entries));
+      setCompareRuns(
+        ids
+          .map((id) => updatedRuns.find((r) => r.id === id))
+          .filter((r): r is RunRow => r != null)
+      );
+      setRuns(updatedRuns);
+    } catch {
+      /* keep last chart */
+    }
+  }, [compareRunIdsKey, listFilter]);
+
+  useEffect(() => {
+    if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
+    void refreshCompare();
+    const id = window.setInterval(() => void refreshCompare(), 2000);
+    return () => window.clearInterval(id);
+  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
+
+  useEffect(() => {
+    if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
+    const ids = compareRunIdsKey.split(",");
+    let unlisten: (() => void) | undefined;
+    void api
+      .onScannerUpdate((e) => {
+        if (e.current_run_id && ids.includes(e.current_run_id)) {
+          void refreshCompare();
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
+  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
 
   const clearCompare = () => {
     setCompareRuns([]);
@@ -308,17 +359,58 @@ export default function History() {
       ? "\n\nThis run is still open — stop the scanner first or deleted waves may be recorded again."
       : "";
 
+  const selectedRunId = selected?.id ?? null;
+  const hasOngoingSelectedRun =
+    selectedRunId != null && !selected.ended_at && compareRuns.length < 2;
+
   const refreshSelectedRun = useCallback(async () => {
-    if (!selected) return;
-    const activeFilter = listFilter();
-    const [snaps, updatedRuns] = await Promise.all([
-      api.runSnapshots(selected.id),
-      api.listRuns(activeFilter),
-    ]);
-    setSnapshots(snaps);
-    setRuns(updatedRuns);
-    setSelected(updatedRuns.find((r) => r.id === selected.id) ?? selected);
-  }, [selected, listFilter]);
+    if (!selectedRunId) return;
+    try {
+      const activeFilter = listFilter();
+      const [snaps, updatedRuns] = await Promise.all([
+        api.runSnapshots(selectedRunId),
+        api.listRuns(activeFilter),
+      ]);
+      setSnapshots(snaps);
+      setSelectedSnapshotIds((prev) => {
+        if (prev.size === 0) return prev;
+        const valid = new Set(snaps.map((s) => s.id));
+        let changed = false;
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (valid.has(id)) next.add(id);
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+      setRuns(updatedRuns);
+      setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
+    } catch {
+      /* keep last chart */
+    }
+  }, [selectedRunId, listFilter]);
+
+  useEffect(() => {
+    if (!selectedRunId || !hasOngoingSelectedRun) return;
+    void refreshSelectedRun();
+    const id = window.setInterval(() => void refreshSelectedRun(), 2000);
+    return () => window.clearInterval(id);
+  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRun]);
+
+  useEffect(() => {
+    if (!selectedRunId || !hasOngoingSelectedRun) return;
+    let unlisten: (() => void) | undefined;
+    void api
+      .onScannerUpdate((e) => {
+        if (e.current_run_id === selectedRunId) {
+          void refreshSelectedRun();
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
+  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRun]);
 
   const deleteSelectedSnapshots = async () => {
     if (!selected || selectedSnapshotIds.size === 0) return;
@@ -364,7 +456,6 @@ export default function History() {
 
   const chartData = snapshotsToChartData(snapshots);
 
-  const compareRunIds = compareRuns.map((r) => r.id);
   const compareChartData =
     compareXAxis === "wave"
       ? buildCompareChartDataByWave(compareRunIds, compareSnapshots)
@@ -620,6 +711,9 @@ export default function History() {
             <h3>
               Compare {compareRuns.length} runs — coin/min vs{" "}
               {compareXAxis === "wave" ? "wave" : "snapshot #"}
+              {hasOngoingCompareRun && (
+                <span className="muted compare-live"> · live</span>
+              )}
             </h3>
             <div className="chart-card-actions">
               <select
@@ -695,6 +789,9 @@ export default function History() {
               <h3>
                 Run {new Date(selected.started_at).toLocaleString()} — avg coin/min vs
                 wave
+                {hasOngoingSelectedRun && (
+                  <span className="muted compare-live"> · live</span>
+                )}
               </h3>
               <ChartScreenshotActions
                 targetRef={chartRef}

@@ -69,17 +69,18 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
             dataKey="coin"
             stroke="#4cc2ff"
             strokeWidth={2}
+            isAnimationActive={false}
             dot={(dotProps) => {
-              const { cx, cy, payload, index } = dotProps;
+              const { cx, cy, payload } = dotProps;
               if (cx == null || cy == null) {
-                return <g key={index} />;
+                return <g key={(payload as CoinChartPoint).wave} />;
               }
               const wave = (payload as CoinChartPoint).wave;
               const selected = selectedSet.has(wave);
               const visible = selected || !!onPointClick;
               return (
                 <circle
-                  key={index}
+                  key={wave}
                   cx={cx}
                   cy={cy}
                   r={selected ? 7 : visible ? 4 : 0}
