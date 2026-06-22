@@ -634,9 +634,163 @@ fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     Some(text.get(prefix.len()..)?.trim_start())
 }
 
+/// Max waves reported by the in-game "Wave Skipped! xN" overlay.
+pub const MAX_WAVE_SKIP_COUNT: u32 = 20;
+
+/// OCR reading of the in-game wave-skip banner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WaveSkipOverlay {
+    /// True when OCR sees "Wave Skipped!" (with or without `xN`).
+    pub seen: bool,
+    /// `Some(N)` when `xN` is shown. The game never shows `x1`; a lone banner means one skip.
+    pub multiplier: Option<u32>,
+}
+
+impl WaveSkipOverlay {
+    pub fn expected_skip_count(self) -> Option<u32> {
+        if !self.seen {
+            return None;
+        }
+        Some(self.multiplier.unwrap_or(1))
+    }
+}
+
+/// Parse "Wave Skipped!" with optional `xN` multiplier (2–20; never `x1`).
+/// A banner without `xN` means a single skip. Values above 20 are rejected.
+pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {
+    let lowered: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
+    let mut banner_idx: Option<usize> = None;
+    for (i, lower) in lowered.iter().enumerate() {
+        if !is_wave_skip_banner_line(lower) {
+            continue;
+        }
+        banner_idx = Some(i);
+        if let Some(c) = extract_skip_multiplier_from_banner(lower) {
+            return WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(c),
+            };
+        }
+    }
+    let Some(idx) = banner_idx else {
+        return WaveSkipOverlay::default();
+    };
+    for j in idx..=(idx + 1).min(lines.len().saturating_sub(1)) {
+        if let Some(c) = extract_skip_multiplier_from_banner(&lowered[j]) {
+            return WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(c),
+            };
+        }
+    }
+    WaveSkipOverlay {
+        seen: true,
+        multiplier: None,
+    }
+}
+
+/// True when OCR shows the in-game wave-skip banner (tolerates merged words / typos).
+fn is_wave_skip_banner_line(lower: &str) -> bool {
+    if lower.contains("wave skip") || lower.contains("waveskip") {
+        return true;
+    }
+    if lower.contains("mave skip") || lower.contains("maveskip") {
+        return true;
+    }
+    if lower.contains("wav") && lower.contains("skipped") {
+        return true;
+    }
+    let t = lower.trim();
+    if t.starts_with("skipped") && !lower.contains("level") && !lower.contains("/min") {
+        return true;
+    }
+    false
+}
+
+fn extract_skip_multiplier_from_banner(lower: &str) -> Option<u32> {
+    if lower.contains('@') || lower.contains("/min") {
+        return None;
+    }
+    if let Some(c) = parse_standalone_x_multiplier(lower.trim()) {
+        return Some(c);
+    }
+    if let Some(pos) = lower.find("skip") {
+        if let Some(c) = find_x_multiplier_in_suffix(&lower[pos..]) {
+            return validate_wave_skip_count(c);
+        }
+    }
+    find_x_multiplier_in_suffix(lower).and_then(validate_wave_skip_count)
+}
+
+fn parse_standalone_x_multiplier(text: &str) -> Option<u32> {
+    let rest = text
+        .strip_prefix('x')
+        .or_else(|| text.strip_prefix('×'))?
+        .trim_start();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() || digits.len() > 2 {
+        return None;
+    }
+    let after = rest[digits.len()..].trim();
+    if !after.is_empty()
+        && after
+            .chars()
+            .any(|c| c.is_ascii_alphanumeric() && c != '!' && c != '.')
+    {
+        return None;
+    }
+    let n: u32 = digits.parse().ok()?;
+    validate_wave_skip_count(n)
+}
+
+fn find_x_multiplier_in_suffix(s: &str) -> Option<u32> {
+    let lower = s.to_lowercase();
+    for (byte_idx, _) in s.char_indices() {
+        let lc = lower[byte_idx..].chars().next()?;
+        if lc != 'x' && lc != '×' {
+            continue;
+        }
+        let prev = lower[..byte_idx].chars().last();
+        if prev.map(|p| p.is_ascii_alphabetic()).unwrap_or(false) {
+            continue;
+        }
+        let rest = &s[byte_idx + lc.len_utf8()..].trim_start();
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || digits.len() > 2 {
+            continue;
+        }
+        let after = rest[digits.len()..].trim();
+        if !after.is_empty()
+            && after
+                .chars()
+                .any(|c| c.is_ascii_alphanumeric() && c != '!' && c != '.')
+        {
+            continue;
+        }
+        if let Ok(n) = digits.parse::<u32>() {
+            if let Some(v) = validate_wave_skip_count(n) {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+fn validate_wave_skip_count(n: u32) -> Option<u32> {
+    if (1..=MAX_WAVE_SKIP_COUNT).contains(&n) {
+        Some(n)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
 
     // Examples straight from Goal.md "Value parsing".
     #[test]
@@ -840,6 +994,59 @@ mod tests {
         assert_eq!(parse_wave("Wave 4571 2.370"), Some(4571));
         assert_eq!(parse_wave("Wave"), None);
         assert_eq!(parse_wave("Tier 12"), None);
+    }
+
+    #[test]
+    fn wave_skip_overlay_parsing() {
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skipped!", "x5"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(5),
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skipped! x12"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(12),
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skipped!"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skipped!", "x25"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["@ 3.48T/min", "x3312"])),
+            WaveSkipOverlay::default()
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["WaveSkipbed! x3"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(3),
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Skipped!", "$216.28K"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert!(
+            !is_wave_skip_banner_line("enemy health level skip")
+        );
     }
 
     #[test]

@@ -1,19 +1,34 @@
 import { useEffect, useRef, useState } from "react";
-import { api, formatCoin, ScannerEvent, SnapshotRow } from "../api";
-import { snapshotsToChartData } from "../chartData";
+import { api, formatCoin, ScannerEvent, SnapshotRow, WaveSkipRow } from "../api";
+import { snapshotsToChartData, waveSkipsToMarkers } from "../chartData";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
+  const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
   const live = event?.live ?? null;
 
   useEffect(() => {
-    api.currentRunSnapshots().then(setSnapshots).catch(() => {});
-  }, [event?.current_run_id, live?.wave]);
+    const refresh = () => {
+      Promise.all([api.currentRunSnapshots(), api.currentRunWaveSkips()])
+        .then(([snaps, skips]) => {
+          setSnapshots(snaps);
+          setWaveSkips(skips);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    let unlisten: (() => void) | undefined;
+    void api.onScannerUpdate(() => refresh()).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [event?.current_run_id]);
 
   const chartData = snapshotsToChartData(snapshots);
+  const skipMarkers = waveSkipsToMarkers(waveSkips);
 
   return (
     <div className="dashboard">
@@ -45,6 +60,8 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             <h3>Avg coin/min vs Wave (current run)</h3>
             <span className="muted">
               {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"} this run
+              {skipMarkers.length > 0 &&
+                ` · ${skipMarkers.length} wave skip${skipMarkers.length === 1 ? "" : "s"} on chart`}
             </span>
           </div>
           <ChartScreenshotActions
@@ -57,7 +74,12 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             No data yet. Start a new run or resume the previous one from the header.
           </p>
         ) : (
-          <CoinVsWaveChart mode="single" data={chartData} height={320} />
+          <CoinVsWaveChart
+            mode="single"
+            data={chartData}
+            waveSkips={skipMarkers}
+            height={320}
+          />
         )}
       </div>
     </div>

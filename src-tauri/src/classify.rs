@@ -69,6 +69,7 @@ pub fn classify(lines: &[String]) -> PollInput {
         tier,
         wave,
         coin,
+        wave_skip_overlay: crate::parser::parse_wave_skip_overlay(lines),
     }
 }
 
@@ -268,6 +269,43 @@ mod tests {
         let input = classify(&s(&["7.38q / 970.63T", "Tier 14", "Wave 450"]));
         assert_eq!(input.mode, GameMode::TotalCoin);
         assert_eq!(input.coin, CoinReading::Total(7.38e15));
+    }
+
+    #[test]
+    fn wave_skipped_overlay_without_multiplier() {
+        let input = classify(&s(&[
+            "$ 6.9M/min",
+            "C 3.48T/min",
+            "Wave Skipped!",
+            "Tier 12",
+            "Wave 4572",
+        ]));
+        assert_eq!(
+            input.wave_skip_overlay,
+            crate::parser::WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+    }
+
+    #[test]
+    fn wave_skipped_overlay() {
+        let input = classify(&s(&[
+            "$ 6.9M/min",
+            "C 3.48T/min",
+            "Wave Skipped!",
+            "x5",
+            "Tier 12",
+            "Wave 4576",
+        ]));
+        assert_eq!(
+            input.wave_skip_overlay,
+            crate::parser::WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(5),
+            }
+        );
     }
 
     #[test]

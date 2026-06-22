@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.22] — 2026-06-22
+
+### Added
+
+- **Wave skips** — detect in-game “Wave Skipped!” (with or without `×N`), store per run, and plot on a second Y-axis (line chart)
+- **History** — select/delete wave skips separately from coin/min snapshots; clear selection; chart click/drag selection for snapshots
+
+### Fixed
+
+- **Single-wave skips** — latch banner across polls so `×1` skips (no multiplier) match when the wave number updates after the banner
+- **Skip chart** — line returns to 0 between skip events; dots only in History edit mode
+
+---
+
 ## [0.2.21] — 2026-06-21
 
 ### Fixed

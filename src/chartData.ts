@@ -1,6 +1,8 @@
-import { SnapshotRow } from "./api";
+import { SnapshotRow, WaveSkipRow } from "./api";
 
 export type CoinChartPoint = { wave: number; coin: number };
+
+export type WaveSkipMarker = { id: string; wave: number; skip_count: number };
 
 export function snapshotsToChartData(
   snapshots: SnapshotRow[]
@@ -8,6 +10,14 @@ export function snapshotsToChartData(
   return snapshots
     .filter((s) => s.coin_per_minute !== null)
     .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+}
+
+export function waveSkipsToMarkers(rows: WaveSkipRow[]): WaveSkipMarker[] {
+  return rows.map((r) => ({
+    id: r.id,
+    wave: r.at_wave,
+    skip_count: r.skipped_count,
+  }));
 }
 
 export type CompareXAxis = "wave" | "progress";

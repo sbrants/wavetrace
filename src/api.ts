@@ -59,6 +59,14 @@ export interface SnapshotRow {
   recorded_at: string;
 }
 
+export interface WaveSkipRow {
+  id: string;
+  at_wave: number;
+  skipped_count: number;
+  coin_per_minute: number | null;
+  recorded_at: string;
+}
+
 export interface RunFilter {
   run_type?: string;
   min_wave?: number;
@@ -153,11 +161,18 @@ export const api = {
     invoke<void>("delete_snapshot", { snapshotId }),
   deleteSnapshots: (snapshotIds: string[]) =>
     invoke<number>("delete_snapshots", { snapshotIds }),
+  deleteWaveSkips: (waveSkipIds: string[]) =>
+    invoke<number>("delete_wave_skips", { waveSkipIds }),
+  deleteWaveSkip: (waveSkipId: string) =>
+    invoke<void>("delete_wave_skip", { waveSkipId }),
   combineRuns: (runIds: string[]) =>
     invoke<string>("combine_runs", { runIds }),
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
+  runWaveSkips: (runId: string) =>
+    invoke<WaveSkipRow[]>("run_wave_skips", { runId }),
+  currentRunWaveSkips: () => invoke<WaveSkipRow[]>("current_run_wave_skips"),
   exportCsv: (filter: RunFilter) =>
     invoke<CsvExport>("export_csv", { filter }),
   exportWorkbook: (filter: RunFilter) =>

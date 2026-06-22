@@ -32,6 +32,15 @@ pub struct SnapshotRow {
     pub recorded_at: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct WaveSkipRow {
+    pub id: String,
+    pub at_wave: i64,
+    pub skipped_count: i64,
+    pub coin_per_minute: Option<f64>,
+    pub recorded_at: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct RunFilter {
     pub run_type: Option<String>,
@@ -109,6 +118,15 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             recorded_at     TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_snapshots_run ON snapshots(run_id);
+        CREATE TABLE IF NOT EXISTS wave_skips (
+            id              TEXT PRIMARY KEY,
+            run_id          TEXT NOT NULL REFERENCES runs(id),
+            at_wave         INTEGER NOT NULL,
+            skipped_count   INTEGER NOT NULL,
+            coin_per_minute REAL,
+            recorded_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_wave_skips_run ON wave_skips(run_id);
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -199,6 +217,28 @@ pub fn insert_snapshot(
             run_id,
             wave,
             tier,
+            coin_per_minute,
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn insert_wave_skip(
+    conn: &Connection,
+    run_id: &str,
+    at_wave: i64,
+    skipped_count: i64,
+    coin_per_minute: Option<f64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, coin_per_minute, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            Uuid::new_v4().to_string(),
+            run_id,
+            at_wave,
+            skipped_count,
             coin_per_minute,
             Utc::now().to_rfc3339()
         ],
@@ -447,6 +487,28 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
     }
 
     for run in &source_runs {
+        let skips = run_wave_skips(&tx, &run.id)
+            .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+        for skip in skips {
+            tx.execute(
+                "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, coin_per_minute, recorded_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    new_id,
+                    skip.at_wave,
+                    skip.skipped_count,
+                    skip.coin_per_minute,
+                    skip.recorded_at,
+                ],
+            )
+            .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
+        }
+    }
+
+    for run in &source_runs {
+        tx.execute("DELETE FROM wave_skips WHERE run_id = ?1", params![run.id])
+            .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
         tx.execute("DELETE FROM snapshots WHERE run_id = ?1", params![run.id])
             .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
         tx.execute("DELETE FROM runs WHERE id = ?1", params![run.id])
@@ -462,6 +524,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
 pub fn delete_runs(conn: &Connection, run_ids: &[String]) -> rusqlite::Result<usize> {
     let mut deleted = 0usize;
     for id in run_ids {
+        conn.execute("DELETE FROM wave_skips WHERE run_id = ?1", params![id])?;
         conn.execute("DELETE FROM snapshots WHERE run_id = ?1", params![id])?;
         let n = conn.execute("DELETE FROM runs WHERE id = ?1", params![id])?;
         deleted += n;
@@ -539,6 +602,38 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
         })
     })?;
     rows.collect()
+}
+
+pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, at_wave, skipped_count, coin_per_minute, recorded_at
+         FROM wave_skips WHERE run_id = ?1 ORDER BY at_wave ASC, recorded_at ASC",
+    )?;
+    let rows = stmt.query_map(params![run_id], |row| {
+        Ok(WaveSkipRow {
+            id: row.get(0)?,
+            at_wave: row.get(1)?,
+            skipped_count: row.get(2)?,
+            coin_per_minute: row.get(3)?,
+            recorded_at: row.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn delete_wave_skips(conn: &Connection, wave_skip_ids: &[String]) -> rusqlite::Result<usize> {
+    if wave_skip_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut deleted = 0usize;
+    for id in wave_skip_ids {
+        deleted += conn.execute("DELETE FROM wave_skips WHERE id = ?1", params![id])?;
+    }
+    Ok(deleted)
+}
+
+pub fn delete_wave_skip(conn: &Connection, wave_skip_id: &str) -> rusqlite::Result<bool> {
+    Ok(delete_wave_skips(conn, &[wave_skip_id.to_string()])? > 0)
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {

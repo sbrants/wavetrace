@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatCoin, RunFilter, RunRow, SnapshotRow } from "../api";
+import { api, formatCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
 import {
   buildCompareChartDataByProgress,
   buildCompareChartDataByWave,
   CompareXAxis,
   snapshotsToChartData,
+  waveSkipsToMarkers,
 } from "../chartData";
 import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
@@ -35,9 +36,13 @@ export default function History() {
   const [selected, setSelected] = useState<RunRow | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
+  const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
   const [compareRuns, setCompareRuns] = useState<RunRow[]>([]);
   const [compareSnapshots, setCompareSnapshots] = useState<
     Record<string, SnapshotRow[]>
+  >({});
+  const [compareWaveSkips, setCompareWaveSkips] = useState<
+    Record<string, WaveSkipRow[]>
   >({});
   const [compareLoading, setCompareLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -45,6 +50,9 @@ export default function History() {
   const [jumpPage, setJumpPage] = useState("");
   const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [selectedWaveSkipIds, setSelectedWaveSkipIds] = useState<Set<string>>(
     new Set()
   );
   const [exportStatus, setExportStatus] = useState<string | null>(null);
@@ -94,11 +102,18 @@ export default function History() {
   useEffect(() => {
     const runId = selected?.id ?? null;
     if (runId) {
-      api.runSnapshots(runId).then(setSnapshots).catch(() => {});
+      Promise.all([api.runSnapshots(runId), api.runWaveSkips(runId)])
+        .then(([snaps, skips]) => {
+          setSnapshots(snaps);
+          setWaveSkips(skips);
+        })
+        .catch(() => {});
     } else {
       setSnapshots([]);
+      setWaveSkips([]);
     }
     setSelectedSnapshotIds(new Set());
+    setSelectedWaveSkipIds(new Set());
     snapshotRowRefs.current.clear();
   }, [selected?.id]);
 
@@ -181,9 +196,20 @@ export default function History() {
     setCompareLoading(true);
     try {
       const entries = await Promise.all(
-        ids.map(async (id) => [id, await api.runSnapshots(id)] as const)
+        ids.map(async (id) => {
+          const [snaps, skips] = await Promise.all([
+            api.runSnapshots(id),
+            api.runWaveSkips(id),
+          ]);
+          return [id, { snaps, skips }] as const;
+        })
       );
-      setCompareSnapshots(Object.fromEntries(entries));
+      setCompareSnapshots(
+        Object.fromEntries(entries.map(([id, { snaps }]) => [id, snaps]))
+      );
+      setCompareWaveSkips(
+        Object.fromEntries(entries.map(([id, { skips }]) => [id, skips]))
+      );
       setCompareRuns(runsToCompare);
     } catch (e) {
       alert(String(e));
@@ -203,11 +229,22 @@ export default function History() {
       const activeFilter = listFilter();
       const [entries, updatedRuns] = await Promise.all([
         Promise.all(
-          ids.map(async (id) => [id, await api.runSnapshots(id)] as const)
+          ids.map(async (id) => {
+            const [snaps, skips] = await Promise.all([
+              api.runSnapshots(id),
+              api.runWaveSkips(id),
+            ]);
+            return [id, { snaps, skips }] as const;
+          })
         ),
         api.listRuns(activeFilter),
       ]);
-      setCompareSnapshots(Object.fromEntries(entries));
+      setCompareSnapshots(
+        Object.fromEntries(entries.map(([id, { snaps }]) => [id, snaps]))
+      );
+      setCompareWaveSkips(
+        Object.fromEntries(entries.map(([id, { skips }]) => [id, skips]))
+      );
       setCompareRuns(
         ids
           .map((id) => updatedRuns.find((r) => r.id === id))
@@ -245,6 +282,7 @@ export default function History() {
   const clearCompare = () => {
     setCompareRuns([]);
     setCompareSnapshots({});
+    setCompareWaveSkips({});
   };
 
   const combineSelected = async () => {
@@ -346,12 +384,54 @@ export default function History() {
     [snapshotByWave, toggleSnapshotId]
   );
 
+  const selectSnapshotWaves = useCallback(
+    (waves: number[], additive: boolean) => {
+      const waveSet = new Set(waves);
+      setSelectedSnapshotIds((prev) => {
+        const next = additive ? new Set(prev) : new Set<string>();
+        for (const snap of snapshots) {
+          if (waveSet.has(snap.wave)) {
+            next.add(snap.id);
+          }
+        }
+        return next;
+      });
+    },
+    [snapshots]
+  );
+
   const toggleAllSnapshots = () => {
     if (allSnapshotsChecked) {
       setSelectedSnapshotIds(new Set());
       return;
     }
     setSelectedSnapshotIds(new Set(snapshots.map((s) => s.id)));
+  };
+
+  const clearAllSelections = () => {
+    setSelectedSnapshotIds(new Set());
+    setSelectedWaveSkipIds(new Set());
+  };
+
+  const toggleWaveSkipId = useCallback((id: string) => {
+    setSelectedWaveSkipIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const allWaveSkipsChecked =
+    waveSkips.length > 0 &&
+    waveSkips.every((s) => selectedWaveSkipIds.has(s.id));
+
+  const toggleAllWaveSkips = () => {
+    if (allWaveSkipsChecked) {
+      setSelectedWaveSkipIds(new Set());
+      return;
+    }
+    setSelectedWaveSkipIds(new Set(waveSkips.map((s) => s.id)));
   };
 
   const ongoingRunNote = () =>
@@ -367,14 +447,27 @@ export default function History() {
     if (!selectedRunId) return;
     try {
       const activeFilter = listFilter();
-      const [snaps, updatedRuns] = await Promise.all([
+      const [snaps, skips, updatedRuns] = await Promise.all([
         api.runSnapshots(selectedRunId),
+        api.runWaveSkips(selectedRunId),
         api.listRuns(activeFilter),
       ]);
       setSnapshots(snaps);
+      setWaveSkips(skips);
       setSelectedSnapshotIds((prev) => {
         if (prev.size === 0) return prev;
         const valid = new Set(snaps.map((s) => s.id));
+        let changed = false;
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (valid.has(id)) next.add(id);
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+      setSelectedWaveSkipIds((prev) => {
+        if (prev.size === 0) return prev;
+        const valid = new Set(skips.map((s) => s.id));
         let changed = false;
         const next = new Set<string>();
         for (const id of prev) {
@@ -431,6 +524,48 @@ export default function History() {
     }
   };
 
+  const deleteSelectedWaveSkips = async () => {
+    if (!selected || selectedWaveSkipIds.size === 0) return;
+    const n = selectedWaveSkipIds.size;
+    if (
+      !confirm(
+        `Delete ${n} wave skip record${n === 1 ? "" : "s"}? Coin/min snapshots are kept.${ongoingRunNote()}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteWaveSkips([...selectedWaveSkipIds]);
+      setSelectedWaveSkipIds(new Set());
+      await refreshSelectedRun();
+    } catch (e) {
+      alert(String(e));
+    }
+  };
+
+  const deleteWaveSkip = async (skip: WaveSkipRow) => {
+    if (!selected) return;
+    if (
+      !confirm(
+        `Delete wave skip at wave ${skip.at_wave} (×${skip.skipped_count})?${ongoingRunNote()}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteWaveSkip(skip.id);
+      setSelectedWaveSkipIds((prev) => {
+        if (!prev.has(skip.id)) return prev;
+        const next = new Set(prev);
+        next.delete(skip.id);
+        return next;
+      });
+      await refreshSelectedRun();
+    } catch (e) {
+      alert(String(e));
+    }
+  };
+
   const deleteSnapshot = async (snap: SnapshotRow) => {
     if (!selected) return;
     if (
@@ -455,11 +590,16 @@ export default function History() {
   };
 
   const chartData = snapshotsToChartData(snapshots);
+  const skipMarkers = waveSkipsToMarkers(waveSkips);
 
   const compareChartData =
     compareXAxis === "wave"
       ? buildCompareChartDataByWave(compareRunIds, compareSnapshots)
       : buildCompareChartDataByProgress(compareRunIds, compareSnapshots);
+
+  const compareSkipMarkers = compareRunIds.map((id) =>
+    waveSkipsToMarkers(compareWaveSkips[id] ?? [])
+  );
 
   const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
     dataKey: `coin_${i}`,
@@ -776,6 +916,7 @@ export default function History() {
             mode="compare"
             data={compareChartData}
             lines={compareLines}
+            waveSkipsByLine={compareSkipMarkers}
             xAxis={compareXAxis}
             height={320}
           />
@@ -789,6 +930,13 @@ export default function History() {
               <h3>
                 Run {new Date(selected.started_at).toLocaleString()} — avg coin/min vs
                 wave
+                {skipMarkers.length > 0 && (
+                  <span className="muted">
+                    {" "}
+                    · {skipMarkers.length} wave skip
+                    {skipMarkers.length === 1 ? "" : "s"} (right axis)
+                  </span>
+                )}
                 {hasOngoingSelectedRun && (
                   <span className="muted compare-live"> · live</span>
                 )}
@@ -801,9 +949,13 @@ export default function History() {
             <CoinVsWaveChart
               mode="single"
               data={chartData}
+              waveSkips={skipMarkers}
               height={300}
               selectedWaves={selectedWaves}
+              selectedSkipIds={[...selectedWaveSkipIds]}
               onPointClick={toggleSnapshotWave}
+              onSkipClick={(id) => toggleWaveSkipId(id)}
+              onSelectWaves={selectSnapshotWaves}
             />
           </div>
 
@@ -818,15 +970,26 @@ export default function History() {
               </h3>
               <div className="snapshot-panel-actions">
                 <span className="muted">
-                  Click chart points or rows to select. Selected points show in gold.
+                  Click coin points or skip points on the chart. Drag a rectangle
+                  to select coin/min snapshots. Shift+drag adds to the selection.
                 </span>
+                <button
+                  type="button"
+                  disabled={
+                    selectedSnapshotIds.size === 0 &&
+                    selectedWaveSkipIds.size === 0
+                  }
+                  onClick={clearAllSelections}
+                >
+                  Clear selection
+                </button>
                 <button
                   type="button"
                   className="danger"
                   disabled={selectedSnapshotIds.size === 0}
                   onClick={deleteSelectedSnapshots}
                 >
-                  Delete selected ({selectedSnapshotIds.size})
+                  Delete snapshots ({selectedSnapshotIds.size})
                 </button>
               </div>
             </div>
@@ -902,6 +1065,90 @@ export default function History() {
               </table>
             </div>
           </div>
+
+          {waveSkips.length > 0 && (
+            <div className="snapshot-panel">
+              <div className="snapshot-panel-header">
+                <h3>
+                  Wave skips ({waveSkips.length}
+                  {selectedWaveSkipIds.size > 0
+                    ? ` · ${selectedWaveSkipIds.size} selected`
+                    : ""}
+                  )
+                </h3>
+                <div className="snapshot-panel-actions">
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={selectedWaveSkipIds.size === 0}
+                    onClick={deleteSelectedWaveSkips}
+                  >
+                    Delete wave skips ({selectedWaveSkipIds.size})
+                  </button>
+                </div>
+              </div>
+              <div className="snapshot-table-wrap">
+                <table className="snapshot-table">
+                  <thead>
+                    <tr>
+                      <th className="check-col">
+                        <input
+                          type="checkbox"
+                          checked={allWaveSkipsChecked}
+                          onChange={toggleAllWaveSkips}
+                          aria-label="Select all wave skips"
+                        />
+                      </th>
+                      <th>Wave</th>
+                      <th>Skipped</th>
+                      <th>Coin/min</th>
+                      <th>Recorded</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waveSkips.map((s) => (
+                      <tr
+                        key={s.id}
+                        className={
+                          selectedWaveSkipIds.has(s.id) ? "snapshot-selected" : ""
+                        }
+                        onClick={() => toggleWaveSkipId(s.id)}
+                      >
+                        <td
+                          className="check-col"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedWaveSkipIds.has(s.id)}
+                            onChange={() => toggleWaveSkipId(s.id)}
+                            aria-label={`Select wave skip at wave ${s.at_wave}`}
+                          />
+                        </td>
+                        <td>{s.at_wave}</td>
+                        <td>×{s.skipped_count}</td>
+                        <td>{formatCoin(s.coin_per_minute)}</td>
+                        <td>{new Date(s.recorded_at).toLocaleString()}</td>
+                        <td
+                          className="snapshot-actions"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => deleteWaveSkip(s)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

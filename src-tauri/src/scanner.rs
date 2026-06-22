@@ -236,6 +236,23 @@ pub fn apply_actions(
                     None => Ok(()),
                 }
             }
+            Action::WaveSkip {
+                at_wave,
+                skipped_count,
+                coin_per_minute,
+            } => {
+                let id = current_run_id.lock().unwrap().clone();
+                match id {
+                    Some(id) => db::insert_wave_skip(
+                        conn,
+                        &id,
+                        *at_wave as i64,
+                        *skipped_count as i64,
+                        *coin_per_minute,
+                    ),
+                    None => Ok(()),
+                }
+            }
             Action::EndRun {
                 final_wave,
                 peak_tier,
@@ -254,6 +271,8 @@ pub fn apply_actions(
         };
         if let Err(e) = result {
             log_line(log_path, &format!("DB error applying {action:?}: {e}"));
+        } else if matches!(action, Action::WaveSkip { .. }) {
+            log_line(log_path, &format!("Recorded {action:?}"));
         }
     }
 }

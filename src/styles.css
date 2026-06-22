@@ -293,6 +293,14 @@ main {
   align-items: center;
 }
 
+.chart-marquee .recharts-wrapper {
+  cursor: crosshair;
+}
+
+.chart-marquee .recharts-surface {
+  user-select: none;
+}
+
 .chart-screenshot-actions {
   display: flex;
   gap: 6px;

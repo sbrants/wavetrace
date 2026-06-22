@@ -4,7 +4,7 @@ use base64::Engine;
 use tauri::{AppHandle, Manager, State};
 
 use crate::backup::{self, BackupExport, BackupRestore};
-use crate::db::{self, RunFilter, RunRow, SnapshotRow};
+use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
@@ -132,6 +132,22 @@ pub fn delete_snapshots(snapshot_ids: Vec<String>) -> Result<usize, String> {
 }
 
 #[tauri::command]
+pub fn delete_wave_skips(wave_skip_ids: Vec<String>) -> Result<usize, String> {
+    let conn = conn()?;
+    db::delete_wave_skips(&conn, &wave_skip_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_wave_skip(wave_skip_id: String) -> Result<(), String> {
+    let conn = conn()?;
+    if db::delete_wave_skip(&conn, &wave_skip_id).map_err(|e| e.to_string())? {
+        Ok(())
+    } else {
+        Err("Wave skip not found".into())
+    }
+}
+
+#[tauri::command]
 pub fn delete_snapshot(snapshot_id: String) -> Result<(), String> {
     let conn = conn()?;
     match db::delete_snapshot(&conn, &snapshot_id).map_err(|e| e.to_string())? {
@@ -150,6 +166,20 @@ pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>,
     let id = state.scanner.current_run_id.lock().unwrap().clone();
     match id {
         Some(id) => db::run_snapshots(&conn()?, &id).map_err(|e| e.to_string()),
+        None => Ok(Vec::new()),
+    }
+}
+
+#[tauri::command]
+pub fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
+    db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn current_run_wave_skips(state: State<AppState>) -> Result<Vec<WaveSkipRow>, String> {
+    let id = state.scanner.current_run_id.lock().unwrap().clone();
+    match id {
+        Some(id) => db::run_wave_skips(&conn()?, &id).map_err(|e| e.to_string()),
         None => Ok(Vec::new()),
     }
 }
