@@ -153,7 +153,7 @@ impl Scanner {
                             &log_path,
                             &format!(
                                 "poll {}x{} capture_ms={} ocr_ms={} \
-                                 tier={:?} wave={:?} coin={:?} lines={:?}",
+                                 tier={:?} wave={:?} coin={:?} skip={:?} lines={:?}",
                                 full.width(),
                                 full.height(),
                                 capture_ms,
@@ -161,6 +161,7 @@ impl Scanner {
                                 input.tier,
                                 input.wave,
                                 input.coin,
+                                input.wave_skip_overlay,
                                 fields.all_lines,
                             ),
                         );
@@ -184,9 +185,6 @@ impl Scanner {
     }
 
     fn prepare_resume(&self, conn: &rusqlite::Connection) -> Result<Vec<Action>, String> {
-        if self.machine.lock().unwrap().has_active_run() {
-            return Ok(Vec::new());
-        }
         let Some((id, run_type)) = db::latest_open_run(conn).map_err(|e| e.to_string())? else {
             return Err("No run to resume — start a new run instead.".into());
         };
@@ -195,6 +193,7 @@ impl Scanner {
             "tournament" => RunType::Tournament,
             _ => RunType::Farming,
         };
+        // Always re-sync from DB: the game may have advanced while the scanner was stopped.
         self.machine.lock().unwrap().resume_from_db(
             run_type,
             last_wave.unwrap_or(0) as u32,
@@ -209,7 +208,7 @@ pub fn apply_actions(
     conn: &rusqlite::Connection,
     current_run_id: &Arc<Mutex<Option<String>>>,
     actions: &[Action],
-    log_path: &std::path::Path,
+    _log_path: &std::path::Path,
 ) {
     for action in actions {
         let result = match action {
@@ -270,11 +269,15 @@ pub fn apply_actions(
             }
         };
         if let Err(e) = result {
-            log_line(log_path, &format!("DB error applying {action:?}: {e}"));
+            db::append_scanner_log(&format!("DB error applying {action:?}: {e}"));
         } else if matches!(action, Action::WaveSkip { .. }) {
-            log_line(log_path, &format!("Recorded {action:?}"));
+            db::append_scanner_log(&format!("Recorded {action:?}"));
         }
     }
+}
+
+fn log_line(_dir: &std::path::Path, msg: &str) {
+    db::append_scanner_log(msg);
 }
 
 fn emit(
@@ -309,16 +312,5 @@ fn sleep_remainder(tick: Instant, interval_ms: u64) {
     let interval = Duration::from_millis(interval_ms);
     if elapsed < interval {
         std::thread::sleep(interval - elapsed);
-    }
-}
-
-fn log_line(dir: &std::path::Path, msg: &str) {
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("scanner.log"))
-    {
-        writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339()).ok();
     }
 }

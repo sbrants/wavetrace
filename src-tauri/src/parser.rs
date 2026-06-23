@@ -675,12 +675,17 @@ pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {
     let Some(idx) = banner_idx else {
         return WaveSkipOverlay::default();
     };
-    for j in idx..=(idx + 1).min(lines.len().saturating_sub(1)) {
-        if let Some(c) = extract_skip_multiplier_from_banner(&lowered[j]) {
-            return WaveSkipOverlay {
-                seen: true,
-                multiplier: Some(c),
-            };
+    if idx + 1 < lowered.len() {
+        let next = &lowered[idx + 1];
+        // Only treat the line after the banner as a multiplier when it is a bare `xN`
+        // (game layout). Ignore upgrade rows like "Enemy Attack Level Skip x4".
+        if is_standalone_skip_multiplier_line(next) {
+            if let Some(c) = extract_skip_multiplier_from_banner(next) {
+                return WaveSkipOverlay {
+                    seen: true,
+                    multiplier: Some(c),
+                };
+            }
         }
     }
     WaveSkipOverlay {
@@ -689,22 +694,71 @@ pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {
     }
 }
 
+fn is_standalone_skip_multiplier_line(lower: &str) -> bool {
+    parse_standalone_x_multiplier(lower.trim()).is_some()
+}
+
 /// True when OCR shows the in-game wave-skip banner (tolerates merged words / typos).
 fn is_wave_skip_banner_line(lower: &str) -> bool {
+    if is_upgrade_skip_line(lower) {
+        return false;
+    }
     if lower.contains("wave skip") || lower.contains("waveskip") {
         return true;
     }
     if lower.contains("mave skip") || lower.contains("maveskip") {
         return true;
     }
+    if (lower.contains("vave") || lower.contains("wate")) && lower.contains("skip") {
+        return true;
+    }
     if lower.contains("wav") && lower.contains("skipped") {
+        return true;
+    }
+    if lower.contains("wav") && lower.contains("skip") && lower.contains('!') {
+        return true;
+    }
+    if lower.contains("skipped") && !lower.contains("level") && !lower.contains("/min") {
         return true;
     }
     let t = lower.trim();
     if t.starts_with("skipped") && !lower.contains("level") && !lower.contains("/min") {
         return true;
     }
+    if is_partial_wave_skip_banner_line(lower) {
+        return true;
+    }
     false
+}
+
+/// OCR often truncates the banner ("Wave Sk", "ave Skipped!", "Wave S Ippe").
+fn is_partial_wave_skip_banner_line(lower: &str) -> bool {
+    if is_upgrade_skip_line(lower) {
+        return false;
+    }
+    if lower.contains("ave skip") && !lower.contains("level") {
+        return true;
+    }
+    if lower.contains("wave") {
+        let after_wave = lower.split("wave").nth(1).unwrap_or("");
+        let letters: String = after_wave
+            .chars()
+            .filter(|c| c.is_ascii_alphabetic())
+            .collect();
+        if letters.starts_with("skip")
+            || letters.starts_with("sk")
+            || (letters.starts_with('s') && letters.contains("ip"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_upgrade_skip_line(lower: &str) -> bool {
+    (lower.contains("level") || lower.contains("enemy") || lower.contains("health"))
+        && lower.contains("skip")
+        && !lower.contains("skipped")
 }
 
 fn extract_skip_multiplier_from_banner(lower: &str) -> Option<u32> {
@@ -1046,6 +1100,72 @@ mod tests {
         );
         assert!(
             !is_wave_skip_banner_line("enemy health level skip")
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skipped!", "Enemy Attack Level Skip x4"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Vtave Skipped.", "Tier 15"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["VVAve Skipped! x5", "Tier 15"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(5),
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["aee Skipped!", "Tier 15", "Wave 2137"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Enemy Attack Level Skip x4", "Wave Skipped!"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Sk", "$388.18K"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["ave Skipped!", "$1904.09KY"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["0 ; 620 0 Wave Skipped! x", "$388.18K"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave S Ippe x2", "Tier 15"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(2),
+            }
+        );
+        assert!(
+            !is_wave_skip_banner_line("Enemy Attack Level Skip")
         );
     }
 

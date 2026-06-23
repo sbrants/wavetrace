@@ -42,6 +42,10 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           hint={live?.total_coin_warning ? "last known" : undefined}
         />
         <StatCard
+          label="Waves skipped"
+          value={live?.last_waves_skipped?.toString() ?? "—"}
+        />
+        <StatCard
           label="Run"
           value={
             live?.run_active

@@ -17,6 +17,7 @@ export interface LiveState {
   run_active: boolean;
   run_type: "farming" | "tournament" | null;
   total_coin_warning: boolean;
+  last_waves_skipped: number | null;
 }
 
 export interface ScannerEvent {

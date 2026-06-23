@@ -78,6 +78,8 @@ pub struct LiveState {
     pub run_type: Option<RunType>,
     /// True while game shows total coins instead of a rate (warn the user).
     pub total_coin_warning: bool,
+    /// Most recent wave skip count this run (not cumulative).
+    pub last_waves_skipped: Option<u32>,
 }
 
 impl LiveState {
@@ -90,6 +92,7 @@ impl LiveState {
             run_active: false,
             run_type: None,
             total_coin_warning: false,
+            last_waves_skipped: None,
         }
     }
 }
@@ -225,10 +228,16 @@ struct WaveSkipTracker {
     /// Banner seen recently but wave may not have jumped yet (common for ×1 skips).
     latched_banner: Option<WaveSkipOverlay>,
     latched_polls: u32,
+    /// Polls remaining where a ×1 jump should pair with a recent banner.
+    single_skip_banner_polls: u32,
+    /// After resume, ignore one unbannered multi-wave jump (game advanced while stopped).
+    resume_catchup_pending: bool,
 }
 
-/// Keep a latched banner briefly after it disappears so a debounced wave jump can match.
-const SKIP_BANNER_LATCH_POLLS: u32 = 8;
+/// Keep a latched banner after it disappears so a debounced wave jump can match.
+const SKIP_BANNER_LATCH_POLLS: u32 = 40;
+/// After any skip banner, trust a subsequent ×1 wave jump for this many polls (~60s at 1.5s).
+const SINGLE_SKIP_BANNER_POLLS: u32 = 40;
 
 #[derive(Default)]
 struct DebouncedWaveSkipOverlay {
@@ -277,11 +286,17 @@ impl WaveSkipTracker {
         if overlay.seen {
             self.latched_banner = Some(overlay);
             self.latched_polls = 0;
-        } else if self.latched_banner.is_some() {
-            self.latched_polls += 1;
-            if self.latched_polls >= SKIP_BANNER_LATCH_POLLS {
-                self.latched_banner = None;
-                self.latched_polls = 0;
+            self.single_skip_banner_polls = SINGLE_SKIP_BANNER_POLLS;
+        } else {
+            if self.latched_banner.is_some() {
+                self.latched_polls += 1;
+                if self.latched_polls >= SKIP_BANNER_LATCH_POLLS {
+                    self.latched_banner = None;
+                    self.latched_polls = 0;
+                }
+            }
+            if self.single_skip_banner_polls > 0 {
+                self.single_skip_banner_polls -= 1;
             }
         }
     }
@@ -296,42 +311,80 @@ impl WaveSkipTracker {
             return None;
         }
 
-        let overlay_hint = self
-            .overlay
-            .confirmed()
-            .or_else(|| overlay_now.seen.then_some(overlay_now))
-            .or(self.latched_banner);
+        if self.resume_catchup_pending {
+            let catchup = delta >= 2 && self.banner_overlay(overlay_now).is_none();
+            self.resume_catchup_pending = false;
+            if catchup {
+                return None;
+            }
+        }
 
-        let overlay_expected = overlay_hint.and_then(|o| o.expected_skip_count());
-
-        // Multi-wave jumps (2–20) are skips; normal play advances one wave at a time.
-        // Single-wave skips only count when the banner was seen (game never shows x1).
-        let should_record = if delta >= 2 {
-            true
-        } else {
-            overlay_expected == Some(1)
-        };
-
-        if !should_record {
+        if !self.should_record_skip(delta, overlay_now) {
             if delta == 1 {
                 self.latched_banner = None;
                 self.latched_polls = 0;
+                self.single_skip_banner_polls = 0;
             }
             return None;
         }
 
-        let key = (new_wave, delta);
+        let skipped_count = delta;
+        let key = (new_wave, skipped_count);
         if self.last_emitted == Some(key) {
             return None;
         }
         self.last_emitted = Some(key);
         self.latched_banner = None;
         self.latched_polls = 0;
+        self.single_skip_banner_polls = 0;
         Some(key)
+    }
+
+    fn banner_overlay(&self, overlay_now: WaveSkipOverlay) -> Option<WaveSkipOverlay> {
+        if overlay_now.seen {
+            Some(overlay_now)
+        } else if self.overlay.confirmed().is_some_and(|o| o.seen) {
+            self.overlay.confirmed()
+        } else {
+            self.latched_banner
+        }
+    }
+
+    /// Skip count always equals the observed wave increment. The banner gates recording
+    /// so a lone "Wave Skipped!" only pairs with +1, and `xN` must match the jump.
+    fn should_record_skip(&self, delta: u32, overlay_now: WaveSkipOverlay) -> bool {
+        if delta == 1 {
+            return self.has_single_skip_banner(overlay_now);
+        }
+
+        match self.banner_overlay(overlay_now) {
+            None => true,
+            Some(banner) => banner
+                .multiplier
+                .is_some_and(|n| n == delta),
+        }
     }
 
     fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    fn set_resume_catchup_pending(&mut self, pending: bool) {
+        self.resume_catchup_pending = pending;
+    }
+
+    fn has_single_skip_banner(&self, overlay_now: WaveSkipOverlay) -> bool {
+        if overlay_now.seen {
+            return true;
+        }
+        if self.single_skip_banner_polls > 0 {
+            return true;
+        }
+        if self.overlay.confirmed().is_some_and(|o| o.seen) {
+            return true;
+        }
+        self.latched_banner
+            .is_some_and(|_| self.latched_polls <= SKIP_BANNER_LATCH_POLLS)
     }
 }
 
@@ -350,6 +403,8 @@ pub struct RunStateMachine {
     tournament_seen: bool,
     /// Consecutive polls where coin reads as a balance (no /min).
     consecutive_total_coin_polls: u32,
+    /// Last skip count recorded this run (dashboard stat).
+    last_waves_skipped: Option<u32>,
 }
 
 impl Default for RunStateMachine {
@@ -373,6 +428,7 @@ impl RunStateMachine {
             last_mode: GameMode::Unknown,
             tournament_seen: false,
             consecutive_total_coin_polls: 0,
+            last_waves_skipped: None,
         }
     }
 
@@ -394,6 +450,11 @@ impl RunStateMachine {
             run_type: self.run.as_ref().map(|r| r.run_type),
             // Debounced: one missed /min frame must not flash the banner.
             total_coin_warning: self.consecutive_total_coin_polls >= 2,
+            last_waves_skipped: self
+                .run
+                .is_some()
+                .then(|| self.last_waves_skipped)
+                .flatten(),
         }
     }
 
@@ -442,6 +503,7 @@ impl RunStateMachine {
             self.wave.confirmed = Some(last_saved_wave);
             self.last_seen_wave = Some(last_saved_wave);
         }
+        self.wave_skip.set_resume_catchup_pending(true);
     }
 
     /// When scanning starts with no active run, open one immediately so snapshots can persist.
@@ -546,6 +608,7 @@ impl RunStateMachine {
                             if let Some((at_wave, skipped_count)) =
                                 self.wave_skip.on_wave_jump(wave, delta, input.wave_skip_overlay)
                             {
+                                self.last_waves_skipped = Some(skipped_count);
                                 actions.push(Action::WaveSkip {
                                     at_wave,
                                     skipped_count,
@@ -613,6 +676,7 @@ impl RunStateMachine {
         self.last_seen_coin = None;
         self.consecutive_total_coin_polls = 0;
         self.wave_skip.reset();
+        self.last_waves_skipped = None;
     }
 }
 
@@ -736,6 +800,73 @@ mod tests {
         assert!(actions
             .iter()
             .any(|a| matches!(a, Action::Snapshot { wave: 43, .. })));
+    }
+
+    #[test]
+    fn resume_catchup_suppresses_false_multi_skip_without_banner() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 105, CoinReading::Rate(1e12)),
+        );
+        assert!(!actions.iter().any(|a| matches!(a, Action::WaveSkip { .. })));
+    }
+
+    #[test]
+    fn resume_catchup_allows_bannered_skip_after_gap() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: Some(5),
+        };
+        let actions = feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 105, CoinReading::Rate(1e12), overlay),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 105,
+                    skipped_count: 5,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn resume_catchup_allows_single_skip_after_sync() {
+        let mut sm = RunStateMachine::new();
+        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: None,
+        };
+        feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 100, CoinReading::Rate(1e12), overlay),
+        );
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 101, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 101,
+                    skipped_count: 1,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]
@@ -1161,7 +1292,6 @@ mod tests {
             seen: true,
             multiplier: None,
         };
-        // Banner appears while the wave number is still on the pre-skip value.
         feed2(
             &mut sm,
             p_skip(GameMode::Normal, 14, 100, CoinReading::Rate(1e12), overlay),
@@ -1183,6 +1313,143 @@ mod tests {
     }
 
     #[test]
+    fn single_wave_skip_after_slow_wave_debounce() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: None,
+        };
+        sm.poll(p_skip(
+            GameMode::Normal,
+            14,
+            100,
+            CoinReading::Rate(1e12),
+            overlay,
+        ));
+        let mut actions = Vec::new();
+        for _ in 0..12 {
+            actions.extend(sm.poll(p(
+                GameMode::Normal,
+                14,
+                101,
+                CoinReading::Rate(1e12),
+            )));
+        }
+        actions.extend(feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 101, CoinReading::Rate(1e12)),
+        ));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 101,
+                    skipped_count: 1,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn single_wave_skip_with_misread_multiplier_on_banner() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: Some(9),
+        };
+        let actions = feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 101, CoinReading::Rate(1e12), overlay),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 101,
+                    skipped_count: 1,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn single_wave_skip_rejects_overshoot_without_matching_multiplier() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: None,
+        };
+        // Lone banner does not correlate with a +2 OCR jump.
+        let actions = feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 102, CoinReading::Rate(1e12), overlay),
+        );
+        assert!(!actions.iter().any(|a| matches!(a, Action::WaveSkip { .. })));
+    }
+
+    #[test]
+    fn multi_wave_skip_requires_banner_multiplier_to_match_jump() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
+        let overlay = WaveSkipOverlay {
+            seen: true,
+            multiplier: Some(5),
+        };
+        let actions = feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 105, CoinReading::Rate(1e12), overlay),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 105,
+                    skipped_count: 5,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn single_wave_skip_partial_banner_before_plus_one_jump() {
+        let mut sm = RunStateMachine::new();
+        feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        feed2(&mut sm, p(GameMode::Normal, 14, 2521, CoinReading::Rate(1e12)));
+        let partial = WaveSkipOverlay {
+            seen: true,
+            multiplier: None,
+        };
+        feed2(
+            &mut sm,
+            p_skip(GameMode::Normal, 14, 2521, CoinReading::Rate(1e12), partial),
+        );
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 2522, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::WaveSkip {
+                    at_wave: 2522,
+                    skipped_count: 1,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
     fn wave_skip_rejects_mismatched_jump() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
@@ -1191,21 +1458,12 @@ mod tests {
             seen: true,
             multiplier: Some(5),
         };
-        // Banner says x5 but wave only jumped 3 — still record (wave delta is authoritative).
+        // Banner x5 with only a +3 jump — increment and banner do not correlate.
         let actions = feed2(
             &mut sm,
             p_skip(GameMode::Normal, 14, 103, CoinReading::Rate(1e12), overlay),
         );
-        assert!(actions.iter().any(|a| {
-            matches!(
-                a,
-                Action::WaveSkip {
-                    at_wave: 103,
-                    skipped_count: 3,
-                    ..
-                }
-            )
-        }));
+        assert!(!actions.iter().any(|a| matches!(a, Action::WaveSkip { .. })));
     }
 
     #[test]

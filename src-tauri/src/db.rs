@@ -85,6 +85,65 @@ pub fn scanner_log_path() -> PathBuf {
     app_data_dir().join("logs").join("scanner.log")
 }
 
+/// Per-file size before rotating to `scanner.log.1`, `scanner.log.2`, …
+const SCANNER_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// `scanner.log` plus this many rotated segments (`scanner.log.1` …).
+const SCANNER_LOG_ROTATED_FILES: u32 = 9;
+
+fn maybe_rotate_scanner_log(logs_dir: &std::path::Path) {
+    maybe_rotate_scanner_log_with_limits(
+        logs_dir,
+        SCANNER_LOG_MAX_BYTES,
+        SCANNER_LOG_ROTATED_FILES,
+    );
+}
+
+fn maybe_rotate_scanner_log_with_limits(
+    logs_dir: &std::path::Path,
+    max_bytes: u64,
+    max_rotated: u32,
+) {
+    let path = logs_dir.join("scanner.log");
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return;
+    };
+    if meta.len() <= max_bytes {
+        return;
+    }
+
+    let oldest = logs_dir.join(format!("scanner.log.{max_rotated}"));
+    let _ = std::fs::remove_file(&oldest);
+
+    for i in (1..max_rotated).rev() {
+        let from = logs_dir.join(format!("scanner.log.{i}"));
+        let to = logs_dir.join(format!("scanner.log.{}", i + 1));
+        if from.exists() {
+            let _ = std::fs::remove_file(&to);
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
+
+    let first = logs_dir.join("scanner.log.1");
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::rename(&path, &first);
+}
+
+pub fn append_scanner_log(msg: &str) {
+    use std::io::Write;
+
+    let logs_dir = app_data_dir().join("logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    maybe_rotate_scanner_log(&logs_dir);
+    let path = logs_dir.join("scanner.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339()).ok();
+    }
+}
+
 pub fn open() -> rusqlite::Result<Connection> {
     let conn = Connection::open(database_path())?;
     migrate(&conn)?;
@@ -1192,5 +1251,42 @@ mod tests {
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].id, combined_id);
         assert_eq!(runs[0].comment.as_deref(), Some("first half · second half"));
+    }
+
+    #[test]
+    fn scanner_log_rotation_keeps_numbered_segments() {
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!(
+            "wavetrace_log_rotate_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let write_chunk = |name: &str, label: &str| {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{label}{}", "x".repeat(1100)).unwrap();
+        };
+
+        write_chunk("scanner.log", "active-");
+        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
+        assert!(!dir.join("scanner.log").exists());
+        assert!(dir.join("scanner.log.1").exists());
+
+        write_chunk("scanner.log", "active2-");
+        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
+        assert!(dir.join("scanner.log.1").exists());
+        assert!(dir.join("scanner.log.2").exists());
+        assert!(!dir.join("scanner.log.3").exists());
+
+        write_chunk("scanner.log", "active3-");
+        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
+        let third = std::fs::read_to_string(dir.join("scanner.log.2")).unwrap();
+        assert!(third.starts_with("active2-"));
+        assert!(!dir.join("scanner.log.3").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
