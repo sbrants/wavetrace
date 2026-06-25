@@ -262,9 +262,16 @@ jobs:
             pipewire libpipewire clang
 
       - name: Build Arch binary
+        env:
+          CARGO_NET_RETRY: 10
         run: |
           npm ci
-          npm run tauri build -- --config src-tauri/tauri.arch.ci.conf.json --bundles deb
+          for attempt in 1 2 3; do
+            npm run tauri build -- --config src-tauri/tauri.arch.ci.conf.json --bundles deb && exit 0
+            echo "Build attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
+          exit 1
 
       - name: Upload Arch binary to release
         uses: softprops/action-gh-release@v2
