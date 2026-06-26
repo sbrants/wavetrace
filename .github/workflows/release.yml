@@ -255,11 +255,21 @@ jobs:
 
       - name: Install Arch build dependencies
         run: |
-          pacman -Syu --noconfirm \
-            base-devel git nodejs npm rust patchelf \
-            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3 \
-            tesseract tesseract-data-eng openssl pkgconf \
+          packages=(
+            base-devel git nodejs npm rust patchelf
+            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3
+            tesseract tesseract-data-eng openssl pkgconf
             pipewire libpipewire clang
+          )
+          for attempt in 1 2 3 4 5; do
+            if pacman -Syu --noconfirm "${packages[@]}"; then
+              exit 0
+            fi
+            echo "pacman attempt $attempt failed, syncing DB and retrying in 30s..."
+            pacman -Syy --noconfirm || true
+            sleep 30
+          done
+          exit 1
 
       - name: Build Arch binary
         env:
