@@ -27,7 +27,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
 uuid = { version = "1.23.3", features = ["v4"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 pollster = "0.4"
