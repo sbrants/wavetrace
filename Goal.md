@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.23):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, History analytics, and resume catch-up shipped in v0.2.22–v0.2.23. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.24):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -25,7 +25,7 @@
 ### Distribution
 
 
-| Channel | Windows artifact | Updates | Status (v0.2.23) |
+| Channel | Windows artifact | Updates | Status (v0.2.24) |
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |

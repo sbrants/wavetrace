@@ -5,16 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.24] — 2026-06-26
+
 ### Added
 
 - **Accessibility (phases A & B)** — focus-visible rings, live regions for scanner/warnings/updates, `aria-current` nav, sortable History headers with `aria-sort`, labeled filters and Settings fieldsets, scanner log labels; `eslint-plugin-jsx-a11y`; roadmap for phases C–E in `docs/accessibility.md`
 - **Skip vs coin/min analytics** — History panel: Pearson correlation by lag, median % change after skips, breakdown by skip size (coin/min > 0.1T)
 - **Offline analysis script** — `scripts/analyze_skip_coin.py` against `%APPDATA%\wavetrace\wavetrace.db`
+- **Dev builds** — orange-bordered taskbar/tray icon and **WaveTrace (Dev)** window title
 
 ### Fixed
 
 - **Intro Sprint wave skips** — trust multi-wave jumps when banner `xN` is missing or OCR'd ±1 off (e.g. x9 vs +10); fast debounce baseline; more banner typos (`Wave Skived`, etc.)
-- **Dev builds** — orange-bordered taskbar/tray icon and **WaveTrace (Dev)** window title
 
 ---
 

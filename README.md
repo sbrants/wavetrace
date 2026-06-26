@@ -211,7 +211,7 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.23`), or edit
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.24`), or edit
 `PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)
