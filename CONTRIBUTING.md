@@ -62,6 +62,8 @@ Open issues labeled **good first issue**:
 1. [#1 — Add Vitest + tests for `skipDisplay.ts`](https://github.com/sbrants/wavetrace/issues/1) — pure formatting logic in `src/skipDisplay.ts`; wire `npm test` into CI when done.
 2. [#2 — Fix `react-hooks/exhaustive-deps` warnings in `History.tsx`](https://github.com/sbrants/wavetrace/issues/2) — two lint warnings around `compareRunIds.length` in `useEffect` deps (~lines 267, 283).
 3. [#3 — Add a parser unit test for an OCR typo](https://github.com/sbrants/wavetrace/issues/3) — extend `src-tauri/src/parser.rs` tests (`ocr_quirks`, `live_ocr`, `wave_skip_ocr_typos`); no game capture required.
+4. [#19 — Link accessibility roadmap from Goal.md](https://github.com/sbrants/wavetrace/issues/19) — short docs section pointing to `docs/accessibility.md`.
+5. [#20 — Audit muted text contrast on dark theme](https://github.com/sbrants/wavetrace/issues/20) — CSS token tweaks in `src/styles.css` (Phase D in accessibility doc).
 
 ## Testing
 

@@ -1,17 +1,24 @@
 # WaveTrace
 
-Desktop companion for the idle game **The Tower**. It watches the game
-window, OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the
-wave advances, detects **wave skips**, and charts coin/min against wave for the
+[![CI](https://github.com/sbrants/wavetrace/actions/workflows/ci.yml/badge.svg)](https://github.com/sbrants/wavetrace/actions/workflows/ci.yml)
+[![Release](https://github.com/sbrants/wavetrace/actions/workflows/release.yml/badge.svg)](https://github.com/sbrants/wavetrace/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/github/license/sbrants/wavetrace)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/sbrants/wavetrace)](https://github.com/sbrants/wavetrace/releases)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft_Store-9P9M9DHX1L76-blue)](https://apps.microsoft.com/detail/9P9M9DHX1L76)
+
+Desktop companion for the idle game **The Tower**. It watches the game window,
+OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the wave
+advances, detects **wave skips**, and charts coin/min against wave for the
 current and past runs.
 
-**Repository:** https://github.com/sbrants/wavetrace  
-**Releases:** https://github.com/sbrants/wavetrace/releases  
-**Microsoft Store:** [WaveTrace](https://apps.microsoft.com/detail/9P9M9DHX1L76) (latest MSIX built on each `v*` tag)  
-**Privacy policy:** [PRIVACY.md](PRIVACY.md)
+## Quick start
 
-Full product spec: [Goal.md](Goal.md). OCR regression corpus:
-[`fixtures/captured/manifest.json`](fixtures/captured/manifest.json).
+| | |
+| --- | --- |
+| **Install** | [GitHub Releases](https://github.com/sbrants/wavetrace/releases) — Windows (NSIS) or Linux (AppImage). [Microsoft Store](https://apps.microsoft.com/detail/9P9M9DHX1L76) for MSIX. macOS DMGs are [currently broken](https://github.com/sbrants/wavetrace/issues/4). |
+| **Develop** | `npm install` then `npm run tauri dev` (Rust, Node 18+, MSVC on Windows — see [Prerequisites](#prerequisites-windows-10)) |
+| **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [good first issues](https://github.com/sbrants/wavetrace/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) · [Code of Conduct](CODE_OF_CONDUCT.md) |
+| **Docs** | [Goal.md](Goal.md) · [PRIVACY.md](PRIVACY.md) · OCR corpus [`fixtures/captured/manifest.json`](fixtures/captured/manifest.json) |
 
 ## Known issues
 
