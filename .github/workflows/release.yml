@@ -22,7 +22,7 @@ jobs:
 
       - name: Create GitHub release
         id: release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: WaveTrace ${{ github.ref_name }}
@@ -169,7 +169,7 @@ jobs:
         run: bash scripts/package-macos-dmg.sh ${{ matrix.target }} ${{ matrix.arch }}
 
       - name: Upload macOS release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -203,7 +203,7 @@ jobs:
         run: node scripts/publish-latest-json.mjs release-assets > latest.json
 
       - name: Upload latest.json
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: latest.json
@@ -243,7 +243,7 @@ jobs:
           exit 1
 
       - name: Upload MSIX to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: microsoft-store/out/*.msix
@@ -293,7 +293,7 @@ jobs:
           exit 1
 
       - name: Upload Arch binary to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: src-tauri/target/release/wavetrace

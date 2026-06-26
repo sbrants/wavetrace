@@ -55,7 +55,7 @@ jobs:
           exit 1
 
       - name: Upload Arch binary to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag }}
           files: src-tauri/target/release/wavetrace
