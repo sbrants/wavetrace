@@ -238,6 +238,7 @@ pub fn apply_actions(
             Action::WaveSkip {
                 at_wave,
                 skipped_count,
+                skip_multiplier,
                 coin_per_minute,
             } => {
                 let id = current_run_id.lock().unwrap().clone();
@@ -247,6 +248,7 @@ pub fn apply_actions(
                         &id,
                         *at_wave as i64,
                         *skipped_count as i64,
+                        skip_multiplier.map(|n| n as i64),
                         *coin_per_minute,
                     ),
                     None => Ok(()),

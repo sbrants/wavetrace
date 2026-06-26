@@ -655,6 +655,17 @@ impl WaveSkipOverlay {
     }
 }
 
+/// Banner ×N for display when OCR parsed it; lone +1 banner only.
+pub fn wave_skip_banner_multiplier(overlay: WaveSkipOverlay, wave_delta: u32) -> Option<u32> {
+    if let Some(n) = overlay.multiplier {
+        return Some(n);
+    }
+    if overlay.seen && wave_delta == 1 {
+        return Some(1);
+    }
+    None
+}
+
 /// Parse "Wave Skipped!" with optional `xN` multiplier (2–20; never `x1`).
 /// A banner without `xN` means a single skip. Values above 20 are rejected.
 pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {

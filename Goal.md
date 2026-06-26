@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.24):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.25):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24; **wave jump** display and chart UX in v0.2.25. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -134,7 +134,7 @@ flowchart LR
 | Wave skip   | `Wave Skipped!` (optional `×N`, N=2–20) | INTEGER (waves skipped per event) |
 
 
-When the in-game **Wave Skipped!** banner appears, the scanner records a **wave skip** event (`skipped_count` = wave increment, gated by banner rules for single-wave skips). See [Wave skips](#wave-skips).
+When the in-game **Wave Skipped!** banner appears, the scanner records a **wave skip** event (`skipped_count` = wave increment, gated by banner rules for single-wave skips). See [Wave skips](#wave-skips) and [Skips vs jumps](#skips-vs-jumps).
 
 ---
 
@@ -350,7 +350,13 @@ The game can skip waves (upgrade). The scanner detects the **Wave Skipped!** ove
 
 #### Storage
 
-Each skip stores: `run_id`, `at_wave` (wave after the skip), `skipped_count`, `coin_per_minute` at detection (may be `null` or stale during the overlay), `recorded_at`.
+Each skip stores: `run_id`, `at_wave` (wave after the skip), `skipped_count` (observed wave increment), optional `skip_multiplier` (banner `×N` when OCR parsed it), `coin_per_minute` at detection (may be `null` or stale during the overlay), `recorded_at`.
+
+#### Skips vs jumps
+
+- **Wave jump** — the wave increment between two captured snapshots (usually **1** during normal play). Shown on the live dashboard **Wave jump** stat and the chart **Wave jump** axis. The chart derives `+1` jumps from consecutive snapshots; larger jumps appear only when a **recorded skip** exists at that wave, so gaps from stopped scanning or missed OCR are not plotted as false skips.
+- **Wave skip** — an in-game **Wave Skipped!** upgrade event, stored in `wave_skips` when banner detection rules pass. Used for History skip rows (column **Wave jump**), deletion, and **Skip vs coin/min** analytics. Not every jump is a skip; normal `+1` progression is a jump but not recorded as a skip event.
+- **Display** — when the banner multiplier is known (`×N`), the dashboard may show `×N`; `skipped_count` remains the observed wave increment for analytics and storage.
 
 #### Skip vs coin/min analytics
 
@@ -410,7 +416,8 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 | id              | TEXT PK | UUID                                       |
 | run_id          | TEXT FK |                                            |
 | at_wave         | INTEGER | wave number after the skip                 |
-| skipped_count   | INTEGER | waves jumped (matches wave increment)      |
+| skipped_count   | INTEGER | observed wave increment                    |
+| skip_multiplier | INTEGER | nullable; banner `×N` when OCR parsed it |
 | coin_per_minute | REAL    | nullable; often stale during skip overlay  |
 | recorded_at     | TEXT    | UTC ISO-8601                               |
 
@@ -429,9 +436,9 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 
 ### Live dashboard
 
-- Current run: tier, coin/min, wave, **waves skipped** (most recent skip count this run), run type
+- Current run: tier, coin/min, wave, **wave jump** (most recent increment: `1` normally, or `×N` / larger when a skip was detected), run type
 - Run type badge when `run_type = tournament`
-- Line chart: X = wave, Y = coin/minute (points from snapshots in current run); **wave skips** on a second Y-axis (0–20) when present
+- Line chart: X = wave, Y = coin/minute (points from snapshots in current run); **wave jumps** on a second Y-axis (0–20) when present — `+1` between consecutive snapshots; larger values only with a recorded skip (see [Skips vs jumps](#skips-vs-jumps))
 - Chart screenshot: copy PNG to clipboard or download
 - Status: scanning / paused / game window not found
 - **New Run** and **Resume run** buttons; **Stop** ends scanning (run may stay open for resume)
@@ -452,7 +459,8 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
-- **Wave skips** — dual-axis chart markers; select/delete skip rows separately from snapshots; **Skip vs coin/min** panel (lag correlation and median % change after skips, coin/min > 0.1T only)
+- **Wave jumps (chart)** — dual-axis jump line; `+1` from consecutive snapshots, larger values from recorded skips only
+- **Wave skips (table)** — recorded skip events; column **Wave jump**; select/delete skip rows separately from snapshots; **Skip vs coin/min** panel (lag correlation and median % change after skips, coin/min > 0.1T only)
 - Combine selected runs (strictly increasing waves); delete selected runs; delete individual **outlier snapshots**
 - Export filtered runs to **CSV** (snapshots) or **ODS workbook** (runs + snapshots tables)
 - Chart screenshot copy/download on history charts
@@ -518,7 +526,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - [x] App detects wave increase and writes a snapshot with UTC timestamp
 - [x] Tournament runs stored with `run_type = tournament` and filterable in run history
 - [x] App detects run end via Retry text or wave reset; auto-starts new run at wave 1
-- [x] Dashboard shows live values (tier, coin/min, wave, waves skipped) and coin/min vs wave chart for the current run
+- [x] Dashboard shows live values (tier, coin/min, wave, wave jump) and coin/min vs wave chart for the current run
 - [x] User can browse past runs and open a run's chart
 - [x] User can export runs to CSV and ODS
 - [x] Edge-case game modes (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)

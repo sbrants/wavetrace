@@ -3,15 +3,16 @@ import { api, formatCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "..
 import {
   buildCompareChartDataByProgress,
   buildCompareChartDataByWave,
+  buildWaveJumpMarkers,
   CompareXAxis,
   snapshotsToChartData,
-  waveSkipsToMarkers,
 } from "../chartData";
 import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
 import SortableTh from "./SortableTh";
+import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -549,7 +550,7 @@ export default function History() {
     if (!selected) return;
     if (
       !confirm(
-        `Delete wave skip at wave ${skip.at_wave} (×${skip.skipped_count})?${ongoingRunNote()}`
+        `Delete wave skip at wave ${skip.at_wave} (${formatSkipDisplay(skipDisplayFromRow(skip))})?${ongoingRunNote()}`
       )
     ) {
       return;
@@ -592,7 +593,7 @@ export default function History() {
   };
 
   const chartData = snapshotsToChartData(snapshots);
-  const skipMarkers = waveSkipsToMarkers(waveSkips);
+  const skipMarkers = buildWaveJumpMarkers(snapshots, waveSkips);
 
   const compareChartData =
     compareXAxis === "wave"
@@ -600,7 +601,10 @@ export default function History() {
       : buildCompareChartDataByProgress(compareRunIds, compareSnapshots);
 
   const compareSkipMarkers = compareRunIds.map((id) =>
-    waveSkipsToMarkers(compareWaveSkips[id] ?? [])
+    buildWaveJumpMarkers(
+      compareSnapshots[id] ?? [],
+      compareWaveSkips[id] ?? []
+    )
   );
 
   const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
@@ -1137,7 +1141,7 @@ export default function History() {
                         />
                       </th>
                       <th>Wave</th>
-                      <th>Skipped</th>
+                      <th>Wave jump</th>
                       <th>Coin/min</th>
                       <th>Recorded</th>
                       <th />
@@ -1164,7 +1168,7 @@ export default function History() {
                           />
                         </td>
                         <td>{s.at_wave}</td>
-                        <td>×{s.skipped_count}</td>
+                        <td>{formatSkipDisplay(skipDisplayFromRow(s))}</td>
                         <td>{formatCoin(s.coin_per_minute)}</td>
                         <td>{new Date(s.recorded_at).toLocaleString()}</td>
                         <td

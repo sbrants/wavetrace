@@ -37,6 +37,7 @@ pub struct WaveSkipRow {
     pub id: String,
     pub at_wave: i64,
     pub skipped_count: i64,
+    pub skip_multiplier: Option<i64>,
     pub coin_per_minute: Option<f64>,
     pub recorded_at: String,
 }
@@ -192,6 +193,10 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         );",
     )?;
     let _ = conn.execute("ALTER TABLE runs ADD COLUMN comment TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE wave_skips ADD COLUMN skip_multiplier INTEGER",
+        [],
+    );
     conn.execute(
         "UPDATE runs SET run_type = 'farming' WHERE run_type = 'normal'",
         [],
@@ -288,16 +293,18 @@ pub fn insert_wave_skip(
     run_id: &str,
     at_wave: i64,
     skipped_count: i64,
+    skip_multiplier: Option<i64>,
     coin_per_minute: Option<f64>,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, coin_per_minute, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             Uuid::new_v4().to_string(),
             run_id,
             at_wave,
             skipped_count,
+            skip_multiplier,
             coin_per_minute,
             Utc::now().to_rfc3339()
         ],
@@ -550,13 +557,14 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
             .map_err(|e| CombineRunsError::RunNotFound(e.to_string()))?;
         for skip in skips {
             tx.execute(
-                "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, coin_per_minute, recorded_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO wave_skips (id, run_id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     Uuid::new_v4().to_string(),
                     new_id,
                     skip.at_wave,
                     skip.skipped_count,
+                    skip.skip_multiplier,
                     skip.coin_per_minute,
                     skip.recorded_at,
                 ],
@@ -665,7 +673,7 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
 
 pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, at_wave, skipped_count, coin_per_minute, recorded_at
+        "SELECT id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at
          FROM wave_skips WHERE run_id = ?1 ORDER BY at_wave ASC, recorded_at ASC",
     )?;
     let rows = stmt.query_map(params![run_id], |row| {
@@ -673,8 +681,9 @@ pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<W
             id: row.get(0)?,
             at_wave: row.get(1)?,
             skipped_count: row.get(2)?,
-            coin_per_minute: row.get(3)?,
-            recorded_at: row.get(4)?,
+            skip_multiplier: row.get(3)?,
+            coin_per_minute: row.get(4)?,
+            recorded_at: row.get(5)?,
         })
     })?;
     rows.collect()

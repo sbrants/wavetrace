@@ -24,7 +24,7 @@ Lightweight wins: run ended, target window lost for N minutes, optional “wave 
 
 ### 5. More tracked fields (carefully)
 
-Tier / Wave / Coin-min are the initial set. **Wave skips** shipped in v0.2.22–v0.2.24 (detection, charting, skip/coin analytics). Good next candidates are **stable, OCR-friendly** values:
+Tier / Wave / Coin-min are the initial set. **Wave skips** shipped in v0.2.22–v0.2.24 (detection, charting, skip/coin analytics); **wave jump** chart and dashboard UX in v0.2.25. Good next candidates are **stable, OCR-friendly** values:
 
 - Round / session coins (from end-of-run screen — `end_of_run` is already detected)
 - Cash/min vs coin/min if the UI exposes both reliably

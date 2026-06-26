@@ -234,10 +234,11 @@ installers, macOS DMGs (Apple Silicon + Intel), Linux AppImage, Arch binary, and
 3. Play. Snapshots are written as the wave advances; the run closes on the Retry
    screen or a wave reset.
 4. Press **Stop** when you are done scanning.
-5. **Dashboard** shows live values (including **Waves skipped** for the latest skip
-   in the current run) and the coin/min-vs-wave chart with skip markers on a second axis.
+5. **Dashboard** shows live values (including **Wave jump** — `1` during normal play,
+   or `×N` / a larger number when a skip was detected) and the coin/min-vs-wave chart
+   with a **Wave jump** line on a second axis.
 6. **History** lists past runs with filtering, sorting, CSV/ODS export, chart
-   screenshots, skip selection/deletion, and a **Skip vs coin/min** analytics panel
+   screenshots, recorded-skip selection/deletion, and a **Skip vs coin/min** analytics panel
    per selected run.
 7. **Settings** also includes backup/restore, system tray and notification options,
    the scanner log viewer (Advanced), update checks, and an embedded changelog.
@@ -266,9 +267,14 @@ under that folder (rotates at 20 MiB per file, up to ~200 MiB total).
 - When the game shows a **total coin balance** instead of a `/min` rate, the
   dashboard shows a warning banner and snapshots keep the last known rate
   (see Goal.md "Game mode edge cases").
+- **Skips vs jumps** — every wave advance is a **jump** (usually `1`). A **skip** is the
+  in-game **Wave Skipped!** upgrade; those are stored for History and analytics. The chart
+  plots `+1` jumps between consecutive snapshots; larger jumps only when a skip was
+  recorded (so scanner downtime does not draw false spikes). Details:
+  [Goal.md — Skips vs jumps](Goal.md#skips-vs-jumps).
 - **Wave skips** — when the game shows **Wave Skipped!**, WaveTrace records the
-  jump and plots it on charts. Resume after **Stop** re-syncs from the database
-  so waves played while stopped are not counted as skips.
+  event in the database. Resume after **Stop** re-syncs from the database so waves
+  played while stopped are not counted as skips.
 - Offline skip/coin analysis against your local DB:
   `python scripts/analyze_skip_coin.py` (optional; History has in-app analytics).
   Analysis filters (0.1T floor, 3× ratio cap): [Goal.md — Skip vs coin/min analytics](Goal.md#skip-vs-coinmin-analytics).

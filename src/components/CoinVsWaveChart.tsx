@@ -35,24 +35,28 @@ function createSkipDot(
     payload?: SingleChartRow;
   }) => {
     const { cx, cy, payload } = dotProps;
-    if (cx == null || cy == null || !payload?.skip_id || payload.skip_count <= 0) {
+    if (cx == null || cy == null || !payload || payload.skip_count <= 0) {
       return <g />;
     }
-    const selected = selectedIds.has(payload.skip_id);
+    const skipId = payload.skip_id;
+    const clickable = !!skipId && !!onSkipClick;
+    const selected = skipId ? selectedIds.has(skipId) : false;
     return (
       <g>
-        <circle
-          cx={cx}
-          cy={cy}
-          r={12}
-          fill="transparent"
-          style={{ cursor: onSkipClick ? "pointer" : undefined }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSkipClick?.(payload.skip_id!, payload.wave);
-          }}
-        />
+        {clickable && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={12}
+            fill="transparent"
+            style={{ cursor: "pointer" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSkipClick?.(skipId!, payload.wave);
+            }}
+          />
+        )}
         <circle
           cx={cx}
           cy={cy}
@@ -72,6 +76,7 @@ type SingleChartRow = {
   coin: number | null;
   skip_count: number;
   skip_id: string | null;
+  skip_tooltip: string;
 };
 
 function mergeSingleChartData(
@@ -88,6 +93,7 @@ function mergeSingleChartData(
       coin: coinByWave.get(wave) ?? null,
       skip_count: skip?.skip_count ?? 0,
       skip_id: skip?.id ?? null,
+      skip_tooltip: skip?.skip_tooltip ?? "",
     };
   });
 }
@@ -117,6 +123,7 @@ function mergeCompareWithSkips(
         }
       }
       row[`skip_${i}`] = s.skip_count;
+      row[`skip_tip_${i}`] = s.skip_tooltip;
       byX.set(s.wave, row);
     }
   });
@@ -384,7 +391,7 @@ function SingleRunChart({
             domain={[0, SKIP_AXIS_MAX]}
             tickCount={6}
             label={{
-              value: "Skipped",
+              value: "Wave jump",
               angle: 90,
               position: "insideRight",
               fill: "#8da2c0",
@@ -393,11 +400,14 @@ function SingleRunChart({
           />
         )}
         <Tooltip
-          formatter={(v, name) =>
-            String(name).toLowerCase().includes("skip")
-              ? [`×${v}`, name]
-              : [formatCoin(v as number), name]
-          }
+          formatter={(v, name, item) => {
+            if (String(name).toLowerCase().includes("jump")) {
+              const row = (item as { payload?: SingleChartRow })?.payload;
+              const value = row?.skip_tooltip?.trim() || String(v ?? "");
+              return [value, "Jump"];
+            }
+            return [formatCoin(v as number), name];
+          }}
           labelFormatter={(l) => `Wave ${l}`}
           contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
         />
@@ -419,7 +429,7 @@ function SingleRunChart({
             yAxisId="skip"
             type="monotone"
             dataKey="skip_count"
-            name="Waves skipped"
+            name="Jump"
             stroke={waveSkipColor}
             strokeWidth={1.5}
             isAnimationActive={false}
@@ -560,7 +570,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
             domain={[0, SKIP_AXIS_MAX]}
             tickCount={6}
             label={{
-              value: "Skipped",
+              value: "Wave jump",
               angle: 90,
               position: "insideRight",
               fill: "#8da2c0",
@@ -569,11 +579,22 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           />
         )}
         <Tooltip
-          formatter={(v, name) =>
-            String(name).includes("skipped")
-              ? [`×${v}`, name]
-              : [formatCoin(v as number), name]
-          }
+          formatter={(v, name, item) => {
+            if (String(name).toLowerCase().includes("jump")) {
+              const dataKey = String(
+                (item as { dataKey?: string })?.dataKey ?? ""
+              );
+              const match = /^skip_(\d+)$/.exec(dataKey);
+              const row = (item as { payload?: CompareChartRow })?.payload;
+              const tip =
+                match && row
+                  ? String(row[`skip_tip_${match[1]}`] ?? "")
+                  : "";
+              const value = tip.trim() || String(v ?? "");
+              return [value, name];
+            }
+            return [formatCoin(v as number), name];
+          }}
           labelFormatter={(label, payload) => {
             if (!progress) {
               return `Wave ${label}`;
@@ -605,7 +626,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
                 yAxisId="skip"
                 type="monotone"
                 dataKey={`skip_${i}`}
-                name={`${props.lines[i]?.name ?? `Run ${i + 1}`} skips`}
+                name={`${props.lines[i]?.name ?? `Run ${i + 1}`} jump`}
                 stroke={color}
                 strokeWidth={1.5}
                 dot={false}

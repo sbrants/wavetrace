@@ -17,7 +17,8 @@ export interface LiveState {
   run_active: boolean;
   run_type: "farming" | "tournament" | null;
   total_coin_warning: boolean;
-  last_waves_skipped: number | null;
+  last_skip_multiplier: number | null;
+  last_wave_delta: number | null;
 }
 
 export interface ScannerEvent {
@@ -64,6 +65,7 @@ export interface WaveSkipRow {
   id: string;
   at_wave: number;
   skipped_count: number;
+  skip_multiplier: number | null;
   coin_per_minute: number | null;
   recorded_at: string;
 }

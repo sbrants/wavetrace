@@ -7,7 +7,7 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
 
 - **Keyboard:** Tab order follows visual layout; sortable History columns use real
   buttons with `aria-sort`; `:focus-visible` rings on interactive controls.
-- **Screen readers:** Scanner status, coin warning, update banner, export/backup/saved
+- **Screen readers:** Scanner status, coin-rate header notice, update banner, export/backup/saved
   messages use `role="status"` / `role="alert"` and `aria-live` where content changes.
   Main nav uses `aria-current="page"`.
 - **Forms:** History filters, Settings window/backup controls, and scanner log toolbar
@@ -31,7 +31,7 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
 | Item | Implementation |
 | ---- | -------------- |
 | Focus visibility | Global `:focus-visible` in `src/styles.css` |
-| Live regions | Header scanner status; coin warning `role="alert"`; updater banner |
+| Live regions | Header scanner status; inline coin-rate warning; updater banner |
 | Navigation | `aria-current="page"` on active tab |
 | Tooling | `eslint.config.js` + `eslint-plugin-jsx-a11y` |
 
@@ -69,7 +69,7 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
 
 ## Phase D — Visual & motion (planned)
 
-1. **Contrast pass** — audit `--muted`, warning banner, badge, and chart line colors
+1. **Contrast pass** — audit `--muted`, header coin warning, badge, and chart line colors
    against dark background (target WCAG 2.2 AA for text and UI components).
 2. **`prefers-reduced-motion`** — extend beyond global CSS throttle: disable or shorten
    Recharts animations if any are added later; respect reduced motion for live “pulse”
@@ -85,7 +85,7 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
    core flows, not certified).
 2. **Manual release checklist** (add to maintainer notes or `CONTRIBUTING.md`):
    - Tab through Dashboard, History, Settings without traps
-   - NVDA/VoiceOver: scanner status announces; warning banner reads once
+   - NVDA/VoiceOver: scanner status announces; coin-rate notice on hover/focus
    - Sort columns with keyboard; filters have audible names
    - Save settings / backup status announced
 3. **Regression:** run `npm run lint` in CI when frontend CI exists.

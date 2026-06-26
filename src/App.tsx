@@ -14,7 +14,7 @@ function scannerStatusLabel(
   if (!running) return "Scanner stopped";
   switch (status) {
     case "scanning":
-      return "Scanner scanning";
+      return "scanning";
     case "starting":
       return "Scanner starting";
     case "window_not_found":
@@ -92,6 +92,16 @@ export default function App() {
             </button>
           ))}
         </nav>
+        {warning && (
+          <span
+            className="header-coin-warning"
+            role="status"
+            aria-live="polite"
+            title="The game is showing total coins, not coins/min. Snapshots keep the last known rate until /min returns."
+          >
+            Coin rate unavailable
+          </span>
+        )}
         <div className="header-right">
           <span
             className={`status status-${scannerEvent?.status ?? "stopped"}`}
@@ -158,13 +168,6 @@ export default function App() {
       </header>
 
       <AppUpdater autoCheck variant="banner" />
-
-      {warning && (
-        <div className="warning-banner" role="alert">
-          Coin rate unavailable — the game is showing total coins, not
-          coins/min. Snapshots keep the last known rate until /min returns.
-        </div>
-      )}
 
       <main>
         {tab === "dashboard" && <Dashboard event={scannerEvent} />}

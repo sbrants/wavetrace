@@ -202,12 +202,15 @@ button.danger:disabled {
   text-align: center;
 }
 
-.warning-banner {
-  background: var(--warning-bg);
-  border-bottom: 2px solid var(--warning-border);
+.header-coin-warning {
+  font-size: 12px;
   color: #ffd97a;
-  padding: 10px 20px;
-  font-size: 14px;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 main {
@@ -256,6 +259,12 @@ main {
 .stat-hint {
   font-size: 11px;
   color: #e8b339;
+  line-height: 1.2;
+  min-height: 1.2em;
+}
+
+.stat-hint-empty {
+  visibility: hidden;
 }
 
 .toolbar {

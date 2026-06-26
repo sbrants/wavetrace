@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatCoin, ScannerEvent, SnapshotRow, WaveSkipRow } from "../api";
-import { snapshotsToChartData, waveSkipsToMarkers } from "../chartData";
+import { snapshotsToChartData, buildWaveJumpMarkers } from "../chartData";
+import {
+  formatSkipLiveStat,
+} from "../skipDisplay";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 
@@ -28,7 +31,13 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   }, [event?.current_run_id]);
 
   const chartData = snapshotsToChartData(snapshots);
-  const skipMarkers = waveSkipsToMarkers(waveSkips);
+  const skipMarkers = buildWaveJumpMarkers(snapshots, waveSkips);
+  const lastSkipDisplay =
+    live?.last_wave_delta != null
+      ? live.last_skip_multiplier != null
+        ? ({ kind: "multiplier", value: live.last_skip_multiplier } as const)
+        : ({ kind: "delta", value: live.last_wave_delta } as const)
+      : null;
 
   return (
     <div className="dashboard">
@@ -40,10 +49,14 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           value={formatCoin(live?.coin_per_minute ?? null)}
           dimmed={live?.total_coin_warning ?? false}
           hint={live?.total_coin_warning ? "last known" : undefined}
+          hintReserved
         />
         <StatCard
-          label="Waves skipped"
-          value={live?.last_waves_skipped?.toString() ?? "—"}
+          label="Wave jump"
+          value={
+            lastSkipDisplay ? formatSkipLiveStat(lastSkipDisplay) : "—"
+          }
+          hintReserved
         />
         <StatCard
           label="Run"
@@ -95,19 +108,31 @@ function StatCard({
   value,
   dimmed,
   hint,
+  hintReserved,
   badge,
 }: {
   label: string;
   value: string;
   dimmed?: boolean;
   hint?: string;
+  /** Keep hint row height when hint is absent (avoids layout shift). */
+  hintReserved?: boolean;
   badge?: boolean;
 }) {
+  const showHintRow = hintReserved || hint;
+
   return (
     <div className={`stat-card ${badge ? "stat-badge" : ""}`}>
       <span className="stat-label">{label}</span>
       <span className={`stat-value ${dimmed ? "dimmed" : ""}`}>{value}</span>
-      {hint && <span className="stat-hint">{hint}</span>}
+      {showHintRow && (
+        <span
+          className={`stat-hint ${hint ? "" : "stat-hint-empty"}`}
+          aria-hidden={!hint}
+        >
+          {hint ?? (hintReserved ? "\u00a0" : "last known")}
+        </span>
+      )}
     </div>
   );
 }

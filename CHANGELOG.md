@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.25] — 2026-06-13
+
+### Added
+
+- **Wave jump UX** — dashboard **Wave jump** stat shows `1` during normal play or `×N` / a larger value when a skip was detected; chart second axis and tooltips use **Wave jump** / **Jump** labels
+- **Chart normal jumps** — plots `+1` between consecutive snapshots; larger values only when a recorded skip exists at that wave
+- **`skip_multiplier` column** — stores banner `×N` separately from observed wave increment (`skipped_count`) for display vs analytics
+- **`skipDisplay.ts`** — shared formatting for dashboard, chart, and History
+- **Docs — skips vs jumps** — [Goal.md](Goal.md#skips-vs-jumps) and README explain wave jump vs wave skip
+
+### Changed
+
+- **Coin-rate warning** — compact header pill instead of a full-width banner (no layout shift); stat cards reserve hint row height for **last known** on Coin/min
+- **History** — skip table column **Wave jump** shows plain numbers (banner multiplier when stored)
+
+### Fixed
+
+- **Capture gaps** — chart no longer plots false multi-wave jumps after scanner downtime or missed OCR
+
+---
+
 ## [0.2.24] — 2026-06-26
 
 ### Added
