@@ -410,7 +410,7 @@ fn is_plausible_balance_fragment(fragment: &str, full_line: &str) -> bool {
         }
         return true;
     }
-    if has_coin_icon_prefix(full_line) && matches!(suffix.as_str(), "T" | "q" | "Q") {
+    if has_coin_icon_prefix(full_line) && matches!(suffix.as_str(), "q" | "Q") {
         return true;
     }
     false
@@ -516,9 +516,6 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
 pub fn parse_coin_anchor_crop(raw: &str) -> CoinReading {
     if is_wave_progress_line(raw) || is_spawn_rate_line(raw) {
         return CoinReading::Unreadable;
-    }
-    if let Some(balance) = try_parse_balance_line(raw) {
-        return balance;
     }
     if let reading @ CoinReading::Rate(_) = parse_coin_crop_rate(raw) {
         return reading;

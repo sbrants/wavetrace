@@ -83,12 +83,12 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
 
 1. **`Goal.md` “Accessibility”** section — link here; state target (pragmatic AA for
    core flows, not certified).
-2. **Manual release checklist** (add to maintainer notes or `CONTRIBUTING.md`):
+2. **Manual release checklist** (see [CONTRIBUTING.md](../CONTRIBUTING.md#release--maintainer-notes) and below):
    - Tab through Dashboard, History, Settings without traps
    - NVDA/VoiceOver: scanner status announces; coin-rate notice on hover/focus
    - Sort columns with keyboard; filters have audible names
    - Save settings / backup status announced
-3. **Regression:** run `npm run lint` in CI when frontend CI exists.
+3. **Regression:** `npm run lint` runs in [CI](.github/workflows/ci.yml) on every pull request.
 4. **User feedback** channel for a11y issues (GitHub label `accessibility`).
 
 ---

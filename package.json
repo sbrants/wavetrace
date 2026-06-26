@@ -2,6 +2,7 @@
   "name": "wavetrace",
   "private": true,
   "version": "0.2.25",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

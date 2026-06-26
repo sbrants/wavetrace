@@ -3,6 +3,7 @@ name = "wavetrace"
 version = "0.2.25"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "wavetrace_lib"

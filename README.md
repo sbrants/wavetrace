@@ -13,6 +13,10 @@ current and past runs.
 Full product spec: [Goal.md](Goal.md). OCR regression corpus:
 [`fixtures/captured/manifest.json`](fixtures/captured/manifest.json).
 
+## Known issues
+
+- **macOS (GitHub Releases)** — Current macOS DMGs (Apple Silicon and Intel) are **broken** in recent releases: the app may fail to launch or scanning may not work reliably. Prefer **Windows** or **Linux** until a fix ships. Tracked in [#4](https://github.com/sbrants/wavetrace/issues/4).
+
 ## Stack
 
 - **Tauri 2** — Rust native shell + embedded webview
@@ -35,6 +39,10 @@ npm run tauri dev
 ```
 
 Debug builds use an **orange-bordered** taskbar/tray icon and window title **WaveTrace (Dev)** so they are easy to tell apart from release installs.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and pull request guidelines. By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). The project is licensed under the [MIT License](LICENSE). Security reports: [SECURITY.md](SECURITY.md).
 
 ## Test
 
@@ -78,10 +86,10 @@ Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
 
 | Channel | How to get it | Updates |
 | ------- | ------------- | ------- |
-| **GitHub Releases** | Download the NSIS `.exe` (Windows), `.dmg` (macOS Apple Silicon or Intel), or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases) | In-app updater on Windows, macOS & Linux (GitHub `latest.json`) |
+| **GitHub Releases** | Download the NSIS `.exe` (Windows) or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases). macOS `.dmg` files are published but **currently broken** — see [#4](https://github.com/sbrants/wavetrace/issues/4). | In-app updater on Windows & Linux (GitHub `latest.json`); macOS updater disabled until fixed |
 | **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) | Microsoft Store (Settings explains this; no GitHub in-app updater) |
 | **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
-| **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew | Rebuild from source or download DMG from Releases |
+| **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew — **broken in releases**; local builds may help debug | Rebuild from source; do not rely on Release DMGs until fixed |
 
 WaveTrace is local-only: no account, no cloud sync. See [PRIVACY.md](PRIVACY.md).
 
@@ -161,7 +169,9 @@ Local signed Windows builds can set `TAURI_SIGNING_PRIVATE_KEY_PATH` in
 
 ## macOS
 
-WaveTrace on macOS uses Tesseract OCR (same path as Linux). CI builds **two DMGs** per
+> **Known issue:** GitHub Release DMGs (Apple Silicon and Intel) are **currently broken** — launch failures and unreliable capture/OCR have been reported. Use Windows or Linux for production play. Tracked in [#4](https://github.com/sbrants/wavetrace/issues/4).
+
+WaveTrace on macOS uses Tesseract OCR (same path as Linux). CI still builds **two DMGs** per
 release: `WaveTrace_<version>_macos_aarch64.dmg` (Apple Silicon) and
 `WaveTrace_<version>_macos_x86_64.dmg` (Intel).
 

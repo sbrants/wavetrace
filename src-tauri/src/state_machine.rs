@@ -214,7 +214,10 @@ impl DebouncedCoinRate {
 
     /// Latest rate for the dashboard; holds the last parseable reading between polls.
     fn display(&self) -> Option<f64> {
-        self.confirmed.or(self.candidate)
+        match (self.confirmed, self.candidate) {
+            (Some(c), Some(cand)) if self.is_outlier(cand) => Some(c),
+            (confirmed, candidate) => confirmed.or(candidate),
+        }
     }
 }
 
@@ -584,9 +587,11 @@ impl RunStateMachine {
 
         match input.coin {
             CoinReading::Rate(v) => {
-                self.last_seen_coin = Some(v);
                 if let Some(confirmed) = self.coin_rate.feed(Some(v)) {
                     self.last_coin_rate = Some(confirmed);
+                }
+                if let Some(d) = self.coin_rate.display() {
+                    self.last_seen_coin = Some(d);
                 }
                 self.consecutive_total_coin_polls = 0;
             }
@@ -681,7 +686,8 @@ impl RunStateMachine {
                                 RunType::Farming
                             };
                             actions.push(Action::StartRun { run_type });
-                            self.reset_coin_tracking();
+                            // Keep debounced coin rate — polls toward wave 1 already
+                            // established the current /min for snapshots.
                             self.run = Some(new_active_run(run_type));
                         }
                     }

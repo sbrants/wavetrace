@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.25):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24; **wave jump** display and chart UX in v0.2.25. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.25):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** DMGs and in-app updater shipped in v0.2.9/v0.2.11 but **recent macOS releases are currently broken** — tracked in [#4](https://github.com/sbrants/wavetrace/issues/4). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are shipped on Windows/Linux. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24; **wave jump** display and chart UX in v0.2.25. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -18,7 +18,7 @@
 | ----- | --------------------- | ------------------------------------------------------------ | ------ |
 | 1     | Windows 10+           | Emulator or game window                                      | **Shipped** (v0.1.0+) |
 | 1b    | Linux                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.1.2+) |
-| 1b    | macOS                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.2.9+) |
+| 1b    | macOS                 | Same as Phase 1 (Tesseract OCR)                              | **Broken** (releases; fix in progress) |
 | 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done**    | Partial |
 | 3+    | Android, iOS          | Direct app capture (separate implementation)                 | Future |
 
@@ -29,7 +29,7 @@
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
-| macOS (GitHub) | `.dmg` (arm64 + x86_64) | In-app updater (`latest.json`) | **Shipped** (v0.2.11+) |
+| macOS (GitHub) | `.dmg` (arm64 + x86_64) | In-app updater (`latest.json`) | **Broken** (v0.2.9+ builds regressing) |
 | Arch | `PKGBUILD` / binary | Package manager | **Shipped** (maintainer-built) |
 | Linux | AppImage | In-app updater (AppImage) | **Shipped** (CI) |
 

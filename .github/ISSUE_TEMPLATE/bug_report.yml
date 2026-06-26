@@ -1,0 +1,72 @@
+name: Bug report
+description: Something is broken or behaves incorrectly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please search [existing issues](https://github.com/sbrants/wavetrace/issues) first.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows 10/11
+        - macOS
+        - Linux (AppImage)
+        - Arch Linux (package)
+        - Microsoft Store
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: WaveTrace version
+      description: Settings → About, or the release tag you installed
+      placeholder: e.g. 0.2.25
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open WaveTrace and select window …
+        2. Start a run …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Scanner log excerpt (Settings → Advanced) or a screenshot of the game + WaveTrace UI
+      render: shell
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I am using a [supported platform](https://github.com/sbrants/wavetrace/blob/main/README.md) and a recent release
+          required: true
