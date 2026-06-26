@@ -1,0 +1,63 @@
+# Re-build and upload the Arch binary when the release job failed on flaky pacman mirrors.
+# Uses the workflow file from main; checks out the tagged release sources.
+name: Arch binary retry
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the binary to (e.g. v0.2.24)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  arch-binary:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install Arch build dependencies
+        run: |
+          packages=(
+            base-devel git nodejs npm rust patchelf
+            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3
+            tesseract tesseract-data-eng openssl pkgconf
+            pipewire libpipewire clang
+          )
+          for attempt in 1 2 3 4 5; do
+            if pacman -Syu --noconfirm "${packages[@]}"; then
+              exit 0
+            fi
+            echo "pacman attempt $attempt failed, syncing DB and retrying in 30s..."
+            pacman -Syy --noconfirm || true
+            sleep 30
+          done
+          exit 1
+
+      - name: Build Arch binary
+        env:
+          CARGO_NET_RETRY: 10
+        run: |
+          npm ci
+          for attempt in 1 2 3; do
+            npm run tauri build -- --config src-tauri/tauri.arch.ci.conf.json --bundles deb && exit 0
+            echo "Build attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
+          exit 1
+
+      - name: Upload Arch binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: src-tauri/target/release/wavetrace
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
