@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 *.log
 .env.signing
+scripts/skip_coin_analysis.json
 
 # Microsoft Store MSIX staging/output
 microsoft-store/staging/
