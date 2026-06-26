@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.11):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.23):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** (Apple Silicon + Intel DMGs + in-app updater) shipped in v0.2.9/v0.2.11. Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are also shipped. **Wave skip** detection, charting, History analytics, and resume catch-up shipped in v0.2.22–v0.2.23. See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -25,7 +25,7 @@
 ### Distribution
 
 
-| Channel | Windows artifact | Updates | Status (v0.2.9) |
+| Channel | Windows artifact | Updates | Status (v0.2.23) |
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
@@ -131,7 +131,10 @@ flowchart LR
 | Coin/Minute | `456/min`, `1.23K/min`, `85.8T/min` | REAL (normalized base units/min) |
 | Wave        | `Wave 4321`                         | INTEGER                          |
 | Tier        | `Tier 12`                           | INTEGER                          |
+| Wave skip   | `Wave Skipped!` (optional `×N`, N=2–20) | INTEGER (waves skipped per event) |
 
+
+When the in-game **Wave Skipped!** banner appears, the scanner records a **wave skip** event (`skipped_count` = wave increment, gated by banner rules for single-wave skips). See [Wave skips](#wave-skips).
 
 ---
 
@@ -332,6 +335,32 @@ For suffixes beyond `ac`, continue the pattern: each subsequent two-letter suffi
 - Require **2 consecutive poll cycles** with the same parsed value before accepting a wave or tier change
 - Ignore transient OCR misreads (e.g. 4321 → 432 → 4322): only accept monotonic wave +1
 
+### Wave skips
+
+The game can skip waves (upgrade). The scanner detects the **Wave Skipped!** overlay and records how many waves were jumped.
+
+#### Detection
+
+- **Parser** — OCR lines matching the skip banner (tolerates typos and partial text, e.g. `Wave Sk`, `ave Skipped!`). Optional `×N` on the banner where **N = 2–20** (the game never shows `×1`; a lone banner means one skip).
+- **Multi-wave jump** (`new_wave - prev_wave ≥ 2`) — recorded as a skip when **N matches** the banner multiplier, or with no banner (wave delta is authoritative).
+- **Single-wave jump** (`+1`) — recorded only when a skip banner was seen recently (latched across polls); avoids counting normal wave progression.
+- **Resume catch-up** — after **Resume run**, the first unbannered multi-wave jump is ignored (game advanced while the scanner was stopped).
+- **Skip count** — always equals the observed **wave increment** (not a running total). Banner `×N` must match the jump when a multiplier is shown; a lone banner pairs only with `+1`.
+- **Intro Sprint** — upgrades skip **10 waves** at a time; `C 0/min` often sits between the banner and `x10` on screen. Parser scans several lines below the banner for `xN`. Multi-wave jumps trust the wave increment even when the banner multiplier is missing or OCR'd as x9 instead of x10. Fast skips use the lowest wave seen while debouncing if wave 1 never confirms before the jump.
+
+#### Storage
+
+Each skip stores: `run_id`, `at_wave` (wave after the skip), `skipped_count`, `coin_per_minute` at detection (may be `null` or stale during the overlay), `recorded_at`.
+
+#### Skip vs coin/min analytics
+
+History (and `scripts/analyze_skip_coin.py`) compare coin/min at lagged waves around each skip — e.g. median % change at wave `at_wave + 2` vs the wave before the skip.
+
+**Filters (not game rules):**
+
+- **Coin/min &gt; 0.1T** — ignore near-zero OCR reads.
+- **Ratio cap 3×** — when computing % change between two waves, drop pairs whose ratio is outside **[⅓, 3]**. Single-frame OCR spikes (common during the skip overlay or on misreads) can look like huge jumps; farming coin/min does not realistically triple or third in one wave. Without the cap, a few bad frames would dominate medians and correlation. Implementation: `src/skipCoinAnalysis.ts` (`MAX_RATIO`).
+
 ### Retry detection
 
 - Search for the text `"Retry"` in the captured window via OCR
@@ -373,6 +402,19 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 | recorded_at     | TEXT    | UTC ISO-8601              |
 
 
+### wave_skips
+
+
+| column          | type    | notes                                      |
+| --------------- | ------- | ------------------------------------------ |
+| id              | TEXT PK | UUID                                       |
+| run_id          | TEXT FK |                                            |
+| at_wave         | INTEGER | wave number after the skip                 |
+| skipped_count   | INTEGER | waves jumped (matches wave increment)      |
+| coin_per_minute | REAL    | nullable; often stale during skip overlay  |
+| recorded_at     | TEXT    | UTC ISO-8601                               |
+
+
 ### settings
 
 
@@ -387,9 +429,9 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 
 ### Live dashboard
 
-- Current run: tier, coin/min, wave (live-updating)
+- Current run: tier, coin/min, wave, **waves skipped** (most recent skip count this run), run type
 - Run type badge when `run_type = tournament`
-- Line chart: X = wave, Y = coin/minute (points from snapshots in current run)
+- Line chart: X = wave, Y = coin/minute (points from snapshots in current run); **wave skips** on a second Y-axis (0–20) when present
 - Chart screenshot: copy PNG to clipboard or download
 - Status: scanning / paused / game window not found
 - **New Run** and **Resume run** buttons; **Stop** ends scanning (run may stay open for resume)
@@ -410,6 +452,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
+- **Wave skips** — dual-axis chart markers; select/delete skip rows separately from snapshots; **Skip vs coin/min** panel (lag correlation and median % change after skips, coin/min &gt; 0.1T only)
 - Combine selected runs (strictly increasing waves); delete selected runs; delete individual **outlier snapshots**
 - Export filtered runs to **CSV** (snapshots) or **ODS workbook** (runs + snapshots tables)
 - Chart screenshot copy/download on history charts
@@ -419,7 +462,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Select target window (window picker); auto-preselect a window whose title contains `"The Tower"` when none is saved yet
 - Preview captured window
 - **Probe OCR** — full-frame OCR on live capture (tier, wave, coin/min, raw lines)
-- **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail `{app_data}/logs/scanner.log`, capped at 2 MiB)
+- **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail active `scanner.log`, last N lines capped at 2 MiB from EOF)
 - **Background** — minimize to tray on window close; desktop notifications (run ended, window lost, optional wave milestones); **Exit** in the header when tray mode is on
 - **Backup & restore** — export/import full local database as a zip (`manifest.json` + `wavetrace.db`); safety copy before restore
 - **Check for updates** — GitHub/direct-download builds only (`latest.json`; Windows NSIS, macOS, Linux AppImage). Microsoft Store builds show Store update guidance (`VITE_STORE_DISTRIBUTION`)
@@ -435,6 +478,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - No network required for MVP
 - App data stored in OS-standard app data directory
 - Logs written to `{app_data}/logs/` for debugging OCR failures
+- **Scanner log rotation:** when `scanner.log` exceeds **20 MiB**, it rotates to `scanner.log.1` … `scanner.log.9` (~**200 MiB** total on disk). The in-app log viewer tails the active `scanner.log` only.
 
 ---
 
@@ -458,7 +502,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 - Background capture when game is occluded (stretch; document per-OS limits) — **not started**
 
-**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3+), system tray + notifications (v0.2.6+), local backup/restore (v0.2.7+)
+**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3+), system tray + notifications (v0.2.6+), local backup/restore (v0.2.7+), **wave skip tracking + History skip analytics** (v0.2.22+)
 
 ### Phase 3 — future
 
@@ -474,11 +518,12 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - [x] App detects wave increase and writes a snapshot with UTC timestamp
 - [x] Tournament runs stored with `run_type = tournament` and filterable in run history
 - [x] App detects run end via Retry text or wave reset; auto-starts new run at wave 1
-- [x] Dashboard shows live values and coin/min vs wave chart for the current run
+- [x] Dashboard shows live values (tier, coin/min, wave, waves skipped) and coin/min vs wave chart for the current run
 - [x] User can browse past runs and open a run's chart
 - [x] User can export runs to CSV and ODS
 - [x] Edge-case game modes (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
 - [x] Live dashboard shows a warning banner when `game_mode = total_coin`
+- [x] Wave skips detected, charted, and editable in History (v0.2.22+)
 - [x] Works on Windows 10+
 - [x] Works on Linux (Tesseract OCR; Phase 1b)
 - [x] macOS build (Phase 1b; v0.2.9 — DMG, Tesseract, screen capture permission)

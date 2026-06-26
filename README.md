@@ -2,7 +2,8 @@
 
 Desktop companion for the idle game **The Tower**. It watches the game
 window, OCRs Tier / Wave / Coin-per-minute, records a snapshot every time the
-wave advances, and charts coin/min against wave for the current and past runs.
+wave advances, detects **wave skips**, and charts coin/min against wave for the
+current and past runs.
 
 **Repository:** https://github.com/sbrants/wavetrace  
 **Releases:** https://github.com/sbrants/wavetrace/releases  
@@ -32,6 +33,8 @@ Full product spec: [Goal.md](Goal.md). OCR regression corpus:
 npm install
 npm run tauri dev
 ```
+
+Debug builds use an **orange-bordered** taskbar/tray icon and window title **WaveTrace (Dev)** so they are easy to tell apart from release installs.
 
 ## Test
 
@@ -208,7 +211,7 @@ cd packaging/arch
 makepkg -si
 ```
 
-Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.9`), or edit
+Requires a git tag matching `pkgver` in `PKGBUILD` (currently `v0.2.23`), or edit
 `PKGBUILD` to point at your branch/commit.
 
 ### Runtime dependencies (Arch)
@@ -231,10 +234,12 @@ installers, macOS DMGs (Apple Silicon + Intel), Linux AppImage, Arch binary, and
 3. Play. Snapshots are written as the wave advances; the run closes on the Retry
    screen or a wave reset.
 4. Press **Stop** when you are done scanning.
-5. **Dashboard** shows live values and the coin/min-vs-wave chart.
-   **History** lists past runs with filtering, sorting, CSV/ODS export, and chart
-   screenshots.
-6. **Settings** also includes backup/restore, system tray and notification options,
+5. **Dashboard** shows live values (including **Waves skipped** for the latest skip
+   in the current run) and the coin/min-vs-wave chart with skip markers on a second axis.
+6. **History** lists past runs with filtering, sorting, CSV/ODS export, chart
+   screenshots, skip selection/deletion, and a **Skip vs coin/min** analytics panel
+   per selected run.
+7. **Settings** also includes backup/restore, system tray and notification options,
    the scanner log viewer (Advanced), update checks, and an embedded changelog.
 
 ### System tray (optional)
@@ -246,13 +251,13 @@ window hides WaveTrace while scanning can continue. Use **Exit** in the header (
 ### Backup & restore
 
 Settings → **Backup & restore** exports your full local database (runs, snapshots,
-settings) as a zip. Stop the scanner first. Restore replaces the database and keeps
+wave skips, settings) as a zip. Stop the scanner first. Restore replaces the database and keeps
 a safety copy of the previous file under `%APPDATA%\wavetrace\backups\`.
 
 Data lives in `%APPDATA%/wavetrace/wavetrace.db` on Windows (migrates from
 `wavewatch/` or `towerrun/` on first launch), `~/Library/Application Support/wavetrace/`
 on macOS, or the XDG data dir on Linux; scanner diagnostics in `logs/scanner.log`
-under that folder.
+under that folder (rotates at 20 MiB per file, up to ~200 MiB total).
 
 ## Notes
 
@@ -261,5 +266,12 @@ under that folder.
 - When the game shows a **total coin balance** instead of a `/min` rate, the
   dashboard shows a warning banner and snapshots keep the last known rate
   (see Goal.md "Game mode edge cases").
+- **Wave skips** — when the game shows **Wave Skipped!**, WaveTrace records the
+  jump and plots it on charts. Resume after **Stop** re-syncs from the database
+  so waves played while stopped are not counted as skips.
+- Offline skip/coin analysis against your local DB:
+  `python scripts/analyze_skip_coin.py` (optional; History has in-app analytics).
+  Analysis filters (0.1T floor, 3× ratio cap): [Goal.md — Skip vs coin/min analytics](Goal.md#skip-vs-coinmin-analytics).
+  Uses `wavetrace.db` under `%APPDATA%\wavetrace\` (legacy `towerrun.db` if present).
 - Keep the project on a local drive: `node_modules/` and `target/` do not
   survive Google Drive's virtual filesystem.

@@ -8,6 +8,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, RunEvent, WindowEvent,
 };
+use crate::app_icon;
 use crate::commands::AppState;
 use crate::scanner::ScanStartMode;
 use crate::settings;
@@ -48,10 +49,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
 
-    let icon = app
-        .default_window_icon()
-        .ok_or("missing default window icon")?
-        .clone();
+    let icon = app_icon::load_icon(app);
 
     let allow_exit = Arc::new(AtomicBool::new(false));
 
@@ -59,7 +57,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("WaveTrace — stopped")
+        .tooltip(&format!("{}WaveTrace — stopped", app_icon::tooltip_prefix()))
         .on_menu_event(move |app, event| {
             on_menu_event(app, event.id.as_ref());
         })
@@ -140,11 +138,12 @@ pub fn update_scanner_ui(app: &AppHandle, status: &str, live: &LiveState) {
         .unwrap_or(false);
 
     let wave = live.wave.map(|w| w.to_string()).unwrap_or_else(|| "—".into());
+    let prefix = app_icon::tooltip_prefix();
     let tooltip = match status {
-        "scanning" => format!("WaveTrace — scanning (wave {wave})"),
-        "window_not_found" => "WaveTrace — game window not found".to_string(),
-        "starting" => "WaveTrace — starting…".to_string(),
-        _ => "WaveTrace — stopped".to_string(),
+        "scanning" => format!("{prefix}WaveTrace — scanning (wave {wave})"),
+        "window_not_found" => format!("{prefix}WaveTrace — game window not found"),
+        "starting" => format!("{prefix}WaveTrace — starting…"),
+        _ => format!("{prefix}WaveTrace — stopped"),
     };
     let _ = tray.tray.set_tooltip(Some(&tooltip));
 

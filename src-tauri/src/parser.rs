@@ -675,12 +675,17 @@ pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {
     let Some(idx) = banner_idx else {
         return WaveSkipOverlay::default();
     };
-    if idx + 1 < lowered.len() {
-        let next = &lowered[idx + 1];
-        // Only treat the line after the banner as a multiplier when it is a bare `xN`
-        // (game layout). Ignore upgrade rows like "Enemy Attack Level Skip x4".
-        if is_standalone_skip_multiplier_line(next) {
-            if let Some(c) = extract_skip_multiplier_from_banner(next) {
+    // Multiplier may be on the next line or a few lines below (e.g. `C 0/min` during Intro Sprint).
+    for offset in 1..=4usize {
+        if idx + offset >= lowered.len() {
+            break;
+        }
+        let line = lowered[idx + offset].trim();
+        if line.contains("/min") || line.contains('@') {
+            continue;
+        }
+        if is_standalone_skip_multiplier_line(line) {
+            if let Some(c) = extract_skip_multiplier_from_banner(line) {
                 return WaveSkipOverlay {
                     seen: true,
                     multiplier: Some(c),
@@ -713,6 +718,9 @@ fn is_wave_skip_banner_line(lower: &str) -> bool {
         return true;
     }
     if lower.contains("wav") && lower.contains("skipped") {
+        return true;
+    }
+    if lower.contains("wav") && lower.contains("skived") {
         return true;
     }
     if lower.contains("wav") && lower.contains("skip") && lower.contains('!') {
@@ -1166,6 +1174,47 @@ mod tests {
         );
         assert!(
             !is_wave_skip_banner_line("Enemy Attack Level Skip")
+        );
+    }
+
+    #[test]
+    fn wave_skip_multiplier_after_zero_min_line() {
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&[
+                "Wave Skipped!",
+                "C 0/min",
+                "x10",
+                "Intro Sprint",
+            ])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(10),
+            }
+        );
+    }
+
+    #[test]
+    fn wave_skip_ocr_typos_from_live_logs() {
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skived", "Tier 15", "Wave 40"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: None,
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&["Wave Skippe4! x9", "$1.07M"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(9),
+            }
+        );
+        assert_eq!(
+            parse_wave_skip_overlay(&s(&[", ave Skipped! x9", "Tier 15", "Wave 100"])),
+            WaveSkipOverlay {
+                seen: true,
+                multiplier: Some(9),
+            }
         );
     }
 

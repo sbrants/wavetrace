@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Skip vs coin/min analytics** — History panel: Pearson correlation by lag, median % change after skips, breakdown by skip size (coin/min &gt; 0.1T)
+- **Offline analysis script** — `scripts/analyze_skip_coin.py` against `%APPDATA%\wavetrace\wavetrace.db`
+
+### Fixed
+
+- **Intro Sprint wave skips** — trust multi-wave jumps when banner `xN` is missing or OCR'd ±1 off (e.g. x9 vs +10); fast debounce baseline; more banner typos (`Wave Skived`, etc.)
+- **Dev builds** — orange-bordered taskbar/tray icon and **WaveTrace (Dev)** window title
+
+---
+
+## [0.2.23] — 2026-06-13
+
+### Added
+
+- **Dashboard** — live **Waves skipped** stat (most recent skip count in the current run)
+- **Scanner log rotation** — rotate `scanner.log` at 20 MiB; keep `scanner.log` + `.1`…`.9` (~200 MiB on disk)
+
+### Fixed
+
+- **Wave skip detection** — correlate `skipped_count` to actual wave increment; banner `×N` must match multi-wave jumps; lone banner only with `+1`
+- **Resume false skips** — catch-up grace after resume; always re-sync wave from DB on resume so waves played while stopped are not counted as skips
+- **CI** — retry Arch release build on flaky `crates.io` downloads (`CARGO_NET_RETRY`, up to 3 attempts)
+
 ---
 
 ## [0.2.22] — 2026-06-22

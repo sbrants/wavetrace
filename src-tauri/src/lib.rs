@@ -1,3 +1,4 @@
+pub mod app_icon;
 pub mod backup;
 pub mod capture;
 pub mod classify;
@@ -34,6 +35,7 @@ pub fn run() {
         })
         .setup(|app| {
             tray::setup(app)?;
+            app_icon::apply_branding(app)?;
             if let Some(notify) = app.try_state::<NotifyState>() {
                 notify.ensure_permission(app.handle());
             }

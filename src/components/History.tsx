@@ -10,6 +10,7 @@ import {
 import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
+import SkipCoinAnalytics from "./SkipCoinAnalytics";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -958,6 +959,10 @@ export default function History() {
               onSelectWaves={selectSnapshotWaves}
             />
           </div>
+
+          {waveSkips.length > 0 && (
+            <SkipCoinAnalytics snapshots={snapshots} waveSkips={waveSkips} />
+          )}
 
           <div className="snapshot-panel">
             <div className="snapshot-panel-header">
