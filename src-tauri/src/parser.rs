@@ -892,7 +892,7 @@ mod tests {
     // Raw values from reference fixture screenshots (see Goal.md).
     #[test]
     fn coin_values_from_fixtures() {
-        // Coin_per_minute.png, intro_sprint.png
+        // intro_sprint-style OCR lines
         assert_eq!(parse_coin_line("0/min"), CoinReading::Rate(0.0));
         // expected_state_full_game.png (3.48T/min -> 3480000000000)
         assert_eq!(parse_coin_line("3.48T/min"), CoinReading::Rate(3.48e12));
@@ -1057,7 +1057,7 @@ mod tests {
     #[test]
     fn wave_parsing() {
         assert_eq!(parse_wave("Wave 4321"), Some(4321));
-        assert_eq!(parse_wave("Wave 10"), Some(10)); // Wave_and_Tier.png
+        assert_eq!(parse_wave("Wave 10"), Some(10));
         assert_eq!(parse_wave("Wave 650"), Some(650)); // intro_sprint.png
         assert_eq!(parse_wave("wave 865"), Some(865)); // tournament.png
         assert_eq!(parse_wave("4321"), Some(4321));
@@ -1230,7 +1230,7 @@ mod tests {
     fn tier_parsing() {
         assert_eq!(parse_tier("Tier 12"), Some((12, false)));
         assert_eq!(parse_tier("| Tier 12 160.52T"), Some((12, false)));
-        assert_eq!(parse_tier("Tier 14"), Some((14, false))); // Wave_and_Tier.png
+        assert_eq!(parse_tier("Tier 14"), Some((14, false)));
                                                               // tournament.png: "Tier 17+" -> 17, tournament
         assert_eq!(parse_tier("Tier 17+"), Some((17, true)));
         assert_eq!(parse_tier("17+"), Some((17, true)));

@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- Legacy fixture PNGs not in `fixtures/reference.json` (`Coin_per_minute.png`, `Wave_and_Tier.png`, `coin_per_minute_location.png`)
+- Unused root `app-icon.png` and `assets/wavetrace-icon-*.png` (icons live under `src-tauri/icons/`)
+
 ### Added
 
 - **Contributor docs** — MIT [LICENSE](LICENSE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), issue/PR templates, PR CI workflow, Dependabot
