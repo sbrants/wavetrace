@@ -179,8 +179,11 @@ export default function SettingsPage() {
       <section>
         <h3>Target window</h3>
         <div className="row">
-          <select
-            value={settings.target_window?.title_substring ?? ""}
+          <label htmlFor="target-window-select">
+            Game window
+            <select
+              id="target-window-select"
+              value={settings.target_window?.title_substring ?? ""}
             onChange={(e) =>
               setSettings({
                 ...settings,
@@ -197,6 +200,7 @@ export default function SettingsPage() {
               </option>
             ))}
           </select>
+          </label>
           <button onClick={() => load()}>Refresh list</button>
         </div>
         <p className="muted">
@@ -204,20 +208,24 @@ export default function SettingsPage() {
           restart even if the full title changes.
         </p>
         <div className="row">
-          <input
-            type="text"
-            value={settings.target_window?.title_substring ?? ""}
-            placeholder="Title substring (e.g. The Tower, BlueStacks)"
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                target_window: {
-                  title_substring: e.target.value,
-                  process_name: settings.target_window?.process_name ?? "",
-                },
-              })
-            }
-          />
+          <label htmlFor="target-title-substring">
+            Title substring
+            <input
+              id="target-title-substring"
+              type="text"
+              value={settings.target_window?.title_substring ?? ""}
+              placeholder="Title substring (e.g. The Tower, BlueStacks)"
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  target_window: {
+                    title_substring: e.target.value,
+                    process_name: settings.target_window?.process_name ?? "",
+                  },
+                })
+              }
+            />
+          </label>
         </div>
         <div className="row">
           <button onClick={showPreview}>Preview window</button>
@@ -312,8 +320,8 @@ export default function SettingsPage() {
       </section>
       )}
 
-      <section>
-        <h3>Background</h3>
+      <fieldset className="settings-fieldset">
+        <legend>Background</legend>
         <p className="muted">
           Keep WaveTrace in the system tray while scanning. Notifications are local only.
           When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
@@ -368,10 +376,10 @@ export default function SettingsPage() {
             />
           </label>
         </div>
-      </section>
+      </fieldset>
 
-      <section>
-        <h3>Backup &amp; restore</h3>
+      <fieldset className="settings-fieldset">
+        <legend>Backup &amp; restore</legend>
         <p className="muted">
           Save or restore your full local database (runs, snapshots, and settings).
           Stop the scanner first. Backups are zip files you can copy to another PC or
@@ -388,7 +396,11 @@ export default function SettingsPage() {
           >
             Restore from file…
           </button>
+          <label htmlFor="restore-backup-file" className="visually-hidden">
+            Restore database from zip backup
+          </label>
           <input
+            id="restore-backup-file"
             ref={restoreInputRef}
             type="file"
             accept=".zip,application/zip"
@@ -396,8 +408,12 @@ export default function SettingsPage() {
             onChange={onRestoreFile}
           />
         </div>
-        {backupStatus && <p className="muted">{backupStatus}</p>}
-      </section>
+        {backupStatus && (
+          <p className="muted" role="status" aria-live="polite">
+            {backupStatus}
+          </p>
+        )}
+      </fieldset>
 
       <section className="settings-advanced-toggle">
         <label className="checkbox-inline">
@@ -450,7 +466,11 @@ export default function SettingsPage() {
         <button className="primary" onClick={save}>
           Save settings
         </button>
-        {saved && <span className="saved">Saved ✓</span>}
+        {saved && (
+          <span className="saved" role="status" aria-live="polite">
+            Saved ✓
+          </span>
+        )}
       </div>
     </div>
   );

@@ -32,7 +32,7 @@ export default function SkipCoinAnalytics({ snapshots, waveSkips }: Props) {
       <div className="skip-analytics-header">
         <h3>Skip vs coin/min (this run)</h3>
         <span className="muted">
-          Coin/min &gt; 0.1T only · % change vs wave before skip · ratios capped
+          Coin/min {'>'} 0.1T only · % change vs wave before skip · ratios capped
           at 3×
         </span>
       </div>

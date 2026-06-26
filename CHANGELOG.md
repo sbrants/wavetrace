@@ -7,7 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Skip vs coin/min analytics** — History panel: Pearson correlation by lag, median % change after skips, breakdown by skip size (coin/min &gt; 0.1T)
+- **Accessibility (phases A & B)** — focus-visible rings, live regions for scanner/warnings/updates, `aria-current` nav, sortable History headers with `aria-sort`, labeled filters and Settings fieldsets, scanner log labels; `eslint-plugin-jsx-a11y`; roadmap for phases C–E in `docs/accessibility.md`
+- **Skip vs coin/min analytics** — History panel: Pearson correlation by lag, median % change after skips, breakdown by skip size (coin/min > 0.1T)
 - **Offline analysis script** — `scripts/analyze_skip_coin.py` against `%APPDATA%\wavetrace\wavetrace.db`
 
 ### Fixed

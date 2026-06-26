@@ -358,7 +358,7 @@ History (and `scripts/analyze_skip_coin.py`) compare coin/min at lagged waves ar
 
 **Filters (not game rules):**
 
-- **Coin/min &gt; 0.1T** — ignore near-zero OCR reads.
+- **Coin/min > 0.1T** — ignore near-zero OCR reads.
 - **Ratio cap 3×** — when computing % change between two waves, drop pairs whose ratio is outside **[⅓, 3]**. Single-frame OCR spikes (common during the skip overlay or on misreads) can look like huge jumps; farming coin/min does not realistically triple or third in one wave. Without the cap, a few bad frames would dominate medians and correlation. Implementation: `src/skipCoinAnalysis.ts` (`MAX_RATIO`).
 
 ### Retry detection
@@ -452,7 +452,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
-- **Wave skips** — dual-axis chart markers; select/delete skip rows separately from snapshots; **Skip vs coin/min** panel (lag correlation and median % change after skips, coin/min &gt; 0.1T only)
+- **Wave skips** — dual-axis chart markers; select/delete skip rows separately from snapshots; **Skip vs coin/min** panel (lag correlation and median % change after skips, coin/min > 0.1T only)
 - Combine selected runs (strictly increasing waves); delete selected runs; delete individual **outlier snapshots**
 - Export filtered runs to **CSV** (snapshots) or **ODS workbook** (runs + snapshots tables)
 - Chart screenshot copy/download on history charts
@@ -652,6 +652,24 @@ Never commit `.env.signing`.
 - Signed builds: SmartScreen improves immediately; publisher reputation may still build over time
 - In-app auto-update via GitHub Releases (`latest.json`); Windows NSIS, macOS `.app.tar.gz`, Linux AppImage
 - Arch/pacman users install via package manager; in-app updater targets AppImage
+
+---
+
+## Accessibility
+
+Phased improvements for keyboard, screen reader, and form accessibility. **Phases A and B**
+are shipped; **C–E** (chart table fallback, contrast/motion, release checklist) are documented
+for later work.
+
+Full roadmap: [docs/accessibility.md](docs/accessibility.md).
+
+| Phase | Scope | Status |
+| ----- | ----- | ------ |
+| A | Focus rings, live regions, tab `aria-current`, jsx-a11y lint | Done |
+| B | History sort/filters, Settings labels/fieldsets, scanner log labels | Done |
+| C | Collapsible chart data tables (Recharts not fully accessible) | Planned |
+| D | Contrast audit, reduced-motion for charts/animations | Planned |
+| E | Release checklist, Goal cross-links, GitHub `accessibility` label | Planned |
 
 ---
 

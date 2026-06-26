@@ -78,9 +78,10 @@ export default function ScannerLogViewer() {
           />
           Auto-refresh (2s)
         </label>
-        <label>
+        <label htmlFor="scanner-log-lines">
           Lines
           <select
+            id="scanner-log-lines"
             value={maxLines}
             onChange={(e) => setMaxLines(Number(e.target.value))}
           >
@@ -91,7 +92,11 @@ export default function ScannerLogViewer() {
             ))}
           </select>
         </label>
+        <label htmlFor="scanner-log-filter" className="visually-hidden">
+          Filter log lines
+        </label>
         <input
+          id="scanner-log-filter"
           type="search"
           className="scanner-log-filter"
           placeholder="Filter lines…"
@@ -106,7 +111,7 @@ export default function ScannerLogViewer() {
           Copy visible
         </button>
       </div>
-      <p className="muted scanner-log-meta">
+      <p className="muted scanner-log-meta" role="status" aria-live="polite">
         {log
           ? log.total_lines === 0
             ? "No log entries yet — start the scanner to generate output."
@@ -120,6 +125,7 @@ export default function ScannerLogViewer() {
       <pre
         ref={preRef}
         className="scanner-log-view"
+        aria-label="Scanner log output"
         onScroll={() => {
           if (!preRef.current) return;
           const el = preRef.current;

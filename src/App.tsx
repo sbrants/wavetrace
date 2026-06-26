@@ -7,6 +7,27 @@ import AppUpdater from "./components/AppUpdater";
 
 type Tab = "dashboard" | "history" | "settings";
 
+function scannerStatusLabel(
+  running: boolean,
+  status: string | undefined
+): string {
+  if (!running) return "Scanner stopped";
+  switch (status) {
+    case "scanning":
+      return "Scanner scanning";
+    case "starting":
+      return "Scanner starting";
+    case "window_not_found":
+      return "Game window not found";
+    case "ocr_error":
+      return "Scanner OCR error";
+    case "stopped":
+      return "Scanner stopped";
+    default:
+      return "Scanner active";
+  }
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [scannerEvent, setScannerEvent] = useState<ScannerEvent | null>(null);
@@ -64,6 +85,7 @@ export default function App() {
             <button
               key={t}
               className={tab === t ? "active" : ""}
+              aria-current={tab === t ? "page" : undefined}
               onClick={() => setTab(t)}
             >
               {t[0].toUpperCase() + t.slice(1)}
@@ -71,8 +93,13 @@ export default function App() {
           ))}
         </nav>
         <div className="header-right">
-          <span className={`status status-${scannerEvent?.status ?? "stopped"}`}>
-            {running ? scannerEvent?.status ?? "starting…" : "stopped"}
+          <span
+            className={`status status-${scannerEvent?.status ?? "stopped"}`}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {scannerStatusLabel(running, scannerEvent?.status)}
           </span>
           <div className="header-actions">
             {running ? (
@@ -99,6 +126,7 @@ export default function App() {
                 </button>
                 <button
                   disabled={!canResume}
+                  aria-describedby={!canResume ? "resume-run-hint" : undefined}
                   title={
                     canResume
                       ? "Continue the last open run"
@@ -108,6 +136,11 @@ export default function App() {
                 >
                   Resume run
                 </button>
+                {!canResume && (
+                  <span id="resume-run-hint" className="visually-hidden">
+                    No open run to resume
+                  </span>
+                )}
               </>
             )}
             {minimizeToTray && (
@@ -127,7 +160,7 @@ export default function App() {
       <AppUpdater autoCheck variant="banner" />
 
       {warning && (
-        <div className="warning-banner">
+        <div className="warning-banner" role="alert">
           Coin rate unavailable — the game is showing total coins, not
           coins/min. Snapshots keep the last known rate until /min returns.
         </div>

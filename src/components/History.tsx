@@ -11,6 +11,7 @@ import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
+import SortableTh from "./SortableTh";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -617,55 +618,62 @@ export default function History() {
 
   return (
     <div className="history">
-      <div className="toolbar">
-        <select
-          value={filter.run_type ?? ""}
-          onChange={(e) =>
-            setFilter({ ...filter, run_type: e.target.value || undefined })
-          }
-        >
-          <option value="">All run types</option>
-          <option value="farming">Farming</option>
-          <option value="tournament">Tournament</option>
-        </select>
-        <input
-          type="number"
-          placeholder="Min wave"
-          onChange={(e) =>
-            setFilter({
-              ...filter,
-              min_wave: e.target.value ? Number(e.target.value) : undefined,
-            })
-          }
-        />
-        <input
-          type="number"
-          placeholder="Min tier"
-          onChange={(e) =>
-            setFilter({
-              ...filter,
-              min_tier: e.target.value ? Number(e.target.value) : undefined,
-            })
-          }
-        />
-        <label className="date-filter">
-          From
+      <div className="toolbar" role="search" aria-label="Run history filters">
+        <label className="filter-field">
+          Run type
+          <select
+            value={filter.run_type ?? ""}
+            onChange={(e) =>
+              setFilter({ ...filter, run_type: e.target.value || undefined })
+            }
+          >
+            <option value="">All run types</option>
+            <option value="farming">Farming</option>
+            <option value="tournament">Tournament</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          Min wave
+          <input
+            type="number"
+            placeholder="Any"
+            onChange={(e) =>
+              setFilter({
+                ...filter,
+                min_wave: e.target.value ? Number(e.target.value) : undefined,
+              })
+            }
+          />
+        </label>
+        <label className="filter-field">
+          Min tier
+          <input
+            type="number"
+            placeholder="Any"
+            onChange={(e) =>
+              setFilter({
+                ...filter,
+                min_tier: e.target.value ? Number(e.target.value) : undefined,
+              })
+            }
+          />
+        </label>
+        <label className="filter-field">
+          From date
           <input
             type="date"
             value={dateFrom}
             max={dateTo || undefined}
             onChange={(e) => setDateFrom(e.target.value)}
-            aria-label="Filter runs from date"
           />
         </label>
-        <label className="date-filter">
-          To
+        <label className="filter-field">
+          To date
           <input
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
             onChange={(e) => setDateTo(e.target.value)}
-            aria-label="Filter runs to date"
           />
         </label>
         {(dateFrom || dateTo) && (
@@ -683,7 +691,13 @@ export default function History() {
         <button onClick={exportCsv}>Export CSV</button>
         <button onClick={exportWorkbook}>Export ODS</button>
         {exportStatus && (
-          <span className="chart-action-status">{exportStatus}</span>
+          <span
+            className="chart-action-status"
+            role="status"
+            aria-live="polite"
+          >
+            {exportStatus}
+          </span>
         )}
         <button
           disabled={checked.size < 2 || compareLoading}
@@ -710,7 +724,7 @@ export default function History() {
       <table>
         <thead>
           <tr>
-            <th className="check-col">
+            <th className="check-col" scope="col">
               <input
                 type="checkbox"
                 checked={allPageChecked}
@@ -718,16 +732,34 @@ export default function History() {
                 aria-label="Select all runs on this page"
               />
             </th>
-            <th onClick={() => toggleSort("started_at")}>Started</th>
-            <th>Duration</th>
-            <th>Type</th>
-            <th onClick={() => toggleSort("peak_tier")}>Tier</th>
-            <th onClick={() => toggleSort("final_wave")}>Final wave</th>
-            <th onClick={() => toggleSort("avg_coin_per_minute")}>
-              Avg coin/min
-            </th>
-            <th>Snapshots</th>
-            <th>Comment</th>
+            <SortableTh
+              label="Started"
+              active={sortKey === "started_at"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("started_at")}
+            />
+            <th scope="col">Duration</th>
+            <th scope="col">Type</th>
+            <SortableTh
+              label="Tier"
+              active={sortKey === "peak_tier"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("peak_tier")}
+            />
+            <SortableTh
+              label="Final wave"
+              active={sortKey === "final_wave"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("final_wave")}
+            />
+            <SortableTh
+              label="Avg coin/min"
+              active={sortKey === "avg_coin_per_minute"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("avg_coin_per_minute")}
+            />
+            <th scope="col">Snapshots</th>
+            <th scope="col">Comment</th>
           </tr>
         </thead>
         <tbody>

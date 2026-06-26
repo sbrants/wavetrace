@@ -32,7 +32,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
 
   return (
     <div className="dashboard">
-      <div className="stat-cards">
+      <div className="stat-cards" role="group" aria-label="Live run stats">
         <StatCard label="Tier" value={live?.tier?.toString() ?? "—"} />
         <StatCard label="Wave" value={live?.wave?.toString() ?? "—"} />
         <StatCard

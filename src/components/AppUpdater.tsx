@@ -124,7 +124,7 @@ export default function AppUpdater({
 
   if (variant === "banner" && pending) {
     return (
-      <div className="update-banner">
+      <div className="update-banner" role="status" aria-live="polite">
         <span>
           Update <strong>v{pending.version}</strong> is available
           {appVersion ? ` (current: v${appVersion})` : ""}.
