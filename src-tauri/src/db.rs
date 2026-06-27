@@ -672,7 +672,8 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
 }
 
 /// Max snapshots sent to the UI chart (avoids WebView OOM on long runs).
-pub const CHART_SNAPSHOT_LIMIT: usize = 200;
+/// Keep in sync with `MAX_CHART_POINTS` in `src/chartData.ts`.
+pub const CHART_SNAPSHOT_LIMIT: usize = 1000;
 
 pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
     let count: i64 = conn.query_row(
@@ -770,7 +771,7 @@ mod tests {
 
     #[test]
     fn downsample_snapshot_rows_keeps_endpoints() {
-        let rows: Vec<SnapshotRow> = (0..1000)
+        let rows: Vec<SnapshotRow> = (0..5000)
             .map(|i| SnapshotRow {
                 id: format!("s{i}"),
                 wave: i,
@@ -779,10 +780,10 @@ mod tests {
                 recorded_at: "t".into(),
             })
             .collect();
-        let out = downsample_snapshot_rows(&rows, 200);
-        assert_eq!(out.len(), 200);
+        let out = downsample_snapshot_rows(&rows, CHART_SNAPSHOT_LIMIT);
+        assert_eq!(out.len(), CHART_SNAPSHOT_LIMIT);
         assert_eq!(out.first().unwrap().wave, 0);
-        assert_eq!(out.last().unwrap().wave, 999);
+        assert_eq!(out.last().unwrap().wave, 4999);
     }
 
     #[test]

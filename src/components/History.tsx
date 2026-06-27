@@ -205,18 +205,15 @@ export default function History() {
     try {
       const entries = await Promise.all(
         ids.map(async (id) => {
-          const [snaps, skips] = await Promise.all([
-            api.runSnapshots(id),
-            api.runWaveSkips(id),
-          ]);
-          return [id, { snaps, skips }] as const;
+          const view = await api.runDashboardData(id);
+          return [id, view] as const;
         })
       );
       setCompareSnapshots(
-        Object.fromEntries(entries.map(([id, { snaps }]) => [id, snaps]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
       setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, { skips }]) => [id, skips]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.wave_skips]))
       );
       setCompareRuns(runsToCompare);
     } catch (e) {

@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Release CI** — `v*` tags must point to a commit on `main` before the Release workflow publishes assets
+- **Chart downsampling** — server-side chart payload limit raised from 200 to 1000 points
+- **Compare mode** — initial compare load uses chart-safe downsampled snapshots (same as live refresh)
+
+### Fixed
+
+- **Compare mode** — comparing long runs no longer loads every snapshot into the WebView on first open
 
 ### Known issues
 

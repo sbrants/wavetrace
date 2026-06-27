@@ -3,8 +3,8 @@ import { skipChartValue, skipDisplayFromRow } from "./skipDisplay";
 
 export type CoinChartPoint = { wave: number; coin: number };
 
-/** Keep Recharts responsive during very long runs. */
-export const MAX_CHART_POINTS = 400;
+/** Keep Recharts responsive during very long runs. Sync with `CHART_SNAPSHOT_LIMIT` in `src-tauri/src/db.rs`. */
+export const MAX_CHART_POINTS = 1000;
 
 export function downsampleChartData(
   points: CoinChartPoint[],
