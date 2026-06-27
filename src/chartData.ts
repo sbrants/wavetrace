@@ -3,6 +3,25 @@ import { skipChartValue, skipDisplayFromRow } from "./skipDisplay";
 
 export type CoinChartPoint = { wave: number; coin: number };
 
+/** Keep Recharts responsive during very long runs. */
+export const MAX_CHART_POINTS = 400;
+
+export function downsampleChartData(
+  points: CoinChartPoint[],
+  maxPoints = MAX_CHART_POINTS
+): CoinChartPoint[] {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+  const out: CoinChartPoint[] = [];
+  const lastIndex = points.length - 1;
+  for (let i = 0; i < maxPoints; i += 1) {
+    const index = Math.min(lastIndex, Math.round((i * lastIndex) / (maxPoints - 1)));
+    out.push(points[index]);
+  }
+  return out;
+}
+
 export type WaveSkipMarker = {
   id: string;
   wave: number;
@@ -14,9 +33,11 @@ export type WaveSkipMarker = {
 export function snapshotsToChartData(
   snapshots: SnapshotRow[]
 ): CoinChartPoint[] {
-  return snapshots
-    .filter((s) => s.coin_per_minute !== null)
-    .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+  return downsampleChartData(
+    snapshots
+      .filter((s) => s.coin_per_minute !== null)
+      .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }))
+  );
 }
 
 function markerFromSkipRow(row: WaveSkipRow): WaveSkipMarker {

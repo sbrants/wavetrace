@@ -170,6 +170,43 @@ pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>,
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct DashboardRunView {
+    pub snapshot_total: usize,
+    pub chart_snapshots: Vec<SnapshotRow>,
+    pub wave_skips: Vec<WaveSkipRow>,
+}
+
+fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
+    let conn = conn()?;
+    let (snapshot_total, chart_snapshots) =
+        db::run_snapshots_for_chart(&conn, run_id, db::CHART_SNAPSHOT_LIMIT)
+            .map_err(|e| e.to_string())?;
+    let wave_skips = db::run_wave_skips(&conn, run_id).map_err(|e| e.to_string())?;
+    Ok(DashboardRunView {
+        snapshot_total,
+        chart_snapshots,
+        wave_skips,
+    })
+}
+
+#[tauri::command]
+pub fn current_run_dashboard(state: State<AppState>) -> Result<DashboardRunView, String> {
+    match state.scanner.current_run_id.lock().unwrap().clone() {
+        Some(id) => dashboard_run_view(&id),
+        None => Ok(DashboardRunView {
+            snapshot_total: 0,
+            chart_snapshots: Vec::new(),
+            wave_skips: Vec::new(),
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn run_dashboard_data(run_id: String) -> Result<DashboardRunView, String> {
+    dashboard_run_view(&run_id)
+}
+
 #[tauri::command]
 pub fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
     db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())

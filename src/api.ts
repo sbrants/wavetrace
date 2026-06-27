@@ -70,6 +70,13 @@ export interface WaveSkipRow {
   recorded_at: string;
 }
 
+/** Chart-safe snapshot payload (downsampled on the Rust side). */
+export interface DashboardRunView {
+  snapshot_total: number;
+  chart_snapshots: SnapshotRow[];
+  wave_skips: WaveSkipRow[];
+}
+
 export interface RunFilter {
   run_type?: string;
   min_wave?: number;
@@ -173,6 +180,9 @@ export const api = {
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
   currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
+  currentRunDashboard: () => invoke<DashboardRunView>("current_run_dashboard"),
+  runDashboardData: (runId: string) =>
+    invoke<DashboardRunView>("run_dashboard_data", { runId }),
   runWaveSkips: (runId: string) =>
     invoke<WaveSkipRow[]>("run_wave_skips", { runId }),
   currentRunWaveSkips: () => invoke<WaveSkipRow[]>("current_run_wave_skips"),

@@ -23,7 +23,7 @@ pub struct RunRow {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SnapshotRow {
     pub id: String,
     pub wave: i64,
@@ -671,6 +671,44 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
     rows.collect()
 }
 
+/// Max snapshots sent to the UI chart (avoids WebView OOM on long runs).
+pub const CHART_SNAPSHOT_LIMIT: usize = 200;
+
+pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM snapshots WHERE run_id = ?1",
+        params![run_id],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as usize)
+}
+
+pub fn downsample_snapshot_rows(
+    rows: &[SnapshotRow],
+    max_points: usize,
+) -> Vec<SnapshotRow> {
+    if rows.len() <= max_points || max_points <= 1 {
+        return rows.to_vec();
+    }
+    let last = rows.len() - 1;
+    (0..max_points)
+        .map(|i| {
+            let idx = (i * last) / (max_points - 1);
+            rows[idx].clone()
+        })
+        .collect()
+}
+
+pub fn run_snapshots_for_chart(
+    conn: &Connection,
+    run_id: &str,
+    max_points: usize,
+) -> rusqlite::Result<(usize, Vec<SnapshotRow>)> {
+    let all = run_snapshots(conn, run_id)?;
+    let total = all.len();
+    Ok((total, downsample_snapshot_rows(&all, max_points)))
+}
+
 pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at
@@ -729,6 +767,23 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn downsample_snapshot_rows_keeps_endpoints() {
+        let rows: Vec<SnapshotRow> = (0..1000)
+            .map(|i| SnapshotRow {
+                id: format!("s{i}"),
+                wave: i,
+                tier: Some(1),
+                coin_per_minute: Some(i as f64),
+                recorded_at: "t".into(),
+            })
+            .collect();
+        let out = downsample_snapshot_rows(&rows, 200);
+        assert_eq!(out.len(), 200);
+        assert_eq!(out.first().unwrap().wave, 0);
+        assert_eq!(out.last().unwrap().wave, 999);
+    }
 
     #[test]
     fn latest_open_run_returns_most_recent_open() {

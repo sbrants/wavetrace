@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatCoin, ScannerEvent, SnapshotRow, WaveSkipRow } from "../api";
 import { snapshotsToChartData, buildWaveJumpMarkers } from "../chartData";
 import {
@@ -7,22 +7,44 @@ import {
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 
+const SNAPSHOT_REFRESH_MS = 15_000;
+
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
-  const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
+  const [snapshotTotal, setSnapshotTotal] = useState(0);
+  const [chartSnapshots, setChartSnapshots] = useState<SnapshotRow[]>([]);
   const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
+  const lastFetchAtRef = useRef(0);
+  const lastWaveRef = useRef<number | null>(null);
+  const liveWaveRef = useRef<number | null>(null);
+  liveWaveRef.current = event?.live?.wave ?? null;
   const live = event?.live ?? null;
 
   useEffect(() => {
-    const refresh = () => {
-      Promise.all([api.currentRunSnapshots(), api.currentRunWaveSkips()])
-        .then(([snaps, skips]) => {
-          setSnapshots(snaps);
-          setWaveSkips(skips);
+    const refresh = (force = false) => {
+      const wave = liveWaveRef.current;
+      const now = Date.now();
+      const waveChanged = wave !== null && wave !== lastWaveRef.current;
+      const stale = now - lastFetchAtRef.current >= SNAPSHOT_REFRESH_MS;
+      if (!force && !waveChanged && !stale && lastFetchAtRef.current > 0) {
+        return;
+      }
+      lastFetchAtRef.current = now;
+      lastWaveRef.current = wave;
+      api
+        .currentRunDashboard()
+        .then((view) => {
+          setSnapshotTotal(view.snapshot_total);
+          setChartSnapshots(view.chart_snapshots);
+          setWaveSkips(view.wave_skips);
         })
         .catch(() => {});
     };
-    refresh();
+
+    lastFetchAtRef.current = 0;
+    lastWaveRef.current = null;
+    refresh(true);
+
     let unlisten: (() => void) | undefined;
     void api.onScannerUpdate(() => refresh()).then((fn) => {
       unlisten = fn;
@@ -30,8 +52,14 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
     return () => unlisten?.();
   }, [event?.current_run_id]);
 
-  const chartData = snapshotsToChartData(snapshots);
-  const skipMarkers = buildWaveJumpMarkers(snapshots, waveSkips);
+  const chartData = useMemo(
+    () => snapshotsToChartData(chartSnapshots),
+    [chartSnapshots]
+  );
+  const skipMarkers = useMemo(
+    () => buildWaveJumpMarkers(chartSnapshots, waveSkips),
+    [chartSnapshots, waveSkips]
+  );
   const lastSkipDisplay =
     live?.last_wave_delta != null
       ? live.last_skip_multiplier != null
@@ -76,7 +104,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           <div>
             <h3>Avg coin/min vs Wave (current run)</h3>
             <span className="muted">
-              {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"} this run
+              {snapshotTotal} snapshot{snapshotTotal === 1 ? "" : "s"} this run
+              {snapshotTotal > chartSnapshots.length &&
+                ` · chart shows ${chartSnapshots.length} sampled points`}
               {skipMarkers.length > 0 &&
                 ` · ${skipMarkers.length} wave skip${skipMarkers.length === 1 ? "" : "s"} on chart`}
             </span>

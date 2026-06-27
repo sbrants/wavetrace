@@ -62,6 +62,8 @@ pub fn run() {
             commands::combine_runs,
             commands::run_snapshots,
             commands::current_run_snapshots,
+            commands::current_run_dashboard,
+            commands::run_dashboard_data,
             commands::run_wave_skips,
             commands::current_run_wave_skips,
             commands::export_csv,
