@@ -21,6 +21,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.26] — 2026-06-27
+
+### Fixed
+
+- **WebView out-of-memory on long runs** — dashboard and History no longer load every snapshot into the chart UI on each scanner tick; snapshots are downsampled server-side (200 points), live chart refresh is throttled, and a Reload button appears if the UI renderer crashes
+
+---
+
 ## [0.2.25] — 2026-06-26
 
 ### Added
