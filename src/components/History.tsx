@@ -40,6 +40,8 @@ export default function History() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
   const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
+  const [liveChartSnapshots, setLiveChartSnapshots] = useState<SnapshotRow[]>([]);
+  const [liveChartWaveSkips, setLiveChartWaveSkips] = useState<WaveSkipRow[]>([]);
   const [compareRuns, setCompareRuns] = useState<RunRow[]>([]);
   const [compareSnapshots, setCompareSnapshots] = useState<
     Record<string, SnapshotRow[]>
@@ -115,6 +117,8 @@ export default function History() {
       setSnapshots([]);
       setWaveSkips([]);
     }
+    setLiveChartSnapshots([]);
+    setLiveChartWaveSkips([]);
     setSelectedSnapshotIds(new Set());
     setSelectedWaveSkipIds(new Set());
     snapshotRowRefs.current.clear();
@@ -233,20 +237,17 @@ export default function History() {
       const [entries, updatedRuns] = await Promise.all([
         Promise.all(
           ids.map(async (id) => {
-            const [snaps, skips] = await Promise.all([
-              api.runSnapshots(id),
-              api.runWaveSkips(id),
-            ]);
-            return [id, { snaps, skips }] as const;
+            const view = await api.runDashboardData(id);
+            return [id, view] as const;
           })
         ),
         api.listRuns(activeFilter),
       ]);
       setCompareSnapshots(
-        Object.fromEntries(entries.map(([id, { snaps }]) => [id, snaps]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
       setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, { skips }]) => [id, skips]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.wave_skips]))
       );
       setCompareRuns(
         ids
@@ -262,7 +263,7 @@ export default function History() {
   useEffect(() => {
     if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
     void refreshCompare();
-    const id = window.setInterval(() => void refreshCompare(), 2000);
+    const id = window.setInterval(() => void refreshCompare(), 15_000);
     return () => window.clearInterval(id);
   }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
 
@@ -446,50 +447,64 @@ export default function History() {
   const hasOngoingSelectedRun =
     selected != null && !selected.ended_at && compareRuns.length < 2;
 
-  const refreshSelectedRun = useCallback(async () => {
+  const refreshSelectedRun = useCallback(async (reloadTable = false) => {
     if (!selectedRunId) return;
     try {
       const activeFilter = listFilter();
-      const [snaps, skips, updatedRuns] = await Promise.all([
-        api.runSnapshots(selectedRunId),
-        api.runWaveSkips(selectedRunId),
+      if (reloadTable || !hasOngoingSelectedRun) {
+        const [snaps, skips, updatedRuns] = await Promise.all([
+          api.runSnapshots(selectedRunId),
+          api.runWaveSkips(selectedRunId),
+          api.listRuns(activeFilter),
+        ]);
+        setSnapshots(snaps);
+        setWaveSkips(skips);
+        setLiveChartSnapshots([]);
+        setLiveChartWaveSkips([]);
+        setSelectedSnapshotIds((prev) => {
+          if (prev.size === 0) return prev;
+          const valid = new Set(snaps.map((s) => s.id));
+          let changed = false;
+          const next = new Set<string>();
+          for (const id of prev) {
+            if (valid.has(id)) next.add(id);
+            else changed = true;
+          }
+          return changed ? next : prev;
+        });
+        setSelectedWaveSkipIds((prev) => {
+          if (prev.size === 0) return prev;
+          const valid = new Set(skips.map((s) => s.id));
+          let changed = false;
+          const next = new Set<string>();
+          for (const id of prev) {
+            if (valid.has(id)) next.add(id);
+            else changed = true;
+          }
+          return changed ? next : prev;
+        });
+        setRuns(updatedRuns);
+        setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
+        return;
+      }
+
+      const [view, updatedRuns] = await Promise.all([
+        api.runDashboardData(selectedRunId),
         api.listRuns(activeFilter),
       ]);
-      setSnapshots(snaps);
-      setWaveSkips(skips);
-      setSelectedSnapshotIds((prev) => {
-        if (prev.size === 0) return prev;
-        const valid = new Set(snaps.map((s) => s.id));
-        let changed = false;
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (valid.has(id)) next.add(id);
-          else changed = true;
-        }
-        return changed ? next : prev;
-      });
-      setSelectedWaveSkipIds((prev) => {
-        if (prev.size === 0) return prev;
-        const valid = new Set(skips.map((s) => s.id));
-        let changed = false;
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (valid.has(id)) next.add(id);
-          else changed = true;
-        }
-        return changed ? next : prev;
-      });
+      setLiveChartSnapshots(view.chart_snapshots);
+      setLiveChartWaveSkips(view.wave_skips);
       setRuns(updatedRuns);
       setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
     } catch {
       /* keep last chart */
     }
-  }, [selectedRunId, listFilter]);
+  }, [selectedRunId, listFilter, hasOngoingSelectedRun]);
 
   useEffect(() => {
     if (!selectedRunId || !hasOngoingSelectedRun) return;
     void refreshSelectedRun();
-    const id = window.setInterval(() => void refreshSelectedRun(), 2000);
+    const id = window.setInterval(() => void refreshSelectedRun(), 15_000);
     return () => window.clearInterval(id);
   }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRun]);
 
@@ -521,7 +536,7 @@ export default function History() {
     try {
       await api.deleteSnapshots([...selectedSnapshotIds]);
       setSelectedSnapshotIds(new Set());
-      await refreshSelectedRun();
+      await refreshSelectedRun(true);
     } catch (e) {
       alert(String(e));
     }
@@ -540,7 +555,7 @@ export default function History() {
     try {
       await api.deleteWaveSkips([...selectedWaveSkipIds]);
       setSelectedWaveSkipIds(new Set());
-      await refreshSelectedRun();
+      await refreshSelectedRun(true);
     } catch (e) {
       alert(String(e));
     }
@@ -563,7 +578,7 @@ export default function History() {
         next.delete(skip.id);
         return next;
       });
-      await refreshSelectedRun();
+      await refreshSelectedRun(true);
     } catch (e) {
       alert(String(e));
     }
@@ -586,14 +601,25 @@ export default function History() {
         next.delete(snap.id);
         return next;
       });
-      await refreshSelectedRun();
+      await refreshSelectedRun(true);
     } catch (e) {
       alert(String(e));
     }
   };
 
-  const chartData = snapshotsToChartData(snapshots);
-  const skipMarkers = buildWaveJumpMarkers(snapshots, waveSkips);
+  const chartSnapshotsForDisplay =
+    hasOngoingSelectedRun && liveChartSnapshots.length > 0
+      ? liveChartSnapshots
+      : snapshots;
+  const chartSkipsForDisplay =
+    hasOngoingSelectedRun && liveChartSnapshots.length > 0
+      ? liveChartWaveSkips
+      : waveSkips;
+  const chartData = snapshotsToChartData(chartSnapshotsForDisplay);
+  const skipMarkers = buildWaveJumpMarkers(
+    chartSnapshotsForDisplay,
+    chartSkipsForDisplay
+  );
 
   const compareChartData =
     compareXAxis === "wave"

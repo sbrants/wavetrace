@@ -21,6 +21,44 @@ body {
   color: var(--text);
 }
 
+#root {
+  min-height: 100vh;
+}
+
+.app-error-fallback {
+  padding: 24px;
+  max-width: 720px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: #0d1426;
+  color: #dce6f5;
+  min-height: 100vh;
+}
+
+.app-error-fallback h1 {
+  color: #f87171;
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.app-error-fallback pre {
+  background: #16203a;
+  border: 1px solid #2a3550;
+  border-radius: 8px;
+  padding: 12px;
+  overflow: auto;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.app-error-fallback .muted {
+  color: #8da2c0;
+  font-size: 13px;
+}
+
+.app-error-actions {
+  margin-bottom: 12px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
