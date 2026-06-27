@@ -5,15 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- **Contributor docs** — MIT [LICENSE](LICENSE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), issue/PR templates, PR CI workflow, Dependabot
-- **Known issues** — macOS GitHub Release DMGs currently broken ([#4](https://github.com/sbrants/wavetrace/issues/4))
-
-### Fixed
-
-- **Anchor-crop OCR** — `@ 3.48T`-style lines without `/min` parse as coin/min again (not total balance)
-- **State machine snapshots** — wave-1 auto-start no longer clears debounced coin rate; spike misreads no longer flash on the dashboard before confirmation
+- **Release CI** — `v*` tags must point to a commit on `main` before the Release workflow publishes assets
 
 ### Known issues
 
@@ -31,9 +25,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.26] — 2026-06-27
 
+### Added
+
+- **Contributor docs** — MIT [LICENSE](LICENSE), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), issue/PR templates, PR CI workflow, Dependabot
+- **README** — badges and quick start for open-source contributors
+
+### Changed
+
+- **Dependabot** — group npm/Cargo minor and patch updates; ignore major bumps for manual review
+- **Rust** — `tauri` 2.11.2 → 2.11.3, `tauri-build` 2.6.2 → 2.6.3, `uuid` 1.23.3 → 1.23.4
+- **npm** — `@tauri-apps/api` 2.11.1, `@tauri-apps/cli` 2.11.2 → 2.11.3
+- **GitHub Actions** — `actions/checkout` 4 → 7, `actions/setup-node` 4 → 6, `softprops/action-gh-release` 2 → 3
+
 ### Fixed
 
 - **WebView out-of-memory on long runs** — dashboard and History no longer load every snapshot into the chart UI on each scanner tick; snapshots are downsampled server-side (200 points), live chart refresh is throttled, and a Reload button appears if the UI renderer crashes
+- **Anchor-crop OCR** — `@ 3.48T`-style lines without `/min` parse as coin/min again (not total balance)
+- **State machine snapshots** — wave-1 auto-start no longer clears debounced coin rate; spike misreads no longer flash on the dashboard before confirmation
+- **CI** — retry Store MSIX build on flaky `crates.io` downloads
 
 ---
 
