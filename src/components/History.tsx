@@ -54,6 +54,7 @@ export default function History() {
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
   const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
+  const [compareShowSkips, setCompareShowSkips] = useState(true);
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
   );
@@ -632,6 +633,7 @@ export default function History() {
       compareWaveSkips[id] ?? []
     )
   );
+  const hasCompareSkips = compareSkipMarkers.some((markers) => markers.length > 0);
 
   const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
     dataKey: `coin_${i}`,
@@ -930,6 +932,18 @@ export default function History() {
                 <option value="wave">Absolute wave</option>
                 <option value="progress">Snapshot progress</option>
               </select>
+              {hasCompareSkips && (
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={compareShowSkips}
+                    onChange={(e) => setCompareShowSkips(e.target.checked)}
+                    disabled={compareXAxis === "progress"}
+                    aria-label="Show wave jumps on compare chart"
+                  />
+                  Wave jumps
+                </label>
+              )}
               <button onClick={clearCompare}>Clear comparison</button>
               <ChartScreenshotActions
                 targetRef={compareChartRef}
@@ -979,7 +993,11 @@ export default function History() {
             mode="compare"
             data={compareChartData}
             lines={compareLines}
-            waveSkipsByLine={compareSkipMarkers}
+            waveSkipsByLine={
+              compareShowSkips && compareXAxis === "wave"
+                ? compareSkipMarkers
+                : undefined
+            }
             xAxis={compareXAxis}
             height={320}
           />
