@@ -181,19 +181,6 @@ textarea:focus-visible,
   color: var(--text);
 }
 
-.settings-fieldset {
-  border: none;
-  margin: 0 0 24px;
-  padding: 0;
-}
-
-.settings-fieldset legend {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  padding: 0;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

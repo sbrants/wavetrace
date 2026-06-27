@@ -320,8 +320,8 @@ export default function SettingsPage() {
       </section>
       )}
 
-      <fieldset className="settings-fieldset">
-        <legend>Background</legend>
+      <section>
+        <h3>Background</h3>
         <p className="muted">
           Keep WaveTrace in the system tray while scanning. Notifications are local only.
           When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
@@ -376,10 +376,10 @@ export default function SettingsPage() {
             />
           </label>
         </div>
-      </fieldset>
+      </section>
 
-      <fieldset className="settings-fieldset">
-        <legend>Backup &amp; restore</legend>
+      <section>
+        <h3>Backup &amp; restore</h3>
         <p className="muted">
           Save or restore your full local database (runs, snapshots, and settings).
           Stop the scanner first. Backups are zip files you can copy to another PC or
@@ -413,7 +413,11 @@ export default function SettingsPage() {
             {backupStatus}
           </p>
         )}
-      </fieldset>
+      </section>
+
+      <AppUpdater />
+
+      <ChangelogPanel />
 
       <section className="settings-advanced-toggle">
         <label className="checkbox-inline">
@@ -457,10 +461,6 @@ export default function SettingsPage() {
       <ScannerLogViewer />
         </>
       )}
-
-      <AppUpdater />
-
-      <ChangelogPanel />
 
       <div className="toolbar">
         <button className="primary" onClick={save}>
