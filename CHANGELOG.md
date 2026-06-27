@@ -21,6 +21,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.27] — 2026-06-27
+
+### Added
+
+- **Compare chart** — **Wave jumps** checkbox to hide the skip/jump overlay when comparing runs (absolute wave axis only)
+
+---
+
 ## [0.2.26] — 2026-06-27
 
 ### Fixed
