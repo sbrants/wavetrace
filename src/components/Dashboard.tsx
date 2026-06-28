@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatCoin, ScannerEvent, SnapshotRow, WaveSkipRow } from "../api";
-import { snapshotsToChartData, buildWaveJumpMarkers } from "../chartData";
+import { snapshotsToChartData, buildChartWaveJumpMarkers } from "../chartData";
 import {
   formatSkipLiveStat,
 } from "../skipDisplay";
@@ -12,7 +12,9 @@ const SNAPSHOT_REFRESH_MS = 15_000;
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [snapshotTotal, setSnapshotTotal] = useState(0);
   const [chartSnapshots, setChartSnapshots] = useState<SnapshotRow[]>([]);
-  const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
+  const [skipTotal, setSkipTotal] = useState(0);
+  const [chartWaveSkips, setChartWaveSkips] = useState<WaveSkipRow[]>([]);
+  const [chartNormalJumps, setChartNormalJumps] = useState<number[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
   const lastFetchAtRef = useRef(0);
   const lastWaveRef = useRef<number | null>(null);
@@ -36,7 +38,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         .then((view) => {
           setSnapshotTotal(view.snapshot_total);
           setChartSnapshots(view.chart_snapshots);
-          setWaveSkips(view.wave_skips);
+          setSkipTotal(view.skip_total);
+          setChartWaveSkips(view.chart_wave_skips);
+          setChartNormalJumps(view.chart_normal_jumps);
         })
         .catch(() => {});
     };
@@ -53,12 +57,12 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   }, [event?.current_run_id]);
 
   const chartData = useMemo(
-    () => snapshotsToChartData(chartSnapshots),
+    () => snapshotsToChartData(chartSnapshots, { alreadySampled: true }),
     [chartSnapshots]
   );
   const skipMarkers = useMemo(
-    () => buildWaveJumpMarkers(chartSnapshots, waveSkips),
-    [chartSnapshots, waveSkips]
+    () => buildChartWaveJumpMarkers(chartWaveSkips, chartNormalJumps),
+    [chartWaveSkips, chartNormalJumps]
   );
   const lastSkipDisplay =
     live?.last_wave_delta != null
@@ -106,7 +110,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             <span className="muted">
               {snapshotTotal} snapshot{snapshotTotal === 1 ? "" : "s"} this run
               {snapshotTotal > chartSnapshots.length &&
-                ` · chart shows ${chartSnapshots.length} sampled points`}
+                ` · chart shows ${chartSnapshots.length} sampled snapshot points`}
+              {skipTotal > chartWaveSkips.length &&
+                ` · ${chartWaveSkips.length} of ${skipTotal} skips sampled for chart`}
               {skipMarkers.length > 0 &&
                 ` · ${skipMarkers.length} wave skip${skipMarkers.length === 1 ? "" : "s"} on chart`}
             </span>

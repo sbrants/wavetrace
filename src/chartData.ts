@@ -4,7 +4,10 @@ import { skipChartValue, skipDisplayFromRow } from "./skipDisplay";
 export type CoinChartPoint = { wave: number; coin: number };
 
 /** Keep Recharts responsive during very long runs. Sync with `CHART_SNAPSHOT_LIMIT` in `src-tauri/src/db.rs`. */
-export const MAX_CHART_POINTS = 1000;
+export const MAX_CHART_POINTS = 5000;
+
+/** Skip-axis cap; sampled independently of snapshots. Sync with `CHART_SKIP_LIMIT` in `src-tauri/src/db.rs`. */
+export const MAX_CHART_SKIPS = 5000;
 
 export function downsampleChartData(
   points: CoinChartPoint[],
@@ -31,13 +34,13 @@ export type WaveSkipMarker = {
 };
 
 export function snapshotsToChartData(
-  snapshots: SnapshotRow[]
+  snapshots: SnapshotRow[],
+  options?: { alreadySampled?: boolean }
 ): CoinChartPoint[] {
-  return downsampleChartData(
-    snapshots
-      .filter((s) => s.coin_per_minute !== null)
-      .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }))
-  );
+  const points = snapshots
+    .filter((s) => s.coin_per_minute !== null)
+    .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+  return options?.alreadySampled ? points : downsampleChartData(points);
 }
 
 function markerFromSkipRow(row: WaveSkipRow): WaveSkipMarker {
@@ -50,7 +53,29 @@ function markerFromSkipRow(row: WaveSkipRow): WaveSkipMarker {
   };
 }
 
-/** Chart markers from snapshot wave gaps; merge DB skips for banner multipliers. */
+/** Chart markers from independently sampled skip rows and +1 jump waves. */
+export function buildChartWaveJumpMarkers(
+  waveSkips: WaveSkipRow[],
+  normalJumpWaves: number[] = []
+): WaveSkipMarker[] {
+  const skipByWave = new Map(waveSkips.map((row) => [row.at_wave, row]));
+  const markers: WaveSkipMarker[] = waveSkips.map(markerFromSkipRow);
+
+  for (const wave of normalJumpWaves) {
+    if (!skipByWave.has(wave)) {
+      markers.push({
+        id: `wave-jump-${wave}`,
+        wave,
+        skip_count: 1,
+        skip_tooltip: "1",
+      });
+    }
+  }
+
+  return markers.sort((a, b) => a.wave - b.wave);
+}
+
+/** Chart markers from full snapshot/skip data (History tables). */
 export function buildWaveJumpMarkers(
   snapshots: SnapshotRow[],
   waveSkips: WaveSkipRow[] = []

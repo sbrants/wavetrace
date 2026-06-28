@@ -174,7 +174,9 @@ pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>,
 pub struct DashboardRunView {
     pub snapshot_total: usize,
     pub chart_snapshots: Vec<SnapshotRow>,
-    pub wave_skips: Vec<WaveSkipRow>,
+    pub skip_total: usize,
+    pub chart_wave_skips: Vec<WaveSkipRow>,
+    pub chart_normal_jumps: Vec<i64>,
 }
 
 fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
@@ -182,11 +184,18 @@ fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
     let (snapshot_total, chart_snapshots) =
         db::run_snapshots_for_chart(&conn, run_id, db::CHART_SNAPSHOT_LIMIT)
             .map_err(|e| e.to_string())?;
-    let wave_skips = db::run_wave_skips(&conn, run_id).map_err(|e| e.to_string())?;
+    let (skip_total, chart_wave_skips) =
+        db::run_wave_skips_for_chart(&conn, run_id, db::CHART_SKIP_LIMIT)
+            .map_err(|e| e.to_string())?;
+    let chart_normal_jumps =
+        db::chart_normal_jump_waves(&conn, run_id, db::CHART_SKIP_LIMIT)
+            .map_err(|e| e.to_string())?;
     Ok(DashboardRunView {
         snapshot_total,
         chart_snapshots,
-        wave_skips,
+        skip_total,
+        chart_wave_skips,
+        chart_normal_jumps,
     })
 }
 
@@ -197,7 +206,9 @@ pub fn current_run_dashboard(state: State<AppState>) -> Result<DashboardRunView,
         None => Ok(DashboardRunView {
             snapshot_total: 0,
             chart_snapshots: Vec::new(),
-            wave_skips: Vec::new(),
+            skip_total: 0,
+            chart_wave_skips: Vec::new(),
+            chart_normal_jumps: Vec::new(),
         }),
     }
 }

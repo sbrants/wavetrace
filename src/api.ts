@@ -70,11 +70,13 @@ export interface WaveSkipRow {
   recorded_at: string;
 }
 
-/** Chart-safe snapshot payload (downsampled on the Rust side). */
+/** Chart-safe payload (snapshots and skips downsampled independently on the Rust side). */
 export interface DashboardRunView {
   snapshot_total: number;
   chart_snapshots: SnapshotRow[];
-  wave_skips: WaveSkipRow[];
+  skip_total: number;
+  chart_wave_skips: WaveSkipRow[];
+  chart_normal_jumps: number[];
 }
 
 export interface RunFilter {

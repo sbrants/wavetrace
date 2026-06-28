@@ -32,7 +32,7 @@ pub struct SnapshotRow {
     pub recorded_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct WaveSkipRow {
     pub id: String,
     pub at_wave: i64,
@@ -673,7 +673,11 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
 
 /// Max snapshots sent to the UI chart (avoids WebView OOM on long runs).
 /// Keep in sync with `MAX_CHART_POINTS` in `src/chartData.ts`.
-pub const CHART_SNAPSHOT_LIMIT: usize = 1000;
+pub const CHART_SNAPSHOT_LIMIT: usize = 5000;
+
+/// Max skip markers sent to the UI chart (sampled independently of snapshots).
+/// Keep in sync with `MAX_CHART_SKIPS` in `src/chartData.ts`.
+pub const CHART_SKIP_LIMIT: usize = 5000;
 
 pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
     let count: i64 = conn.query_row(
@@ -684,20 +688,40 @@ pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize
     Ok(count.max(0) as usize)
 }
 
+pub fn wave_skip_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM wave_skips WHERE run_id = ?1",
+        params![run_id],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as usize)
+}
+
+fn downsample_slice<T: Clone>(items: &[T], max_points: usize) -> Vec<T> {
+    if items.len() <= max_points || max_points <= 1 {
+        return items.to_vec();
+    }
+    let last = items.len() - 1;
+    (0..max_points)
+        .map(|i| {
+            let idx = (i * last) / (max_points - 1);
+            items[idx].clone()
+        })
+        .collect()
+}
+
 pub fn downsample_snapshot_rows(
     rows: &[SnapshotRow],
     max_points: usize,
 ) -> Vec<SnapshotRow> {
-    if rows.len() <= max_points || max_points <= 1 {
-        return rows.to_vec();
-    }
-    let last = rows.len() - 1;
-    (0..max_points)
-        .map(|i| {
-            let idx = (i * last) / (max_points - 1);
-            rows[idx].clone()
-        })
-        .collect()
+    downsample_slice(rows, max_points)
+}
+
+pub fn downsample_wave_skip_rows(
+    rows: &[WaveSkipRow],
+    max_points: usize,
+) -> Vec<WaveSkipRow> {
+    downsample_slice(rows, max_points)
 }
 
 pub fn run_snapshots_for_chart(
@@ -708,6 +732,35 @@ pub fn run_snapshots_for_chart(
     let all = run_snapshots(conn, run_id)?;
     let total = all.len();
     Ok((total, downsample_snapshot_rows(&all, max_points)))
+}
+
+pub fn run_wave_skips_for_chart(
+    conn: &Connection,
+    run_id: &str,
+    max_points: usize,
+) -> rusqlite::Result<(usize, Vec<WaveSkipRow>)> {
+    let all = run_wave_skips(conn, run_id)?;
+    let total = all.len();
+    Ok((total, downsample_wave_skip_rows(&all, max_points)))
+}
+
+/// +1 wave jumps from the full snapshot series, downsampled for the chart axis.
+pub fn chart_normal_jump_waves(
+    conn: &Connection,
+    run_id: &str,
+    max_points: usize,
+) -> rusqlite::Result<Vec<i64>> {
+    let all = run_snapshots(conn, run_id)?;
+    let jumps: Vec<i64> = all
+        .windows(2)
+        .filter(|w| {
+            let prev = w[0].wave;
+            let wave = w[1].wave;
+            wave > prev && wave - prev == 1
+        })
+        .map(|w| w[1].wave)
+        .collect();
+    Ok(downsample_slice(&jumps, max_points))
 }
 
 pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
@@ -771,7 +824,8 @@ mod tests {
 
     #[test]
     fn downsample_snapshot_rows_keeps_endpoints() {
-        let rows: Vec<SnapshotRow> = (0..5000)
+        let total = CHART_SNAPSHOT_LIMIT * 2;
+        let rows: Vec<SnapshotRow> = (0..total as i64)
             .map(|i| SnapshotRow {
                 id: format!("s{i}"),
                 wave: i,
@@ -783,7 +837,26 @@ mod tests {
         let out = downsample_snapshot_rows(&rows, CHART_SNAPSHOT_LIMIT);
         assert_eq!(out.len(), CHART_SNAPSHOT_LIMIT);
         assert_eq!(out.first().unwrap().wave, 0);
-        assert_eq!(out.last().unwrap().wave, 4999);
+        assert_eq!(out.last().unwrap().wave, total as i64 - 1);
+    }
+
+    #[test]
+    fn downsample_wave_skip_rows_keeps_endpoints() {
+        let total = CHART_SKIP_LIMIT * 2;
+        let rows: Vec<WaveSkipRow> = (0..total as i64)
+            .map(|i| WaveSkipRow {
+                id: format!("w{i}"),
+                at_wave: i * 10,
+                skipped_count: 2,
+                skip_multiplier: None,
+                coin_per_minute: None,
+                recorded_at: "t".into(),
+            })
+            .collect();
+        let out = downsample_wave_skip_rows(&rows, CHART_SKIP_LIMIT);
+        assert_eq!(out.len(), CHART_SKIP_LIMIT);
+        assert_eq!(out.first().unwrap().at_wave, 0);
+        assert_eq!(out.last().unwrap().at_wave, (total as i64 - 1) * 10);
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { api, formatCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "..
 import {
   buildCompareChartDataByProgress,
   buildCompareChartDataByWave,
+  buildChartWaveJumpMarkers,
   buildWaveJumpMarkers,
   CompareXAxis,
   snapshotsToChartData,
@@ -42,12 +43,16 @@ export default function History() {
   const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
   const [liveChartSnapshots, setLiveChartSnapshots] = useState<SnapshotRow[]>([]);
   const [liveChartWaveSkips, setLiveChartWaveSkips] = useState<WaveSkipRow[]>([]);
+  const [liveChartNormalJumps, setLiveChartNormalJumps] = useState<number[]>([]);
   const [compareRuns, setCompareRuns] = useState<RunRow[]>([]);
   const [compareSnapshots, setCompareSnapshots] = useState<
     Record<string, SnapshotRow[]>
   >({});
   const [compareWaveSkips, setCompareWaveSkips] = useState<
     Record<string, WaveSkipRow[]>
+  >({});
+  const [compareNormalJumps, setCompareNormalJumps] = useState<
+    Record<string, number[]>
   >({});
   const [compareLoading, setCompareLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -120,6 +125,7 @@ export default function History() {
     }
     setLiveChartSnapshots([]);
     setLiveChartWaveSkips([]);
+    setLiveChartNormalJumps([]);
     setSelectedSnapshotIds(new Set());
     setSelectedWaveSkipIds(new Set());
     snapshotRowRefs.current.clear();
@@ -213,7 +219,10 @@ export default function History() {
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
       setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.wave_skips]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
+      );
+      setCompareNormalJumps(
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
       );
       setCompareRuns(runsToCompare);
     } catch (e) {
@@ -245,7 +254,10 @@ export default function History() {
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
       setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.wave_skips]))
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
+      );
+      setCompareNormalJumps(
+        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
       );
       setCompareRuns(
         ids
@@ -459,6 +471,7 @@ export default function History() {
         setWaveSkips(skips);
         setLiveChartSnapshots([]);
         setLiveChartWaveSkips([]);
+        setLiveChartNormalJumps([]);
         setSelectedSnapshotIds((prev) => {
           if (prev.size === 0) return prev;
           const valid = new Set(snaps.map((s) => s.id));
@@ -491,7 +504,8 @@ export default function History() {
         api.listRuns(activeFilter),
       ]);
       setLiveChartSnapshots(view.chart_snapshots);
-      setLiveChartWaveSkips(view.wave_skips);
+      setLiveChartWaveSkips(view.chart_wave_skips);
+      setLiveChartNormalJumps(view.chart_normal_jumps);
       setRuns(updatedRuns);
       setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
     } catch {
@@ -605,19 +619,18 @@ export default function History() {
     }
   };
 
-  const chartSnapshotsForDisplay =
-    hasOngoingSelectedRun && liveChartSnapshots.length > 0
-      ? liveChartSnapshots
-      : snapshots;
-  const chartSkipsForDisplay =
-    hasOngoingSelectedRun && liveChartSnapshots.length > 0
-      ? liveChartWaveSkips
-      : waveSkips;
-  const chartData = snapshotsToChartData(chartSnapshotsForDisplay);
-  const skipMarkers = buildWaveJumpMarkers(
-    chartSnapshotsForDisplay,
-    chartSkipsForDisplay
-  );
+  const usingLiveChart =
+    hasOngoingSelectedRun && liveChartSnapshots.length > 0;
+  const chartSnapshotsForDisplay = usingLiveChart
+    ? liveChartSnapshots
+    : snapshots;
+  const chartSkipsForDisplay = usingLiveChart ? liveChartWaveSkips : waveSkips;
+  const chartData = snapshotsToChartData(chartSnapshotsForDisplay, {
+    alreadySampled: usingLiveChart,
+  });
+  const skipMarkers = usingLiveChart
+    ? buildChartWaveJumpMarkers(liveChartWaveSkips, liveChartNormalJumps)
+    : buildWaveJumpMarkers(chartSnapshotsForDisplay, chartSkipsForDisplay);
 
   const compareChartData =
     compareXAxis === "wave"
@@ -625,9 +638,9 @@ export default function History() {
       : buildCompareChartDataByProgress(compareRunIds, compareSnapshots);
 
   const compareSkipMarkers = compareRunIds.map((id) =>
-    buildWaveJumpMarkers(
-      compareSnapshots[id] ?? [],
-      compareWaveSkips[id] ?? []
+    buildChartWaveJumpMarkers(
+      compareWaveSkips[id] ?? [],
+      compareNormalJumps[id] ?? []
     )
   );
   const hasCompareSkips = compareSkipMarkers.some((markers) => markers.length > 0);
