@@ -20,6 +20,14 @@ fi
 DMG_NAME="WaveTrace_${VERSION}_macos_${ARCH_LABEL}.dmg"
 DMG_PATH="$APP_DIR/$DMG_NAME"
 
+# Stage the app next to an /Applications symlink so the mounted DMG shows the
+# familiar "drag WaveTrace into Applications" layout instead of just the bare
+# app. ditto preserves the code signature and extended attributes.
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+ditto "$APP" "$STAGING/WaveTrace.app"
+ln -s /Applications "$STAGING/Applications"
+
 rm -f "$DMG_PATH"
-hdiutil create -volname "WaveTrace" -srcfolder "$APP" -ov -format UDZO "$DMG_PATH"
+hdiutil create -volname "WaveTrace" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"
 echo "Created $DMG_PATH"
