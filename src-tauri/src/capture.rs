@@ -18,6 +18,91 @@ pub struct CaptureProbe {
     pub method: &'static str,
 }
 
+/// Whether the OS grants this app the ability to read window titles and capture
+/// window pixels. macOS gates both behind the Screen Recording (TCC) permission;
+/// Windows and Linux don't, so they report `NotRequired`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenCaptureAccess {
+    Granted,
+    Denied,
+    NotRequired,
+}
+
+#[cfg(target_os = "macos")]
+mod macos_screen_recording {
+    // CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess live in the
+    // CoreGraphics framework and are available since macOS 10.15 (our minimum
+    // deployment target). Without Screen Recording access, CGWindowListCopyWindowInfo
+    // returns windows with empty titles, so the window picker comes up empty.
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+
+    pub fn has_access() -> bool {
+        // SAFETY: no-argument CoreGraphics calls with no pointer arguments.
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+
+    /// Shows the system prompt the first time access is undetermined and returns
+    /// the current grant state. When already denied it returns false without a
+    /// prompt (the user must re-enable it in System Settings).
+    pub fn request_access() -> bool {
+        // SAFETY: no-argument CoreGraphics calls with no pointer arguments.
+        unsafe { CGRequestScreenCaptureAccess() }
+    }
+}
+
+/// Current Screen Recording permission state (no prompt).
+pub fn screen_capture_access() -> ScreenCaptureAccess {
+    #[cfg(target_os = "macos")]
+    {
+        if macos_screen_recording::has_access() {
+            ScreenCaptureAccess::Granted
+        } else {
+            ScreenCaptureAccess::Denied
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ScreenCaptureAccess::NotRequired
+    }
+}
+
+/// Request Screen Recording permission, prompting on first launch (macOS only).
+pub fn request_screen_capture_access() -> ScreenCaptureAccess {
+    #[cfg(target_os = "macos")]
+    {
+        if macos_screen_recording::request_access() {
+            ScreenCaptureAccess::Granted
+        } else {
+            ScreenCaptureAccess::Denied
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ScreenCaptureAccess::NotRequired
+    }
+}
+
+/// Open the macOS Screen Recording settings pane (no-op elsewhere).
+pub fn open_screen_recording_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
 /// Cached target window id — avoids re-scoring every window each poll.
 static WINDOW_CACHE: Mutex<Option<(String, u32)>> = Mutex::new(None);
 
