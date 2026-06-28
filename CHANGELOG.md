@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS DMG CI** — stage the DMG contents inside the build output dir instead of `$TMPDIR` and retry `hdiutil create` with backoff, to avoid intermittent `hdiutil: create failed - Resource busy` (Spotlight indexing race) seen on the Intel runner.
+
 ---
 
 ## [0.2.31] — 2026-06-28

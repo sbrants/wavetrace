@@ -23,11 +23,30 @@ DMG_PATH="$APP_DIR/$DMG_NAME"
 # Stage the app next to an /Applications symlink so the mounted DMG shows the
 # familiar "drag WaveTrace into Applications" layout instead of just the bare
 # app. ditto preserves the code signature and extended attributes.
-STAGING="$(mktemp -d)"
+#
+# Stage inside the build output dir (not $TMPDIR): hdiutil imaging a source
+# folder under /var/folders races Spotlight/mds indexing and intermittently
+# fails with "hdiutil: create failed - Resource busy".
+STAGING="$APP_DIR/dmg-staging"
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
 trap 'rm -rf "$STAGING"' EXIT
 ditto "$APP" "$STAGING/WaveTrace.app"
 ln -s /Applications "$STAGING/Applications"
 
 rm -f "$DMG_PATH"
-hdiutil create -volname "WaveTrace" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"
+# hdiutil can still transiently report "Resource busy"; retry with backoff.
+created=0
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "WaveTrace" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"; then
+    created=1
+    break
+  fi
+  echo "hdiutil create failed (attempt $attempt); retrying in 5s..." >&2
+  sleep 5
+done
+if [[ "$created" -ne 1 ]]; then
+  echo "hdiutil create failed after 5 attempts" >&2
+  exit 1
+fi
 echo "Created $DMG_PATH"
