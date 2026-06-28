@@ -32,6 +32,9 @@ export interface WindowInfo {
   app_name: string;
 }
 
+/** macOS gates window titles + capture behind Screen Recording; other OSes don't. */
+export type ScreenCaptureAccess = "granted" | "denied" | "not_required";
+
 export interface Settings {
   target_window: { title_substring: string; process_name: string } | null;
   poll_interval_ms: number;
@@ -154,6 +157,12 @@ export interface BackupRestore {
 export const api = {
   quitApp: () => invoke<void>("quit_app"),
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
+  screenCaptureAccess: () =>
+    invoke<ScreenCaptureAccess>("screen_capture_access"),
+  requestScreenCaptureAccess: () =>
+    invoke<ScreenCaptureAccess>("request_screen_capture_access"),
+  openScreenRecordingSettings: () =>
+    invoke<void>("open_screen_recording_settings"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),

@@ -32,6 +32,21 @@ pub fn list_windows() -> Vec<capture::WindowInfo> {
 }
 
 #[tauri::command]
+pub fn screen_capture_access() -> capture::ScreenCaptureAccess {
+    capture::screen_capture_access()
+}
+
+#[tauri::command]
+pub fn request_screen_capture_access() -> capture::ScreenCaptureAccess {
+    capture::request_screen_capture_access()
+}
+
+#[tauri::command]
+pub fn open_screen_recording_settings() -> Result<(), String> {
+    capture::open_screen_recording_settings()
+}
+
+#[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     Ok(settings::load(&conn()?))
 }

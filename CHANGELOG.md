@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **macOS window list empty** — request the **Screen Recording** permission on first launch and surface a Settings callout (with buttons to open the Screen Recording pane and recheck) when it's missing. Without the permission macOS returns empty window titles, so the target-window picker came up blank and capture couldn't read the game.
 - **macOS DMG CI** — stage the DMG contents inside the build output dir instead of `$TMPDIR` and retry `hdiutil create` with backoff, to avoid intermittent `hdiutil: create failed - Resource busy` (Spotlight indexing race) seen on the Intel runner.
 
 ---

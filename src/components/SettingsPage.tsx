@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { api, formatCoin, Settings, WindowInfo } from "../api";
+import {
+  api,
+  formatCoin,
+  ScreenCaptureAccess,
+  Settings,
+  WindowInfo,
+} from "../api";
 import { downloadBase64File } from "../exportDownload";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
@@ -53,6 +59,8 @@ function withDefaultWindow(settings: Settings, windows: WindowInfo[]): Settings 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [windows, setWindows] = useState<WindowInfo[]>([]);
+  const [screenAccess, setScreenAccess] =
+    useState<ScreenCaptureAccess>("not_required");
   const [preview, setPreview] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [probe, setProbe] = useState<Awaited<ReturnType<typeof api.probeOcr>> | null>(
@@ -68,12 +76,20 @@ export default function SettingsPage() {
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
-    const [loadedSettings, listedWindows] = await Promise.all([
+    const [loadedSettings, listedWindows, access] = await Promise.all([
       api.getSettings(),
       api.listWindows(),
+      api.screenCaptureAccess(),
     ]);
     setWindows(listedWindows);
+    setScreenAccess(access);
     setSettings(withDefaultWindow(loadedSettings, listedWindows));
+  };
+
+  const recheckScreenAccess = async () => {
+    const access = await api.requestScreenCaptureAccess();
+    setScreenAccess(access);
+    await load();
   };
 
   useEffect(() => {
@@ -178,6 +194,32 @@ export default function SettingsPage() {
     <div className="settings">
       <section>
         <h3>Target window</h3>
+        {screenAccess === "denied" && (
+          <div className="permission-callout">
+            <p>
+              <strong>macOS needs Screen Recording permission.</strong> Without
+              it, WaveTrace can't read window titles or capture the game, so the
+              list below stays empty.
+            </p>
+            <ol>
+              <li>
+                Open <strong>System Settings → Privacy &amp; Security → Screen
+                Recording</strong>.
+              </li>
+              <li>
+                Enable <strong>WaveTrace</strong> (add it with <strong>+</strong>{" "}
+                if it isn't listed).
+              </li>
+              <li>Quit and reopen WaveTrace.</li>
+            </ol>
+            <div className="row">
+              <button onClick={() => api.openScreenRecordingSettings()}>
+                Open Screen Recording settings
+              </button>
+              <button onClick={recheckScreenAccess}>Recheck</button>
+            </div>
+          </div>
+        )}
         <div className="row">
           <label htmlFor="target-window-select">
             Game window

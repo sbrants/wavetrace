@@ -238,6 +238,29 @@ button.danger:disabled {
   flex-shrink: 0;
 }
 
+.permission-callout {
+  color: #ffd97a;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.permission-callout p {
+  margin: 0 0 8px;
+}
+
+.permission-callout ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.permission-callout li {
+  margin-bottom: 4px;
+}
+
 main {
   flex: 1;
   overflow-y: auto;

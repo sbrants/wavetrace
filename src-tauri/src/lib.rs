@@ -39,10 +39,17 @@ pub fn run() {
             if let Some(notify) = app.try_state::<NotifyState>() {
                 notify.ensure_permission(app.handle());
             }
+            // On macOS, prompt for Screen Recording on first launch so window
+            // enumeration can read titles and capture can read pixels. No-op
+            // on Windows/Linux, which don't gate this behind a permission.
+            let _ = capture::request_screen_capture_access();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_windows,
+            commands::screen_capture_access,
+            commands::request_screen_capture_access,
+            commands::open_screen_recording_settings,
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,
