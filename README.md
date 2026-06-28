@@ -15,14 +15,10 @@ current and past runs.
 
 | | |
 | --- | --- |
-| **Install** | [GitHub Releases](https://github.com/sbrants/wavetrace/releases) — Windows (NSIS) or Linux (AppImage). [Microsoft Store](https://apps.microsoft.com/detail/9P9M9DHX1L76) for MSIX. macOS DMGs are [currently broken](https://github.com/sbrants/wavetrace/issues/4). |
+| **Install** | [GitHub Releases](https://github.com/sbrants/wavetrace/releases) — Windows (NSIS), macOS (DMG), or Linux (AppImage). [Microsoft Store](https://apps.microsoft.com/detail/9P9M9DHX1L76) for MSIX. |
 | **Develop** | `npm install` then `npm run tauri dev` (Rust, Node 18+, MSVC on Windows — see [Prerequisites](#prerequisites-windows-10)) |
 | **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [good first issues](https://github.com/sbrants/wavetrace/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) · [Code of Conduct](CODE_OF_CONDUCT.md) |
 | **Docs** | [Goal.md](Goal.md) · [PRIVACY.md](PRIVACY.md) · OCR corpus [`fixtures/captured/manifest.json`](fixtures/captured/manifest.json) |
-
-## Known issues
-
-- **macOS (GitHub Releases)** — Current macOS DMGs (Apple Silicon and Intel) are **broken** in recent releases: the app may fail to launch or scanning may not work reliably. Prefer **Windows** or **Linux** until a fix ships. Tracked in [#4](https://github.com/sbrants/wavetrace/issues/4).
 
 ## Stack
 
@@ -93,10 +89,10 @@ Reference game-mode PNGs at `fixtures/` root are committed for OCR regression
 
 | Channel | How to get it | Updates |
 | ------- | ------------- | ------- |
-| **GitHub Releases** | Download the NSIS `.exe` (Windows) or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases). macOS `.dmg` files are published but **currently broken** — see [#4](https://github.com/sbrants/wavetrace/issues/4). | In-app updater on Windows & Linux (GitHub `latest.json`); macOS updater disabled until fixed |
+| **GitHub Releases** | Download the NSIS `.exe` (Windows), `.dmg` (macOS), or AppImage (Linux) from [releases](https://github.com/sbrants/wavetrace/releases). | In-app updater on Windows, macOS & Linux (GitHub `latest.json`) |
 | **Microsoft Store** | Search for WaveTrace or open the [Store listing](https://apps.microsoft.com/detail/9P9M9DHX1L76) | Microsoft Store (Settings explains this; no GitHub in-app updater) |
 | **Arch Linux** | `makepkg` from `packaging/arch/` or install from AUR if published | Package manager |
-| **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew — **broken in releases**; local builds may help debug | Rebuild from source; do not rely on Release DMGs until fixed |
+| **macOS (dev)** | `./scripts/build-macos.sh` on a Mac with Homebrew | Rebuild from source |
 
 WaveTrace is local-only: no account, no cloud sync. See [PRIVACY.md](PRIVACY.md).
 
@@ -176,9 +172,7 @@ Local signed Windows builds can set `TAURI_SIGNING_PRIVATE_KEY_PATH` in
 
 ## macOS
 
-> **Known issue:** GitHub Release DMGs (Apple Silicon and Intel) are **currently broken** — launch failures and unreliable capture/OCR have been reported. Use Windows or Linux for production play. Tracked in [#4](https://github.com/sbrants/wavetrace/issues/4).
-
-WaveTrace on macOS uses Tesseract OCR (same path as Linux). CI still builds **two DMGs** per
+WaveTrace on macOS uses Tesseract OCR (same path as Linux). CI builds **two DMGs** per
 release: `WaveTrace_<version>_macos_aarch64.dmg` (Apple Silicon) and
 `WaveTrace_<version>_macos_x86_64.dmg` (Intel).
 
@@ -199,8 +193,12 @@ cd wavetrace
 Output: `src-tauri/target/<arch>-apple-darwin/release/bundle/macos/WaveTrace_*_macos_*.dmg`
 
 Grant **Screen Recording** in System Settings → Privacy & Security on first launch.
-Unsigned or ad-hoc-signed builds may require right-click → **Open** once (Developer ID
-notarization is planned).
+
+WaveTrace DMGs are ad-hoc signed, not notarized, so macOS quarantines downloads.
+If the app refuses to open ("damaged" / unidentified developer), clear the
+quarantine flag after copying it to Applications:
+`xattr -dr com.apple.quarantine /Applications/WaveTrace.app` (or right-click
+the app → **Open**). Developer ID notarization is planned.
 
 ## Arch Linux
 
