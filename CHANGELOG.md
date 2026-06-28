@@ -5,17 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Known issues
-
-- **macOS** — GitHub Release DMGs (Apple Silicon and Intel) are currently **broken** (launch and/or scanning). Prefer Windows or Linux until fixed ([#4](https://github.com/sbrants/wavetrace/issues/4)).
-
 ---
 
 ## [0.2.30] — 2026-06-28
 
 ### Fixed
 
-- **macOS launch failure** ([#4](https://github.com/sbrants/wavetrace/issues/4)) — re-sign the app bundle inside-out (each bundled dylib, then the executable, then the `.app`) after `install_name_tool` rewrites, instead of a single best-effort `codesign --deep` whose errors were swallowed. Stale ad-hoc signatures made Apple Silicon kill the app at launch. Signing now fails the build loudly and verifies with `codesign --verify --deep --strict`. (Pending verification on real arm64/x86_64 hardware before the Known-issues callout is removed.)
+- **macOS launch failure** ([#4](https://github.com/sbrants/wavetrace/issues/4)) — re-sign the app bundle inside-out (each bundled dylib, then the executable, then the `.app`) after `install_name_tool` rewrites, instead of a single best-effort `codesign --deep` whose errors were swallowed. Stale ad-hoc signatures made Apple Silicon kill the app at launch. Signing now fails the build loudly and verifies with `codesign --verify --deep --strict`.
 
 ---
 
