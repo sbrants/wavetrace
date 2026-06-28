@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.32] — 2026-06-28
+
 ### Fixed
 
 - **macOS window list empty** — request the **Screen Recording** permission on first launch and surface a Settings callout (with buttons to open the Screen Recording pane and recheck) when it's missing. Without the permission macOS returns empty window titles, so the target-window picker came up blank and capture couldn't read the game.
