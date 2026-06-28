@@ -195,10 +195,11 @@ Output: `src-tauri/target/<arch>-apple-darwin/release/bundle/macos/WaveTrace_*_m
 Grant **Screen Recording** in System Settings → Privacy & Security on first launch.
 
 WaveTrace DMGs are ad-hoc signed, not notarized, so macOS quarantines downloads.
-If the app refuses to open ("damaged" / unidentified developer), clear the
-quarantine flag after copying it to Applications:
-`xattr -dr com.apple.quarantine /Applications/WaveTrace.app` (or right-click
-the app → **Open**). Developer ID notarization is planned.
+If the app is blocked after launch, open **System Settings → Privacy & Security**,
+scroll down, and click **Open Anyway** next to the blocked WaveTrace app. As a
+terminal fallback after copying it to Applications, clear the quarantine flag:
+`xattr -dr com.apple.quarantine /Applications/WaveTrace.app`. Developer ID
+notarization is planned.
 
 ## Arch Linux
 
