@@ -142,9 +142,19 @@ fn capture_from_cached_id(windows: &[xcap::Window], title_substring: &str) -> Op
             .map(|(_, id)| *id)
     })?;
 
+    let needle = title_substring.to_lowercase();
     for w in windows {
         if w.id().ok() != Some(cached_id) {
             continue;
+        }
+        // The OS can reuse a window id (HWND on Windows) for a different window
+        // after the original closes — e.g. when the emulator is restarted. Confirm
+        // the cached id still points at a matching game window before trusting it,
+        // otherwise we'd silently capture (and OCR) the wrong window.
+        let title = w.title().unwrap_or_default();
+        let app = w.app_name().unwrap_or_default();
+        if !title.to_lowercase().contains(&needle) || is_our_app_window(&title, &app) {
+            break;
         }
         if let Some(img) = try_capture_window(w) {
             let area = img.width().saturating_mul(img.height());
