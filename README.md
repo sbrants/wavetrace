@@ -23,6 +23,7 @@ current and past runs.
 ## Known issues
 
 - **macOS (GitHub Releases)** — Current macOS DMGs (Apple Silicon and Intel) are **broken** in recent releases: the app may fail to launch or scanning may not work reliably. Prefer **Windows** or **Linux** until a fix ships. Tracked in [#4](https://github.com/sbrants/wavetrace/issues/4).
+  - WaveTrace DMGs are ad-hoc signed, not notarized, so macOS quarantines the download. If the app refuses to open ("damaged" / unidentified developer), clear the quarantine flag after copying it to Applications: `xattr -dr com.apple.quarantine /Applications/WaveTrace.app` (or right-click the app → **Open**).
 
 ## Stack
 

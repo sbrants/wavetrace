@@ -234,9 +234,25 @@ if ! verify_bundle; then
   exit 1
 fi
 
-if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$APP" 2>/dev/null || true
+# Re-sign inside-out. The `install_name_tool` rewrites above invalidate the
+# ad-hoc signature the linker applied to the binary and every bundled dylib. On
+# Apple Silicon the kernel SIGKILLs a Mach-O with a stale/invalid signature at
+# launch, so signing is mandatory and must fail loudly: a silently broken sign
+# here is what shipped non-launching DMGs (issue #4). Sign each dylib first,
+# then the bundle (which seals the main executable), then verify the whole app.
+if ! command -v codesign >/dev/null 2>&1; then
+  echo "codesign not found; cannot produce a launchable macOS bundle" >&2
+  exit 1
 fi
+
+shopt -s nullglob
+for lib in "$FRAMEWORKS"/*.dylib; do
+  codesign --force --sign - --timestamp=none "$lib"
+done
+shopt -u nullglob
+codesign --force --sign - --timestamp=none "$BIN"
+codesign --force --sign - --timestamp=none "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP"
 
 dylib_count=0
 shopt -s nullglob
