@@ -421,6 +421,7 @@ export default function SettingsPage() {
 
       <section className="settings-advanced-toggle">
         <label className="checkbox-inline">
+          Show advanced settings
           <input
             type="checkbox"
             checked={showAdvanced}
@@ -430,7 +431,6 @@ export default function SettingsPage() {
               saveShowAdvanced(on);
             }}
           />
-          Advanced
         </label>
         <p className="muted">Polling interval and scanner log.</p>
       </section>
