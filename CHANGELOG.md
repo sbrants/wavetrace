@@ -5,19 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Known issues
+
+- **macOS** — GitHub Release DMGs (Apple Silicon and Intel) are currently **broken** (launch and/or scanning). Prefer Windows or Linux until fixed ([#4](https://github.com/sbrants/wavetrace/issues/4)).
+
+---
+
+## [0.2.28] — 2026-06-28
+
 ### Changed
 
 - **Release CI** — `v*` tags must point to a commit on `main` before the Release workflow publishes assets
 - **Chart downsampling** — server-side chart payload limit raised from 200 to 1000 points
 - **Compare mode** — initial compare load uses chart-safe downsampled snapshots (same as live refresh)
+- **Settings** — Background and Backup & restore now use the standard section styling; advanced toggle moved to the bottom and relabeled **Show advanced settings**
 
 ### Fixed
 
 - **Compare mode** — comparing long runs no longer loads every snapshot into the WebView on first open
-
-### Known issues
-
-- **macOS** — GitHub Release DMGs (Apple Silicon and Intel) are currently **broken** (launch and/or scanning). Prefer Windows or Linux until fixed ([#4](https://github.com/sbrants/wavetrace/issues/4)).
 
 ---
 
