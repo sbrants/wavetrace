@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.31] — 2026-06-28
+
+### Changed
+
+- **macOS DMG** — the disk image now includes an `/Applications` shortcut next to the app, so users get the standard drag-to-install layout instead of a bare `WaveTrace.app`.
+
+---
+
 ## [0.2.30] — 2026-06-28
 
 ### Fixed
