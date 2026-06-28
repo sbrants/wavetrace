@@ -11,6 +11,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.29] — 2026-06-28
+
+### Changed
+
+- **Chart sampling** — wave skips and snapshots are now sampled independently for the chart; `+1` jump markers are derived from the full snapshot series instead of the downsampled points, and both chart caps were raised to 5000 points so long runs show more detail
+
+### Fixed
+
+- **Screen capture after emulator restart** — a reused OS window handle no longer causes WaveTrace to capture and OCR the wrong window; the cached window is re-validated by title, so snapshots keep recording after the emulator is closed and reopened
+
+---
+
 ## [0.2.28] — 2026-06-28
 
 ### Changed
