@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Target window selection** — picking a window in Settings now captures that exact window by title (and app name), persisted across restarts. Title-substring normalization and emulator/browser heuristics apply only to auto-detect when no window was chosen (e.g. first run without visiting Settings).
+
 ---
 
 ## [0.2.32] — 2026-06-28

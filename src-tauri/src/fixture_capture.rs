@@ -7,7 +7,7 @@ use std::time::Duration;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use crate::{capture, fields, parser::CoinReading, state_machine::GameMode};
+use crate::{capture, fields, parser::CoinReading, settings::TargetWindow, state_machine::GameMode};
 
 /// Minimum coin-rate detection rate for captured frames.
 pub const LIVE_COIN_HIT_RATE_MIN: f64 = 0.80;
@@ -192,11 +192,12 @@ fn write_png(path: &Path, img: &RgbaImage) -> Result<(), String> {
     img.save(path).map_err(|e| e.to_string())
 }
 
-pub fn capture_once(window_title: &str, label_detected: bool) -> Result<CaptureEntry, String> {
-    let frame = capture::capture_by_title(window_title).ok_or_else(|| {
+pub fn capture_once(target: &TargetWindow, label_detected: bool) -> Result<CaptureEntry, String> {
+    let frame = capture::capture_target(target).ok_or_else(|| {
         format!(
-            "Window not found or too small: \"{window_title}\". \
-             Pick the emulator window in Settings (needs ~450×900+ pixels)."
+            "Window not found or too small: \"{}\". \
+             Pick the emulator window in Settings (needs ~450×900+ pixels).",
+            target.title_substring
         )
     })?;
     if frame.width() < 400 || frame.height() < 800 {
@@ -206,20 +207,20 @@ pub fn capture_once(window_title: &str, label_detected: bool) -> Result<CaptureE
             frame.height()
         ));
     }
-    let mut entry = analyze_frame(&frame, window_title);
+    let mut entry = analyze_frame(&frame, &target.title_substring);
     persist_entry(&frame, &mut entry, label_detected)?;
     Ok(entry)
 }
 
 pub fn capture_burst(
-    window_title: &str,
+    target: &TargetWindow,
     count: usize,
     interval_ms: u64,
     label_detected: bool,
 ) -> Result<Vec<CaptureEntry>, String> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        match capture_once(window_title, label_detected) {
+        match capture_once(target, label_detected) {
             Ok(entry) => {
                 eprintln!(
                     "[{}/{count}] {} coin_rate={} coin_lines={:?}",

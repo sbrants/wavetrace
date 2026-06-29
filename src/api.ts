@@ -36,7 +36,11 @@ export interface WindowInfo {
 export type ScreenCaptureAccess = "granted" | "denied" | "not_required";
 
 export interface Settings {
-  target_window: { title_substring: string; process_name: string } | null;
+  target_window: {
+    title_substring: string;
+    process_name: string;
+    user_selected?: boolean;
+  } | null;
   poll_interval_ms: number;
   minimize_to_tray: boolean;
   notify_run_ended: boolean;
