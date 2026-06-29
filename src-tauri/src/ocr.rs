@@ -67,7 +67,7 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
     ensure_tesseract_paths();
     let mut all_lines = Vec::new();
     let mut any_ok = false;
-    for region in OCR_REGIONS {
+    for &region in OCR_REGIONS {
         match ocr_region(img, region) {
             Ok(lines) => {
                 if !lines.is_empty() {
