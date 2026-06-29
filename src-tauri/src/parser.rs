@@ -20,15 +20,26 @@ pub enum CoinReading {
 /// Ordered table from Goal.md: index * 3 = exponent.
 /// Single letters are case-sensitive (q != Q, s != S). After "D" (index 11),
 /// two-letter lowercase suffixes continue the sequence: aa, ab, ... az, ba, ...
+/// Exact power of ten, computed via the correctly-rounded decimal parser.
+///
+/// `10f64.powi(n)` is iterated multiplication and is not guaranteed to be the
+/// correctly-rounded nearest `f64`, so for `n >= 23` it can differ from the
+/// literal `1eN` by an ULP — and that rounding depends on the optimization
+/// level, which made tests pass in `--release` but fail in debug. Parsing
+/// `"1eN"` matches the compiler's float literals bit-for-bit on every platform.
+fn pow10(exp: i32) -> f64 {
+    format!("1e{exp}").parse::<f64>().unwrap_or(f64::INFINITY)
+}
+
 pub fn suffix_multiplier(suffix: &str) -> Option<f64> {
     const SINGLE: [&str; 12] = ["", "K", "M", "B", "T", "q", "Q", "s", "S", "O", "N", "D"];
     if let Some(idx) = SINGLE.iter().position(|s| *s == suffix) {
-        return Some(10f64.powi(idx as i32 * 3));
+        return Some(pow10(idx as i32 * 3));
     }
     let bytes = suffix.as_bytes();
     if bytes.len() == 2 && bytes.iter().all(|b| b.is_ascii_lowercase()) {
         let idx = 12 + (bytes[0] - b'a') as i32 * 26 + (bytes[1] - b'a') as i32;
-        return Some(10f64.powi(idx * 3));
+        return Some(pow10(idx * 3));
     }
     None
 }
@@ -1048,9 +1059,10 @@ mod tests {
         assert_eq!(suffix_multiplier("aa"), Some(1e36));
         assert_eq!(suffix_multiplier("ab"), Some(1e39));
         assert_eq!(suffix_multiplier("ac"), Some(1e42));
-        // Pattern continues
-        assert_eq!(suffix_multiplier("az"), Some(10f64.powi((12 + 25) * 3)));
-        assert_eq!(suffix_multiplier("ba"), Some(10f64.powi((12 + 26) * 3)));
+        // Pattern continues. idx("az") = 12 + 0*26 + 25 = 37 -> 10^111;
+        // idx("ba") = 12 + 1*26 + 0 = 38 -> 10^114.
+        assert_eq!(suffix_multiplier("az"), Some(1e111));
+        assert_eq!(suffix_multiplier("ba"), Some(1e114));
         assert_eq!(suffix_multiplier("ZZ"), None);
     }
 
