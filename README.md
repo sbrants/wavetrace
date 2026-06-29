@@ -193,6 +193,12 @@ cd wavetrace
 Output: `src-tauri/target/<arch>-apple-darwin/release/bundle/macos/WaveTrace_*_macos_*.dmg`
 
 Grant **Screen Recording** in System Settings → Privacy & Security on first launch.
+Because current DMGs are ad-hoc signed, macOS may treat an auto-updated app as a
+new privacy identity even when the old WaveTrace entry is still visible. If
+window capture stops working after an update, remove WaveTrace from **Screen
+Recording** and add it again, or run
+`tccutil reset ScreenCapture com.wavetrace.app` in Terminal and grant the
+permission again on next launch.
 
 WaveTrace DMGs are ad-hoc signed, not notarized, so macOS quarantines downloads.
 If the app is blocked after launch, open **System Settings → Privacy & Security**,

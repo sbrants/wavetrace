@@ -213,6 +213,13 @@ export default function SettingsPage() {
               </li>
               <li>Quit and reopen WaveTrace.</li>
             </ol>
+            <p className="muted">
+              After an auto-update, macOS may keep a stale Screen Recording
+              entry for the previous WaveTrace build. If permission still shows
+              as missing, remove WaveTrace from this list and add it again, or
+              run <code>tccutil reset ScreenCapture com.wavetrace.app</code> in
+              Terminal and grant permission again on next launch.
+            </p>
             <div className="row">
               <button onClick={() => api.openScreenRecordingSettings()}>
                 Open Screen Recording settings
