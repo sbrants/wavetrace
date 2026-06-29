@@ -5,9 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.34] — 2026-06-29
+
 ### Changed
 
 - **macOS Screen Recording guidance** — Settings and README now explain that ad-hoc-signed auto-updates can leave a stale macOS privacy entry. Users can recover by removing/re-adding WaveTrace in Screen Recording or running `tccutil reset ScreenCapture com.wavetrace.app`.
+- **Region-based OCR** — implemented for macOS/Linux, full-frame Windows OCR remain on Windows.
 
 ---
 
