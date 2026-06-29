@@ -52,6 +52,7 @@ function withDefaultWindow(settings: Settings, windows: WindowInfo[]): Settings 
     target_window: {
       title_substring: TOWER_TITLE_MATCH,
       process_name: match.app_name,
+      user_selected: false,
     },
   };
 }
@@ -226,14 +227,20 @@ export default function SettingsPage() {
             <select
               id="target-window-select"
               value={settings.target_window?.title_substring ?? ""}
-            onChange={(e) =>
+            onChange={(e) => {
+              const title = e.target.value;
+              const match = windows.find((w) => w.title === title);
               setSettings({
                 ...settings,
-                target_window: e.target.value
-                  ? { title_substring: e.target.value, process_name: "" }
+                target_window: title
+                  ? {
+                      title_substring: title,
+                      process_name: match?.app_name ?? "",
+                      user_selected: true,
+                    }
                   : null,
-              })
-            }
+              });
+            }}
           >
             <option value="">— pick a window —</option>
             {windows.map((w, i) => (
@@ -246,8 +253,9 @@ export default function SettingsPage() {
           <button onClick={() => load()}>Refresh list</button>
         </div>
         <p className="muted">
-          Matching is by title substring, so the window is found again after a
-          restart even if the full title changes.
+          Pick a window from the list to target that window by name. The title
+          substring field is for flexible matching when auto-detecting (e.g. first
+          run without a saved choice).
         </p>
         <div className="row">
           <label htmlFor="target-title-substring">
@@ -263,6 +271,7 @@ export default function SettingsPage() {
                   target_window: {
                     title_substring: e.target.value,
                     process_name: settings.target_window?.process_name ?? "",
+                    user_selected: false,
                   },
                 })
               }

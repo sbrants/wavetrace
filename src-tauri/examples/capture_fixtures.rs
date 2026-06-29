@@ -75,13 +75,15 @@ fn main() {
         return;
     }
 
-    let window_title = match title {
-        Some(t) => t,
+    let target = match title {
+        Some(t) => settings::TargetWindow {
+            title_substring: t,
+            process_name: String::new(),
+            user_selected: true,
+        },
         None => {
             let conn = db::open().expect("open db");
-            settings::resolve_target_window(&conn)
-                .expect("configure target window in Settings first")
-                .title_substring
+            settings::resolve_target_window(&conn).expect("configure target window in Settings first")
         }
     };
 
@@ -90,13 +92,16 @@ fn main() {
         println!("Cleared all {n} capture(s) and reset manifest.");
     }
 
-    println!("Capturing {count} frames every {interval_ms}ms from \"{window_title}\"...");
+    println!(
+        "Capturing {count} frames every {interval_ms}ms from \"{}\"...",
+        target.title_substring
+    );
     if label_detected {
         println!("Auto-labeling captures where tier, wave, and coin rate are detected.");
     }
     println!("Output: {}", fixture_capture::captured_dir().display());
 
-    let entries = fixture_capture::capture_burst(&window_title, count, interval_ms, label_detected)
+    let entries = fixture_capture::capture_burst(&target, count, interval_ms, label_detected)
         .expect("capture burst");
 
     let hits = entries

@@ -10,6 +10,10 @@ pub struct TargetWindow {
     pub title_substring: String,
     #[serde(default)]
     pub process_name: String,
+    /// True when the user picked a window in Settings. Capture matches that
+    /// window by title (and app name when set), not by substring heuristics.
+    #[serde(default)]
+    pub user_selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +130,7 @@ pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> 
         let tw = TargetWindow {
             title_substring: normalize_target_substring(&w.title),
             process_name: w.app_name,
+            user_selected: false,
         };
         if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
             best = Some((score, tw));
@@ -145,12 +150,17 @@ pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> 
 
 pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     if let Some(tw) = &s.target_window {
-        let mut normalized = tw.clone();
-        normalized.title_substring = normalize_target_substring(&tw.title_substring);
+        let to_save = if tw.user_selected {
+            tw.clone()
+        } else {
+            let mut normalized = tw.clone();
+            normalized.title_substring = normalize_target_substring(&tw.title_substring);
+            normalized
+        };
         db::set_setting(
             conn,
             "target_window",
-            &serde_json::to_string(&normalized).unwrap(),
+            &serde_json::to_string(&to_save).unwrap(),
         )?;
     }
     db::set_setting(conn, "poll_interval_ms", &s.poll_interval_ms.to_string())?;
@@ -176,6 +186,43 @@ mod tests {
             "The Tower"
         );
         assert_eq!(normalize_target_substring("NoxPlayer"), "noxplayer");
+    }
+
+    #[test]
+    fn save_preserves_exact_title_when_user_selected() {
+        let conn = db::open_in_memory().expect("db");
+        let s = Settings {
+            target_window: Some(TargetWindow {
+                title_substring: "The Tower - Google Chrome".into(),
+                process_name: "Google Chrome".into(),
+                user_selected: true,
+            }),
+            ..Settings::default()
+        };
+        save(&conn, &s).expect("save");
+        let loaded = load(&conn);
+        let tw = loaded.target_window.expect("target");
+        assert_eq!(tw.title_substring, "The Tower - Google Chrome");
+        assert_eq!(tw.process_name, "Google Chrome");
+        assert!(tw.user_selected);
+    }
+
+    #[test]
+    fn save_normalizes_substring_when_not_user_selected() {
+        let conn = db::open_in_memory().expect("db");
+        let s = Settings {
+            target_window: Some(TargetWindow {
+                title_substring: "The Tower - Google Chrome".into(),
+                process_name: String::new(),
+                user_selected: false,
+            }),
+            ..Settings::default()
+        };
+        save(&conn, &s).expect("save");
+        let loaded = load(&conn);
+        let tw = loaded.target_window.expect("target");
+        assert_eq!(tw.title_substring, "The Tower");
+        assert!(!tw.user_selected);
     }
 
     #[test]

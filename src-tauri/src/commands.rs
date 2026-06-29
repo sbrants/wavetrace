@@ -416,7 +416,7 @@ pub async fn capture_fixture_once() -> Result<CaptureEntry, String> {
 fn capture_fixture_once_blocking() -> Result<CaptureEntry, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
-    fixture_capture::capture_once(&target.title_substring, false)
+    fixture_capture::capture_once(&target, false)
 }
 
 /// Burst-capture frames for the OCR regression corpus.
@@ -439,7 +439,7 @@ fn capture_fixture_burst_blocking(
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
     let entries =
-        fixture_capture::capture_burst(&target.title_substring, count, interval_ms, false)?;
+        fixture_capture::capture_burst(&target, count, interval_ms, false)?;
     let coin_rate_detected = entries
         .iter()
         .filter(|e| e.classified.coin_rate_detected)
@@ -499,7 +499,7 @@ fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
     let conn = conn()?;
     let target = settings::resolve_target_window(&conn)?;
     let started = Instant::now();
-    let frame = capture::capture_by_title(&target.title_substring);
+    let frame = capture::capture_target(&target);
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     let Some(img) = frame else {
@@ -592,7 +592,7 @@ pub async fn preview_capture() -> Result<String, String> {
 fn preview_capture_blocking() -> Result<String, String> {
     let cfg = settings::load(&conn()?);
     let target = cfg.target_window.ok_or("No target window configured")?;
-    let img = capture::capture_by_title(&target.title_substring)
+    let img = capture::capture_target(&target)
         .ok_or("Window not found or minimized")?;
     let thumb = preview_thumbnail(&img);
     let mut bytes = Vec::new();

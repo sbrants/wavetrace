@@ -128,7 +128,7 @@ impl Scanner {
                     break;
                 }
                 let capture_started = Instant::now();
-                let frame = capture::capture_by_title(&target.title_substring);
+                let frame = capture::capture_target(&target);
                 let capture_ms = capture_started.elapsed().as_millis();
                 let status = match frame {
                     None => {

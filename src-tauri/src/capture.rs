@@ -5,6 +5,8 @@ use std::sync::Mutex;
 use image::RgbaImage;
 use serde::Serialize;
 
+use crate::settings::TargetWindow;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WindowInfo {
     pub title: String,
@@ -273,6 +275,99 @@ pub fn probe_window(title: &str) -> Option<CaptureProbe> {
     None
 }
 
+/// Capture the configured target window. User-picked windows are matched by exact
+/// title (and app name when saved); auto-detected targets use substring heuristics.
+pub fn capture_target(target: &TargetWindow) -> Option<RgbaImage> {
+    if target.user_selected {
+        capture_by_exact_title(&target.title_substring, &target.process_name)
+    } else {
+        capture_by_title(&target.title_substring)
+    }
+}
+
+/// Whether a live window matches a user-selected target (title equality, optional app).
+fn window_matches_exact_target(
+    title: &str,
+    app_name: &str,
+    target_title: &str,
+    target_app: &str,
+) -> bool {
+    if title.to_lowercase() != target_title.to_lowercase() {
+        return false;
+    }
+    if is_our_app_window(title, app_name) {
+        return false;
+    }
+    let filter = target_app.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    let a = app_name.to_lowercase();
+    let f = filter.to_lowercase();
+    a == f || a.contains(&f) || f.contains(&a)
+}
+
+fn capture_from_cached_id_exact(
+    windows: &[xcap::Window],
+    target_title: &str,
+    target_app: &str,
+) -> Option<RgbaImage> {
+    let cache_key = format!("exact:{target_title}\0{target_app}");
+    let cached_id = WINDOW_CACHE.lock().ok().and_then(|g| {
+        g.as_ref()
+            .filter(|(k, _)| k == &cache_key)
+            .map(|(_, id)| *id)
+    })?;
+
+    for w in windows {
+        if w.id().ok() != Some(cached_id) {
+            continue;
+        }
+        let title = w.title().unwrap_or_default();
+        let app = w.app_name().unwrap_or_default();
+        if !window_matches_exact_target(&title, &app, target_title, target_app) {
+            break;
+        }
+        if let Some(img) = try_capture_window(w) {
+            return Some(img);
+        }
+        break;
+    }
+    clear_window_cache();
+    None
+}
+
+/// Capture the non-minimized window whose title equals `title` (case-insensitive).
+/// When `app_name` is set, the window's app name must also match.
+pub fn capture_by_exact_title(title: &str, app_name: &str) -> Option<RgbaImage> {
+    let windows = xcap::Window::all().ok()?;
+    let cache_key = format!("exact:{title}\0{app_name}");
+
+    if let Some(img) = capture_from_cached_id_exact(&windows, title, app_name) {
+        return Some(img);
+    }
+
+    for w in &windows {
+        let wtitle = w.title().unwrap_or_default();
+        let app = w.app_name().unwrap_or_default();
+        if !window_matches_exact_target(&wtitle, &app, title, app_name) {
+            continue;
+        }
+        if w.is_minimized().unwrap_or(true) {
+            continue;
+        }
+        if let Some(img) = try_capture_window(w) {
+            if let Some(id) = w.id().ok() {
+                if let Ok(mut guard) = WINDOW_CACHE.lock() {
+                    *guard = Some((cache_key, id));
+                }
+            }
+            return Some(img);
+        }
+    }
+    None
+}
+
 /// Capture the largest non-minimized window whose title contains `title_substring`
 /// (case-insensitive). Prefers emulator-sized windows over narrow title-bar matches.
 /// Retains the matched window id between calls for faster subsequent captures.
@@ -333,4 +428,35 @@ pub fn crop_region(img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> RgbaImage
     let w = w.min(img.width() - x).max(1);
     let h = h.min(img.height() - y).max(1);
     image::imageops::crop_imm(img, x, y, w, h).to_image()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_matches_exact_target;
+
+    #[test]
+    fn exact_target_requires_title_equality() {
+        assert!(window_matches_exact_target(
+            "NoxPlayer",
+            "Nox",
+            "NoxPlayer",
+            "Nox"
+        ));
+        assert!(!window_matches_exact_target(
+            "The Tower - Google Chrome",
+            "Google Chrome",
+            "NoxPlayer",
+            "Nox"
+        ));
+    }
+
+    #[test]
+    fn exact_target_skips_our_app() {
+        assert!(!window_matches_exact_target(
+            "WaveTrace",
+            "WaveTrace",
+            "WaveTrace",
+            ""
+        ));
+    }
 }
