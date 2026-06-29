@@ -39,6 +39,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -56,7 +60,7 @@ jobs:
 
       - name: Cargo test
         working-directory: src-tauri
-        run: cargo test --release
+        run: cargo test
 
   rust-windows:
     name: Rust tests (Windows)
@@ -66,6 +70,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Cargo test
         working-directory: src-tauri
-        run: cargo test --release
+        run: cargo test
