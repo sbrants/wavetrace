@@ -51,7 +51,12 @@ chmod +x "$BIN" 2>/dev/null || true
 
 mkdir -p "$FRAMEWORKS" "$RESOURCES/tessdata"
 
-TESSDATA_URL="https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+# Use the high-accuracy LSTM model (tessdata_best), not tessdata_fast. The
+# in-game HUD digits and the "/min" suffix are small/stylized, and the fast
+# model misreads them badly (e.g. "Wave 20" -> "Meve20", "40.9T/min" -> "TMIAS"),
+# which leaves the parser with no wave/coin and an empty chart. "best" is slower
+# per frame but far more accurate, which matters more than throughput here.
+TESSDATA_URL="https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata"
 if ! curl -fsSL -o "$RESOURCES/tessdata/eng.traineddata" "$TESSDATA_URL"; then
   echo "Failed to download eng.traineddata from $TESSDATA_URL" >&2
   exit 1

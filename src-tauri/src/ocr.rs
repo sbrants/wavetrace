@@ -6,7 +6,9 @@ use std::ptr;
 use std::slice;
 use std::sync::{Mutex, OnceLock};
 
-use image::{imageops, RgbaImage};
+use image::RgbaImage;
+#[cfg(windows)]
+use image::imageops;
 
 #[cfg(windows)]
 use windows::{
@@ -65,20 +67,66 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
 #[cfg(not(windows))]
 pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
     ensure_tesseract_paths();
-    let dynamic = prepare_image(img);
-    let rgba = dynamic.to_rgba8();
-    let width = rgba.width() as i32;
-    let height = rgba.height() as i32;
-    let bytes_per_line = width
-        .checked_mul(4)
-        .ok_or_else(|| "Image row byte width overflow".to_string())?;
-    let text = tesseract::ocr_from_frame(rgba.as_raw(), width, height, 4, bytes_per_line, "eng")
-        .map_err(|e| format!("Tesseract OCR failed: {e}"))?;
+    let gray = prepare_image_for_tesseract(img);
+    let width = gray.width() as i32;
+    let height = gray.height() as i32;
+    // Grayscale: 1 byte per pixel, so the row stride equals the width.
+    let bytes_per_line = width;
+    let text = run_tesseract(gray.as_raw(), width, height, 1, bytes_per_line)?;
     let lines = split_lines(&text);
     if lines.is_empty() {
         return Err("Tesseract OCR returned no text".into());
     }
     Ok(lines)
+}
+
+/// Tesseract is far less forgiving than Windows OCR on the game's small,
+/// stylized HUD digits. Boost its odds by feeding a grayscale, upscaled,
+/// contrast-stretched frame instead of the raw RGBA capture.
+#[cfg(not(windows))]
+fn prepare_image_for_tesseract(img: &RgbaImage) -> image::GrayImage {
+    use image::imageops;
+
+    // Drop color: the LSTM model works on luminance and color noise only hurts.
+    let mut gray = imageops::grayscale(img);
+
+    // The HUD wave/coin glyphs are tiny in phone-mirroring captures (~880px
+    // wide). Upscale small frames so the recognizer sees larger characters.
+    // Cap the factor so latency with the (slower) `best` model stays bounded.
+    const MIN_WIDTH: u32 = 1280;
+    const MAX_SCALE: f32 = 1.6;
+    if gray.width() > 0 && gray.width() < MIN_WIDTH {
+        let scale = (MIN_WIDTH as f32 / gray.width() as f32).min(MAX_SCALE);
+        let new_w = ((gray.width() as f32) * scale).round().max(1.0) as u32;
+        let new_h = ((gray.height() as f32) * scale).round().max(1.0) as u32;
+        gray = imageops::resize(&gray, new_w, new_h, imageops::FilterType::Lanczos3);
+    }
+
+    // Stretch contrast so light HUD text separates from dark/gradient panels.
+    imageops::colorops::contrast(&gray, 30.0)
+}
+
+/// Run a single Tesseract pass over a raw grayscale frame. Uses the builder API
+/// (rather than `tesseract::ocr_from_frame`) so we can hint a source resolution,
+/// which keeps the LSTM engine from misjudging glyph scale on upscaled frames.
+#[cfg(not(windows))]
+fn run_tesseract(
+    frame: &[u8],
+    width: i32,
+    height: i32,
+    bytes_per_pixel: i32,
+    bytes_per_line: i32,
+) -> Result<String, String> {
+    let mut engine = tesseract::Tesseract::new(None, Some("eng"))
+        .map_err(|e| format!("Tesseract init failed: {e}"))?
+        .set_frame(frame, width, height, bytes_per_pixel, bytes_per_line)
+        .map_err(|e| format!("Tesseract set_frame failed: {e}"))?
+        .set_source_resolution(192)
+        .recognize()
+        .map_err(|e| format!("Tesseract recognize failed: {e}"))?;
+    engine
+        .get_text()
+        .map_err(|e| format!("Tesseract get_text failed: {e}"))
 }
 
 #[cfg(windows)]
@@ -200,6 +248,7 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
 }
 
 /// Downscale large emulator frames so OCR stays responsive.
+#[cfg(windows)]
 fn prepare_image(img: &RgbaImage) -> image::DynamicImage {
     const MAX_WIDTH: u32 = 900;
     if img.width() <= MAX_WIDTH {
