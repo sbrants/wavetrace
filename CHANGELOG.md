@@ -5,8 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.33] — 2026-06-29
+
 ### Fixed
 
+- **macOS empty chart / no data recorded** — the macOS OCR path now ships the high-accuracy `tessdata_best` model (was `tessdata_fast`) and preprocesses frames (grayscale, upscale of small phone-mirroring captures, contrast stretch) before Tesseract. The fast model garbled the HUD's Wave and coin/min fields (e.g. `Wave 20` → `Meve20`, `40.9T/min` → `TMIAS`), so the parser saw no wave/coin, no snapshots were stored, and the dashboard chart stayed on "No data yet" even though capture and the database were working.
 - **Target window selection** — picking a window in Settings now captures that exact window by title (and app name), persisted across restarts. Title-substring normalization and emulator/browser heuristics apply only to auto-detect when no window was chosen (e.g. first run without visiting Settings).
 
 ---
