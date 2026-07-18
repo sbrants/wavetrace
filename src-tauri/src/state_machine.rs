@@ -21,9 +21,33 @@ pub enum GameMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DissonanceKind {
+    Attack,
+    Defense,
+    Utility,
+    UltimateWeapons,
+}
+
+impl DissonanceKind {
+    pub fn to_run_type(self) -> RunType {
+        match self {
+            DissonanceKind::Attack => RunType::DissonanceAttack,
+            DissonanceKind::Defense => RunType::DissonanceDefense,
+            DissonanceKind::Utility => RunType::DissonanceUtility,
+            DissonanceKind::UltimateWeapons => RunType::DissonanceUltimateWeapons,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunType {
     Farming,
     Tournament,
+    DissonanceAttack,
+    DissonanceDefense,
+    DissonanceUtility,
+    DissonanceUltimateWeapons,
 }
 
 impl RunType {
@@ -31,7 +55,47 @@ impl RunType {
         match self {
             RunType::Farming => "farming",
             RunType::Tournament => "tournament",
+            RunType::DissonanceAttack => "dissonance_attack",
+            RunType::DissonanceDefense => "dissonance_defense",
+            RunType::DissonanceUtility => "dissonance_utility",
+            RunType::DissonanceUltimateWeapons => "dissonance_ultimate_weapons",
         }
+    }
+
+    pub fn from_db_str(s: &str) -> Self {
+        Self::try_from_db_str(s).unwrap_or(RunType::Farming)
+    }
+
+    pub fn try_from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "farming" => Some(RunType::Farming),
+            "tournament" => Some(RunType::Tournament),
+            "dissonance_attack" => Some(RunType::DissonanceAttack),
+            "dissonance_defense" => Some(RunType::DissonanceDefense),
+            "dissonance_utility" => Some(RunType::DissonanceUtility),
+            "dissonance_ultimate_weapons" => Some(RunType::DissonanceUltimateWeapons),
+            _ => None,
+        }
+    }
+
+    pub fn dissonance_kind(self) -> Option<DissonanceKind> {
+        match self {
+            RunType::DissonanceAttack => Some(DissonanceKind::Attack),
+            RunType::DissonanceDefense => Some(DissonanceKind::Defense),
+            RunType::DissonanceUtility => Some(DissonanceKind::Utility),
+            RunType::DissonanceUltimateWeapons => Some(DissonanceKind::UltimateWeapons),
+            _ => None,
+        }
+    }
+}
+
+fn resolve_run_type(tournament_seen: bool, dissonance_seen: Option<DissonanceKind>) -> RunType {
+    if tournament_seen {
+        RunType::Tournament
+    } else if let Some(kind) = dissonance_seen {
+        kind.to_run_type()
+    } else {
+        RunType::Farming
     }
 }
 
@@ -44,6 +108,8 @@ pub struct PollInput {
     pub coin: CoinReading,
     /// Parsed from the in-game "Wave Skipped!" banner.
     pub wave_skip_overlay: WaveSkipOverlay,
+    /// Dissonance (disco) run category when visible on screen.
+    pub dissonance: Option<DissonanceKind>,
 }
 
 /// Side effects the caller must apply.
@@ -433,6 +499,7 @@ pub struct RunStateMachine {
     last_seen_coin: Option<f64>,
     last_mode: GameMode,
     tournament_seen: bool,
+    dissonance_seen: Option<DissonanceKind>,
     /// Consecutive polls where coin reads as a balance (no /min).
     consecutive_total_coin_polls: u32,
     /// Last skip banner ×N (dashboard), when OCR parsed it.
@@ -463,6 +530,7 @@ impl RunStateMachine {
             last_seen_coin: None,
             last_mode: GameMode::Unknown,
             tournament_seen: false,
+            dissonance_seen: None,
             consecutive_total_coin_polls: 0,
             last_skip_multiplier: None,
             last_wave_delta: None,
@@ -501,6 +569,20 @@ impl RunStateMachine {
         }
     }
 
+    /// Remember tournament/dissonance cues from the latest classified frame.
+    pub fn absorb_run_type_hints(&mut self, input: &PollInput) {
+        if input.mode == GameMode::Tournament {
+            self.tournament_seen = true;
+        }
+        if let Some(kind) = input.dissonance {
+            self.dissonance_seen = Some(kind);
+        }
+    }
+
+    pub fn absorb_dissonance(&mut self, kind: DissonanceKind) {
+        self.dissonance_seen = Some(kind);
+    }
+
     /// User clicked "New Run": close any active run; the next confirmed
     /// wave starts a fresh one regardless of value.
     pub fn manual_new_run(&mut self) -> Vec<Action> {
@@ -516,17 +598,15 @@ impl RunStateMachine {
                 self.last_coin_rate.or(self.last_seen_coin),
             ));
         }
+        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen);
         // Forget confirmed wave so the next confirmed reading can start a run
         // even if it is > 1.
         self.wave = Debounced::default();
-        self.tournament_seen = false;
         self.wave_skip.reset();
         self.unconfirmed_lower_wave = None;
         self.reset_coin_tracking();
-        actions.push(Action::StartRun {
-            run_type: RunType::Farming,
-        });
-        self.run = Some(new_active_run(RunType::Farming));
+        actions.push(Action::StartRun { run_type });
+        self.run = Some(new_active_run(run_type));
         actions
     }
 
@@ -555,11 +635,7 @@ impl RunStateMachine {
         if self.run.is_some() {
             return Vec::new();
         }
-        let run_type = if self.tournament_seen {
-            RunType::Tournament
-        } else {
-            RunType::Farming
-        };
+        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen);
         self.run = Some(new_active_run(run_type));
         let mut actions = vec![Action::StartRun { run_type }];
         if let Some(wave) = self.wave.confirmed.or(self.last_seen_wave) {
@@ -581,6 +657,9 @@ impl RunStateMachine {
 
         if input.mode == GameMode::Tournament {
             self.tournament_seen = true;
+        }
+        if let Some(kind) = input.dissonance {
+            self.dissonance_seen = Some(kind);
         }
 
         // Coin rate only updates from a /min reading (normal / intro_sprint).
@@ -687,11 +766,8 @@ impl RunStateMachine {
                     None => {
                         // A run starts when wave 1 is confirmed (Goal.md run lifecycle).
                         if wave == 1 {
-                            let run_type = if self.tournament_seen {
-                                RunType::Tournament
-                            } else {
-                                RunType::Farming
-                            };
+                            let run_type =
+                                resolve_run_type(self.tournament_seen, self.dissonance_seen);
                             actions.push(Action::StartRun { run_type });
                             // Keep debounced coin rate — polls toward wave 1 already
                             // established the current /min for snapshots.
@@ -710,12 +786,10 @@ impl RunStateMachine {
                                 final_wave,
                                 self.last_coin_rate.or(self.last_seen_coin),
                             ));
-                            let run_type = if self.tournament_seen {
-                                RunType::Tournament
-                            } else {
-                                RunType::Farming
-                            };
+                            let run_type =
+                                resolve_run_type(self.tournament_seen, self.dissonance_seen);
                             self.tournament_seen = run_type == RunType::Tournament;
+                            self.dissonance_seen = run_type.dissonance_kind();
                             actions.push(Action::StartRun { run_type });
                             self.reset_coin_tracking();
                             self.run = Some(new_active_run(run_type));
@@ -857,6 +931,24 @@ mod tests {
             wave: Some(wave),
             coin,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            dissonance: None,
+        }
+    }
+
+    fn p_dissonance(
+        mode: GameMode,
+        tier: u32,
+        wave: u32,
+        coin: CoinReading,
+        dissonance: DissonanceKind,
+    ) -> PollInput {
+        PollInput {
+            mode,
+            tier: Some(tier),
+            wave: Some(wave),
+            coin,
+            wave_skip_overlay: WaveSkipOverlay::default(),
+            dissonance: Some(dissonance),
         }
     }
 
@@ -873,6 +965,7 @@ mod tests {
             wave: Some(wave),
             coin,
             wave_skip_overlay: overlay,
+            dissonance: None,
         }
     }
 
@@ -1223,6 +1316,42 @@ mod tests {
     }
 
     #[test]
+    fn dissonance_attack_run_gets_tagged() {
+        let mut sm = RunStateMachine::new();
+        let actions = feed2(
+            &mut sm,
+            p_dissonance(
+                GameMode::Normal,
+                14,
+                1,
+                CoinReading::Rate(1e12),
+                DissonanceKind::Attack,
+            ),
+        );
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::DissonanceAttack
+        }));
+    }
+
+    #[test]
+    fn tournament_takes_priority_over_dissonance() {
+        let mut sm = RunStateMachine::new();
+        let actions = feed2(
+            &mut sm,
+            p_dissonance(
+                GameMode::Tournament,
+                17,
+                1,
+                CoinReading::Total(3.06e15),
+                DissonanceKind::Utility,
+            ),
+        );
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::Tournament
+        }));
+    }
+
+    #[test]
     fn end_of_run_screen_ends_run_without_snapshot() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 11, 1, CoinReading::Rate(10.0)));
@@ -1234,6 +1363,7 @@ mod tests {
             wave: None,
             coin: CoinReading::Unreadable,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            dissonance: None,
         });
         assert_eq!(
             actions,
@@ -1266,6 +1396,26 @@ mod tests {
         assert!(a.contains(&Action::StartRun {
             run_type: RunType::Farming
         }));
+    }
+
+    #[test]
+    fn manual_new_run_tags_dissonance_from_screen_hints() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p_dissonance(
+                GameMode::Normal,
+                15,
+                100,
+                CoinReading::Rate(1e12),
+                DissonanceKind::Defense,
+            ),
+        );
+        let actions = sm.manual_new_run();
+        assert!(actions.contains(&Action::StartRun {
+            run_type: RunType::DissonanceDefense
+        }));
+        assert_eq!(sm.live_state().run_type, Some(RunType::DissonanceDefense));
     }
 
     #[test]
@@ -1330,6 +1480,7 @@ mod tests {
             wave: None,
             coin: CoinReading::Unreadable,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            dissonance: None,
         });
         assert_eq!(
             actions,

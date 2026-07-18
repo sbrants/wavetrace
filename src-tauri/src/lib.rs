@@ -8,6 +8,7 @@ pub mod export;
 pub mod fields;
 pub mod fixture_capture;
 pub mod fixture_corpus;
+pub mod dissonance_icons;
 pub mod notifications;
 pub mod ocr;
 pub mod parser;
@@ -64,6 +65,7 @@ pub fn run() {
             commands::manual_new_run,
             commands::list_runs,
             commands::set_run_comment,
+            commands::set_run_type,
             commands::delete_runs,
             commands::delete_snapshot,
             commands::delete_snapshots,

@@ -11,7 +11,7 @@ mod tests {
     use crate::fields;
     use crate::fixture_capture::{self, CaptureManifest, LIVE_COIN_HIT_RATE_MIN};
     use crate::parser::CoinReading;
-    use crate::state_machine::GameMode;
+    use crate::state_machine::{DissonanceKind, GameMode};
 
     fn fixtures_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
@@ -34,6 +34,7 @@ mod tests {
         tier: Option<u32>,
         wave: Option<u32>,
         coin_per_minute: Option<f64>,
+        dissonance: Option<String>,
     }
 
     fn load_reference_png(name: &str) -> RgbaImage {
@@ -61,6 +62,16 @@ mod tests {
         }
     }
 
+    fn dissonance_from_str(value: &str) -> Option<DissonanceKind> {
+        match value {
+            "attack" => Some(DissonanceKind::Attack),
+            "defense" => Some(DissonanceKind::Defense),
+            "utility" => Some(DissonanceKind::Utility),
+            "ultimate_weapons" => Some(DissonanceKind::UltimateWeapons),
+            _ => None,
+        }
+    }
+
     #[test]
     fn reference_screenshots_have_ocr_pipeline() {
         let path = fixtures_dir().join("reference.json");
@@ -70,7 +81,7 @@ mod tests {
         for fx in &root.fixtures {
             let img = load_reference_png(&fx.file);
             let ocr = fields::ocr_all_fields(&img);
-            let input = fields::poll_input_from_fields(&ocr);
+            let input = fields::poll_input_from_fields(&ocr, &img);
 
             assert_eq!(
                 input.mode,
@@ -101,6 +112,15 @@ mod tests {
                     "expected no coin rate in {} coin={:?}",
                     fx.file,
                     input.coin
+                );
+            }
+            if let Some(expected) = fx.expect.dissonance.as_deref() {
+                assert_eq!(
+                    input.dissonance,
+                    dissonance_from_str(expected),
+                    "dissonance in {} lines={:?}",
+                    fx.file,
+                    ocr.all_lines
                 );
             }
         }

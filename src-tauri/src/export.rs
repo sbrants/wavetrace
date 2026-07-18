@@ -189,10 +189,13 @@ fn write_run_detail_sheet(sheet: &mut Sheet, run: &RunRow, snaps: &[SnapshotRow]
 
 fn unique_sheet_name(run: &RunRow, index: usize, used: &mut HashSet<String>) -> String {
     let date = run.started_at.chars().take(10).collect::<String>();
-    let kind = if run.run_type == "tournament" {
-        "tournament"
-    } else {
-        "farming"
+    let kind = match run.run_type.as_str() {
+        "tournament" => "tournament",
+        "dissonance_attack" => "disco attack",
+        "dissonance_defense" => "disco defense",
+        "dissonance_utility" => "disco utility",
+        "dissonance_ultimate_weapons" => "disco UW",
+        _ => "farming",
     };
     let wave = run.final_wave.unwrap_or(0);
     let tier = run.peak_tier.unwrap_or(0);

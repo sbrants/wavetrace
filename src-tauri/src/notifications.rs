@@ -239,6 +239,10 @@ fn run_type_label(run_type: RunType) -> &'static str {
     match run_type {
         RunType::Farming => "farming",
         RunType::Tournament => "tournament",
+        RunType::DissonanceAttack => "dissonance attack",
+        RunType::DissonanceDefense => "dissonance defense",
+        RunType::DissonanceUtility => "dissonance utility",
+        RunType::DissonanceUltimateWeapons => "dissonance ultimate weapons",
     }
 }
 
@@ -278,16 +282,6 @@ fn format_wave(wave: u32) -> String {
         out.push(ch);
     }
     out.chars().rev().collect()
-}
-
-fn encode_capture_png(img: &RgbaImage) -> Result<Vec<u8>, String> {
-    use std::io::Cursor;
-
-    let mut buf = Vec::new();
-    image::DynamicImage::ImageRgba8(img.clone())
-        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
-        .map_err(|e| format!("png encode failed: {e}"))?;
-    Ok(buf)
 }
 
 /// ntfy.sh allows 2 MB per attachment (public server); stay safely below that.
@@ -466,12 +460,5 @@ mod tests {
         let att = prepare_ntfy_capture(&img).expect("jpeg");
         assert!(att.bytes.len() <= NTFY_ATTACH_MAX_BYTES);
         assert_eq!(att.content_type, "image/jpeg");
-    }
-
-    #[test]
-    fn encode_capture_png_round_trip() {
-        let img = RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
-        let png = encode_capture_png(&img).expect("png");
-        assert!(png.starts_with(b"\x89PNG"));
     }
 }

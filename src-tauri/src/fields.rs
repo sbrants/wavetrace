@@ -45,8 +45,12 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
     }
 }
 
-pub fn poll_input_from_fields(fields: &FieldOcr) -> PollInput {
-    classify::classify(&fields.all_lines)
+pub fn poll_input_from_fields(fields: &FieldOcr, frame: &RgbaImage) -> PollInput {
+    let mut input = classify::classify(&fields.all_lines);
+    if input.dissonance.is_none() {
+        input.dissonance = crate::dissonance_icons::detect(frame);
+    }
+    input
 }
 
 /// One-shot OCR for Settings diagnostics (same as a normal poll).

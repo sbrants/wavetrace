@@ -6,6 +6,7 @@ import {
 } from "../skipDisplay";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
+import { formatRunType, runTypeUsesBadge } from "../runType";
 
 const SNAPSHOT_REFRESH_MS = 15_000;
 
@@ -93,13 +94,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         <StatCard
           label="Run"
           value={
-            live?.run_active
-              ? live.run_type === "tournament"
-                ? "Tournament"
-                : "Farming"
-              : "None"
+            live?.run_active ? formatRunType(live.run_type) : "None"
           }
-          badge={live?.run_type === "tournament"}
+          badge={live?.run_active && runTypeUsesBadge(live.run_type)}
         />
       </div>
 

@@ -103,7 +103,10 @@ impl Scanner {
         let log_path = db::app_data_dir().join("logs");
         std::fs::create_dir_all(&log_path).ok();
         let start_actions = match mode {
-            ScanStartMode::NewRun => self.machine.lock().unwrap().manual_new_run(),
+            ScanStartMode::NewRun => new_run_actions(
+                &mut self.machine.lock().unwrap(),
+                &target,
+            ),
             ScanStartMode::ResumePrevious => self.prepare_resume(&conn)?,
         };
         if !start_actions.is_empty() {
@@ -149,7 +152,7 @@ impl Scanner {
                         if !should_continue() {
                             break;
                         }
-                        let input = fields::poll_input_from_fields(&fields);
+                        let input = fields::poll_input_from_fields(&fields, &full);
                         log_line(
                             &log_path,
                             &format!(
@@ -191,10 +194,7 @@ impl Scanner {
             return Err("No run to resume — start a new run instead.".into());
         };
         let (last_wave, peak_tier) = db::snapshot_stats(conn, &id).map_err(|e| e.to_string())?;
-        let run_type = match run_type.as_str() {
-            "tournament" => RunType::Tournament,
-            _ => RunType::Farming,
-        };
+        let run_type = RunType::from_db_str(&run_type);
         // Always re-sync from DB: the game may have advanced while the scanner was stopped.
         self.machine.lock().unwrap().resume_from_db(
             run_type,
@@ -204,6 +204,21 @@ impl Scanner {
         *self.current_run_id.lock().unwrap() = Some(id);
         Ok(Vec::new())
     }
+}
+
+/// End any active run and open a new one, tagging from the current game screen.
+pub fn new_run_actions(
+    machine: &mut RunStateMachine,
+    target: &settings::TargetWindow,
+) -> Vec<Action> {
+    // Image-only dissonance detection — Windows OCR (WinRT) must run on the scanner
+    // thread; calling it here would hit RoInitialize on the UI/command thread.
+    if let Some(frame) = capture::capture_target(target) {
+        if let Some(kind) = crate::dissonance_icons::detect(&frame) {
+            machine.absorb_dissonance(kind);
+        }
+    }
+    machine.manual_new_run()
 }
 
 pub fn apply_actions(

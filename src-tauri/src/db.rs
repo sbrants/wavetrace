@@ -408,6 +408,20 @@ pub fn set_run_comment(conn: &Connection, run_id: &str, comment: &str) -> rusqli
     Ok(())
 }
 
+pub fn set_run_type(conn: &Connection, run_id: &str, run_type: &str) -> rusqlite::Result<()> {
+    if crate::state_machine::RunType::try_from_db_str(run_type).is_none() {
+        return Err(rusqlite::Error::InvalidParameterName(run_type.to_string()));
+    }
+    let updated = conn.execute(
+        "UPDATE runs SET run_type = ?2 WHERE id = ?1",
+        params![run_id, run_type],
+    )?;
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CombineRunsError {
     TooFewRuns,
@@ -464,6 +478,28 @@ fn merge_run_comments(comments: &[Option<String>]) -> Option<String> {
         1 => Some(parts[0].clone()),
         _ => Some(parts.join(" · ")),
     }
+}
+
+fn combine_run_type(source_runs: &[SourceRun]) -> String {
+    if source_runs.iter().any(|r| r.run_type == "tournament") {
+        return "tournament".to_string();
+    }
+    let mut types: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for run in source_runs {
+        types.insert(run.run_type.as_str());
+    }
+    if types.len() == 1 {
+        return source_runs[0].run_type.clone();
+    }
+    let dissonance: Vec<&str> = source_runs
+        .iter()
+        .map(|r| r.run_type.as_str())
+        .filter(|t| t.starts_with("dissonance_"))
+        .collect();
+    if !dissonance.is_empty() && dissonance.iter().all(|t| *t == dissonance[0]) {
+        return dissonance[0].to_string();
+    }
+    "farming".to_string()
 }
 
 /// Merge multiple ended runs into one when their snapshot waves form a strictly
@@ -541,11 +577,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
         .max()
         .unwrap()
         .to_string();
-    let run_type = if source_runs.iter().any(|r| r.run_type == "tournament") {
-        "tournament".to_string()
-    } else {
-        "farming".to_string()
-    };
+    let run_type = combine_run_type(&source_runs);
     let peak_tier = combined_snapshots.iter().filter_map(|s| s.tier).max();
     let final_wave = combined_snapshots.last().map(|s| s.wave);
     let comment = merge_run_comments(
@@ -1022,6 +1054,16 @@ mod tests {
         set_run_comment(&conn, &id, "").unwrap();
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].comment, None);
+    }
+
+    #[test]
+    fn run_type_roundtrip() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "farming").unwrap();
+        set_run_type(&conn, &id, "dissonance_utility").unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].run_type, "dissonance_utility");
+        assert!(set_run_type(&conn, &id, "invalid").is_err());
     }
 
     #[test]

@@ -815,6 +815,21 @@ tbody tr.selected {
   min-width: 200px;
 }
 
+.run-type-col {
+  width: 180px;
+  min-width: 180px;
+}
+
+.run-type-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
 .comment-input {
   display: block;
   width: 100%;

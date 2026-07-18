@@ -182,11 +182,15 @@ pub fn live_state(state: State<AppState>) -> LiveState {
 
 #[tauri::command]
 pub fn manual_new_run(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let actions = state.scanner.machine.lock().unwrap().manual_new_run();
-    let c = conn()?;
+    let conn = conn()?;
+    let target = settings::resolve_target_window(&conn)?;
+    let actions = scanner::new_run_actions(
+        &mut state.scanner.machine.lock().unwrap(),
+        &target,
+    );
     let action_refs = actions.as_slice();
     scanner::apply_actions(
-        &c,
+        &conn,
         &state.scanner.current_run_id,
         action_refs,
         &db::app_data_dir().join("logs"),
@@ -206,6 +210,11 @@ pub fn list_runs(filter: RunFilter) -> Result<Vec<RunRow>, String> {
 #[tauri::command]
 pub fn set_run_comment(run_id: String, comment: String) -> Result<(), String> {
     db::set_run_comment(&conn()?, &run_id, &comment).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_run_type(run_id: String, run_type: String) -> Result<(), String> {
+    db::set_run_type(&conn()?, &run_id, &run_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -643,7 +652,7 @@ fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
     let fields = fields::ocr_probe_fields(&img)?;
     let ocr_ms = ocr_started.elapsed().as_millis() as u64;
 
-    let input = fields::poll_input_from_fields(&fields);
+    let input = fields::poll_input_from_fields(&fields, &img);
     let coin_per_minute = match input.coin {
         crate::parser::CoinReading::Rate(v) => Some(v),
         _ => None,

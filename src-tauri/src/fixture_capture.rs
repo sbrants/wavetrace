@@ -160,7 +160,7 @@ fn game_mode_label(mode: GameMode) -> String {
 
 pub fn analyze_frame(frame: &RgbaImage, window_title: &str) -> CaptureEntry {
     let fields = fields::ocr_all_fields(frame);
-    let input = fields::poll_input_from_fields(&fields);
+    let input = fields::poll_input_from_fields(&fields, frame);
     let (coin_reading, coin_per_minute, coin_rate_detected) = coin_reading_label(input.coin);
 
     CaptureEntry {

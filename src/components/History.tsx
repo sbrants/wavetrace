@@ -14,6 +14,7 @@ import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
 import SortableTh from "./SortableTh";
 import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
+import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -105,6 +106,20 @@ export default function History() {
     );
     try {
       await api.setRunComment(runId, value);
+    } catch (e) {
+      alert(String(e));
+      reload();
+    }
+  }, [reload]);
+
+  const updateRunType = useCallback(async (runId: string, value: string) => {
+    const apply = (run: RunRow) =>
+      run.id === runId ? { ...run, run_type: value } : run;
+    setRuns((prev) => prev.map(apply));
+    setSelected((prev) => (prev ? apply(prev) : prev));
+    setCompareRuns((prev) => prev.map(apply));
+    try {
+      await api.setRunType(runId, value);
     } catch (e) {
       alert(String(e));
       reload();
@@ -672,8 +687,11 @@ export default function History() {
             }
           >
             <option value="">All run types</option>
-            <option value="farming">Farming</option>
-            <option value="tournament">Tournament</option>
+            {RUN_TYPE_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="filter-field">
@@ -823,12 +841,19 @@ export default function History() {
               </td>
               <td>{new Date(r.started_at).toLocaleString()}</td>
               <td>{duration(r)}</td>
-              <td>
-                {r.run_type === "tournament" ? (
-                  <span className="badge">tournament</span>
-                ) : (
-                  "farming"
-                )}
+              <td className="run-type-col" onClick={(e) => e.stopPropagation()}>
+                <select
+                  className="run-type-select"
+                  value={r.run_type}
+                  onChange={(e) => updateRunType(r.id, e.target.value)}
+                  aria-label={`Run type for run started ${r.started_at}`}
+                >
+                  {RUN_TYPE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td>{r.peak_tier ?? "—"}</td>
               <td>{r.final_wave ?? "—"}</td>
@@ -987,10 +1012,10 @@ export default function History() {
                   </td>
                   <td>{duration(r)}</td>
                   <td>
-                    {r.run_type === "tournament" ? (
-                      <span className="badge">tournament</span>
+                    {runTypeUsesBadge(r.run_type) ? (
+                      <span className="badge">{formatRunType(r.run_type)}</span>
                     ) : (
-                      "farming"
+                      formatRunType(r.run_type)
                     )}
                   </td>
                   <td>{r.peak_tier ?? "—"}</td>
