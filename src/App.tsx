@@ -170,9 +170,15 @@ export default function App() {
       <AppUpdater autoCheck variant="banner" />
 
       <main>
-        {tab === "dashboard" && <Dashboard event={scannerEvent} />}
-        {tab === "history" && <History />}
-        {tab === "settings" && <SettingsPage />}
+        <div hidden={tab !== "dashboard"}>
+          <Dashboard event={scannerEvent} />
+        </div>
+        <div hidden={tab !== "history"}>
+          <History />
+        </div>
+        <div hidden={tab !== "settings"}>
+          <SettingsPage />
+        </div>
       </main>
     </div>
   );
