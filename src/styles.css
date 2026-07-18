@@ -21,7 +21,14 @@ body {
   color: var(--text);
 }
 
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+}
+
 #root {
+  height: 100%;
   min-height: 100vh;
 }
 
@@ -835,6 +842,10 @@ tbody tr.selected {
   margin-bottom: 16px;
 }
 
+.settings code {
+  overflow-wrap: anywhere;
+}
+
 .settings h3 {
   font-size: 14px;
   margin-bottom: 10px;
@@ -946,10 +957,8 @@ select {
 }
 
 .changelog-panel .changelog-scroll {
-  max-height: 360px;
-  overflow: auto;
   padding: 12px 14px;
-  background: var(--panel);
+  background: #0f1830;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 13px;
