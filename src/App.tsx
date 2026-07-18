@@ -37,24 +37,38 @@ export default function App() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const tabRef = useRef<Tab>(tab);
   const debugReturnTabRef = useRef<Tab | null>(null);
+  const debugAwaitingTabRenderRef = useRef(false);
 
   useEffect(() => {
     tabRef.current = tab;
   }, [tab]);
 
   useEffect(() => {
+    if (!debugAwaitingTabRenderRef.current) {
+      return;
+    }
+    debugAwaitingTabRenderRef.current = false;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("wavetrace-debug-tab-ready"));
+      });
+    });
+  }, [tab]);
+
+  useEffect(() => {
+    const notifyReady = () => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("wavetrace-debug-tab-ready"));
+        });
+      });
+    };
+
     const onDebugCapture = (event: Event) => {
       const detail = (event as CustomEvent<{
         phase: "start" | "switch" | "end";
         tab?: Tab;
       }>).detail;
-      const notifyReady = () => {
-        window.requestAnimationFrame(() => {
-          window.requestAnimationFrame(() => {
-            window.dispatchEvent(new Event("wavetrace-debug-tab-ready"));
-          });
-        });
-      };
 
       if (detail.phase === "start") {
         debugReturnTabRef.current = tabRef.current;
@@ -62,17 +76,19 @@ export default function App() {
         return;
       }
       if (detail.phase === "switch" && detail.tab) {
+        debugAwaitingTabRenderRef.current = true;
         setTab(detail.tab);
-        notifyReady();
         return;
       }
       if (detail.phase === "end") {
         const restore = debugReturnTabRef.current;
         debugReturnTabRef.current = null;
         if (restore) {
+          debugAwaitingTabRenderRef.current = true;
           setTab(restore);
+        } else {
+          notifyReady();
         }
-        notifyReady();
       }
     };
 

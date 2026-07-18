@@ -5,6 +5,7 @@ pub mod classify;
 pub mod commands;
 pub mod db;
 pub mod debug_package;
+pub mod diagnostics;
 pub mod export;
 pub mod fields;
 pub mod fixture_capture;

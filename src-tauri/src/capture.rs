@@ -434,6 +434,7 @@ pub fn crop_region(img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> RgbaImage
 /// Capture the WaveTrace application window (for debug/support bundles).
 pub fn capture_own_app_window() -> Result<RgbaImage, String> {
     let windows = xcap::Window::all().map_err(|e| e.to_string())?;
+    let mut monitor_fallback: Option<RgbaImage> = None;
     for w in &windows {
         let title = w.title().unwrap_or_default();
         let app = w.app_name().unwrap_or_default();
@@ -443,8 +444,13 @@ pub fn capture_own_app_window() -> Result<RgbaImage, String> {
         if let Some(img) = try_capture_window(w) {
             return Ok(img);
         }
+        if monitor_fallback.is_none() {
+            monitor_fallback = capture_window_via_monitor(w);
+        }
     }
-    Err("Could not capture the WaveTrace window. Make sure the app window is visible.".into())
+    monitor_fallback.ok_or_else(|| {
+        "Could not capture the WaveTrace window. Make sure the app window is visible.".into()
+    })
 }
 
 pub fn encode_png_base64(img: &RgbaImage) -> Result<String, String> {

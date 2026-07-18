@@ -288,6 +288,20 @@ mod tests {
     }
 
     #[test]
+    fn utility_dissonance_q_per_min_coin_line() {
+        let input = classify(&s(&[
+            "$ 146B/min",
+            "@ 58.5q/min",
+            "Tier 18",
+            "Wave 3715",
+            "UTILITY UPGRADES",
+        ]));
+        assert_eq!(input.tier, Some(18));
+        assert_eq!(input.wave, Some(3715));
+        assert_eq!(input.coin, CoinReading::Rate(58.5e15));
+    }
+
+    #[test]
     fn ignores_frame_with_one_or_zero_min_lines() {
         let one = classify(&s(&["$ 6.9M/min", "Tier 14", "Wave 450"]));
         assert_eq!(one.coin, CoinReading::Unreadable);

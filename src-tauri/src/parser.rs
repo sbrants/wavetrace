@@ -83,14 +83,30 @@ fn split_number_suffix(text: &str) -> Option<(f64, String)> {
     Some((num, suffix.trim().to_string()))
 }
 
+/// Minimum `/min` rate magnitude before a balance-tier suffix is treated as a
+/// real coin rate rather than total-balance OCR with a spurious "/min".
+fn min_balance_tier_rate_threshold(suffix: &str) -> Option<f64> {
+    if !is_balance_tier_suffix(suffix) {
+        return None;
+    }
+    Some(if matches!(suffix, "q" | "Q") {
+        // Total-balance false positives are usually under ~28q; tier-18+ rates are 30q+/min.
+        30.0
+    } else {
+        100.0
+    })
+}
+
 /// Reject coin/min readings that match total-balance patterns or cash lines.
 fn is_plausible_rate(body: &str, raw: &str) -> bool {
     let Some((num, suffix)) = split_number_suffix(body) else {
         return false;
     };
     // Total coin on screen: "6.00q", "27.46q" — OCR sometimes adds "/min".
-    if is_balance_tier_suffix(&suffix) && num < 100.0 {
-        return false;
+    if let Some(threshold) = min_balance_tier_rate_threshold(&suffix) {
+        if num < threshold {
+            return false;
+        }
     }
     // Cash /min line ($ stripped by OCR): "6.9M/min" — not the coin rate.
     if !has_coin_icon_prefix(raw) && !is_rate_tier_suffix(&suffix) {
@@ -507,8 +523,10 @@ fn parse_coin_crop_rate(raw: &str) -> CoinReading {
     if let Some(idx) = min_pos {
         let body = fix_spaced_decimal(&text[..idx]);
         if let Some((num, suffix)) = split_number_suffix(&body) {
-            if is_balance_tier_suffix(&suffix) && num < 100.0 {
-                return CoinReading::Unreadable;
+            if let Some(threshold) = min_balance_tier_rate_threshold(&suffix) {
+                if num < threshold {
+                    return CoinReading::Unreadable;
+                }
             }
         }
         match parse_number_with_suffix(&body) {
@@ -1034,6 +1052,25 @@ mod tests {
         // Real rate at similar tier should still parse.
         assert_eq!(parse_coin_line("@ 85.8T/min"), CoinReading::Rate(85.8e12));
         assert_eq!(parse_coin_line("@ 100T/min"), CoinReading::Rate(100.0e12));
+    }
+
+    /// Tier-18+ dissonance upgrade screens show coin as "@ 35.8q/min" (not bare "@ 124Q").
+    #[test]
+    fn accepts_high_tier_q_per_min_rates() {
+        for (line, expected) in [
+            ("@ 35.8q/min", 35.8e15),
+            ("@ 58.2q/min", 58.2e15),
+            ("@ 58.5q/min", 58.5e15),
+            ("@ 124.84Q/min", 124.84e18),
+        ] {
+            match parse_coin_line(line) {
+                CoinReading::Rate(v) => assert!(
+                    (v - expected).abs() < expected * 1e-9,
+                    "{line}: expected {expected}, got {v}"
+                ),
+                other => panic!("{line}: expected Rate, got {other:?}"),
+            }
+        }
     }
 
     #[test]

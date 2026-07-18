@@ -1,13 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
+import { logUiError } from "./uiError";
 
 export type DebugTab = "dashboard" | "history" | "settings";
 
 const DEBUG_CAPTURE_EVENT = "wavetrace-debug-capture";
 const DEBUG_CAPTURE_READY = "wavetrace-debug-tab-ready";
+const DEBUG_READY_TIMEOUT_MS = 10_000;
 
 function waitForDebugReady(): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener(DEBUG_CAPTURE_READY, handler);
+      reject(new Error("Timed out waiting for the UI to switch tabs."));
+    }, DEBUG_READY_TIMEOUT_MS);
     const handler = () => {
+      window.clearTimeout(timer);
       window.removeEventListener(DEBUG_CAPTURE_READY, handler);
       resolve();
     };
@@ -49,9 +56,13 @@ export async function captureDebugScreenshots(): Promise<DebugScreenshot[]> {
     for (const { tab, label } of DEBUG_TABS) {
       dispatchDebugCapture({ phase: "switch", tab });
       await waitForDebugReady();
-      await sleep(350);
-      const png_base64 = await invoke<string>("capture_app_window");
-      shots.push({ label, png_base64 });
+      await sleep(400);
+      try {
+        const png_base64 = await invoke<string>("capture_app_window");
+        shots.push({ label, png_base64 });
+      } catch (e) {
+        logUiError(`debugPackage.screenshot.${label}`, e);
+      }
     }
   } finally {
     dispatchDebugCapture({ phase: "end" });

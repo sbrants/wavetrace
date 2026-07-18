@@ -10,8 +10,8 @@ use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
-use crate::state_machine::{GameMode, LiveState};
-use crate::{capture, fields, scanner, settings};
+use crate::state_machine::LiveState;
+use crate::{capture, scanner, settings};
 use serde::Serialize;
 
 pub struct AppState {
@@ -91,16 +91,32 @@ pub fn open_scanner_logs_folder() -> Result<(), String> {
     })
 }
 
+fn windows_explorer_powershell(path_display: &str, is_file: bool) -> String {
+    let path_str = path_display.replace('\'', "''");
+    if is_file {
+        format!("Start-Process explorer.exe -ArgumentList '/select,\"{path_str}\"'")
+    } else {
+        format!("Start-Process explorer.exe -ArgumentList '{path_str}'")
+    }
+}
+
+#[cfg(windows)]
+fn windows_explorer_launch_command(path: &std::path::Path) -> Result<String, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(windows_explorer_powershell(
+        &path.display().to_string(),
+        path.is_file(),
+    ))
+}
+
 fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let arg = if path.is_dir() {
-            path.display().to_string()
-        } else {
-            format!("/select,{}", path.display())
-        };
-        std::process::Command::new("explorer")
-            .arg(arg)
+        let ps = windows_explorer_launch_command(path)?;
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
             .spawn()
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -531,7 +547,9 @@ pub fn append_app_log(source: String, message: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn capture_app_window() -> Result<String, String> {
+pub fn capture_app_window(app: AppHandle) -> Result<String, String> {
+    crate::tray::show_main_window(&app);
+    std::thread::sleep(std::time::Duration::from_millis(200));
     let img = capture::capture_own_app_window()?;
     capture::encode_png_base64(&img)
 }
@@ -539,8 +557,16 @@ pub fn capture_app_window() -> Result<String, String> {
 #[tauri::command]
 pub fn generate_debug_package(
     screenshots: Vec<DebugScreenshotInput>,
+    state: State<AppState>,
 ) -> Result<DebugPackageExport, String> {
-    let export = debug_package::create_debug_package(&screenshots)?;
+    let input = debug_package::DebugPackageBuildInput {
+        screenshots,
+        scanner_running: state.scanner.is_running(),
+        live: state.scanner.cached_live_state(),
+        current_run_id: state.scanner.current_run_id.lock().unwrap().clone(),
+        has_resumable_run: state.scanner.has_resumable_run().unwrap_or(false),
+    };
+    let export = debug_package::create_debug_package(&input)?;
     reveal_in_file_manager(std::path::Path::new(&export.path))?;
     Ok(export)
 }
@@ -623,16 +649,6 @@ pub struct OcrProbeResult {
     pub preview_png_base64: Option<String>,
 }
 
-fn preview_thumbnail(img: &image::RgbaImage) -> image::RgbaImage {
-    const MAX_W: u32 = 400;
-    if img.width() <= MAX_W {
-        return img.clone();
-    }
-    let scale = MAX_W as f32 / img.width() as f32;
-    let h = ((img.height() as f32) * scale).round() as u32;
-    image::imageops::resize(img, MAX_W, h.max(1), image::imageops::FilterType::Triangle)
-}
-
 /// One-shot capture + OCR for Settings diagnostics (runs off the UI thread).
 #[tauri::command]
 pub async fn probe_ocr() -> Result<OcrProbeResult, String> {
@@ -642,89 +658,31 @@ pub async fn probe_ocr() -> Result<OcrProbeResult, String> {
 }
 
 fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
-    use std::time::Instant;
-
-    let conn = conn()?;
-    let target = settings::resolve_target_window(&conn)?;
-    let started = Instant::now();
-    let frame = capture::capture_target(&target);
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    let Some(img) = frame else {
-        return Ok(OcrProbeResult {
-            window_found: false,
-            target_substring: target.title_substring,
-            width: 0,
-            height: 0,
-            elapsed_ms,
-            all_lines: Vec::new(),
-            coin_lines: Vec::new(),
-            tier_wave_lines: Vec::new(),
-            mode_lines: Vec::new(),
-            tier: None,
-            wave: None,
-            coin_per_minute: None,
-            coin_status: "window_not_found".into(),
-            mode: "unknown".into(),
-            preview_png_base64: None,
-        });
-    };
-
-    let ocr_started = Instant::now();
-    let fields = fields::ocr_probe_fields(&img)?;
-    let ocr_ms = ocr_started.elapsed().as_millis() as u64;
-
-    let input = fields::poll_input_from_fields(&fields, &img);
-    let coin_per_minute = match input.coin {
-        crate::parser::CoinReading::Rate(v) => Some(v),
-        _ => None,
-    };
-    let coin_status = match input.coin {
-        crate::parser::CoinReading::Rate(_) => "rate",
-        crate::parser::CoinReading::Total(_) => "total_balance",
-        crate::parser::CoinReading::Unreadable => "unreadable",
-    }
-    .to_string();
-    let mode = match input.mode {
-        GameMode::Normal => "normal",
-        GameMode::TotalCoin => "total_coin",
-        GameMode::IntroSprint => "intro_sprint",
-        GameMode::Tournament => "tournament",
-        GameMode::EndOfRun => "end_of_run",
-        GameMode::Unknown => "unknown",
-    }
-    .to_string();
-
-    let thumb = preview_thumbnail(&img);
-    let mut bytes = Vec::new();
-    let preview_png_base64 = thumb
-        .write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .ok()
-        .map(|_| base64::engine::general_purpose::STANDARD.encode(&bytes));
-
+    let bundle = crate::diagnostics::probe_target_window()?;
+    let p = bundle.probe;
+    let preview_png_base64 = bundle
+        .preview_png
+        .as_ref()
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
     Ok(OcrProbeResult {
-        window_found: true,
-        target_substring: target.title_substring,
-        width: img.width(),
-        height: img.height(),
-        elapsed_ms: elapsed_ms + ocr_ms,
-        all_lines: fields.all_lines.clone(),
-        coin_lines: fields
-            .all_lines
-            .iter()
-            .filter(|l| l.to_lowercase().contains("/min"))
-            .cloned()
-            .collect(),
-        tier_wave_lines: fields.all_lines.clone(),
+        window_found: p.window_found,
+        target_substring: p
+            .resolved_target
+            .as_ref()
+            .map(|t| t.title_substring.clone())
+            .unwrap_or_default(),
+        width: p.width,
+        height: p.height,
+        elapsed_ms: p.capture_ms + p.ocr_ms,
+        all_lines: bundle.all_lines.clone(),
+        coin_lines: p.coin_lines,
+        tier_wave_lines: bundle.all_lines,
         mode_lines: Vec::new(),
-        tier: input.tier,
-        wave: input.wave,
-        coin_per_minute,
-        coin_status,
-        mode,
+        tier: p.tier,
+        wave: p.wave,
+        coin_per_minute: p.coin_per_minute,
+        coin_status: p.coin_status,
+        mode: p.mode,
         preview_png_base64,
     })
 }
@@ -742,14 +700,8 @@ fn preview_capture_blocking() -> Result<String, String> {
     let target = cfg.target_window.ok_or("No target window configured")?;
     let img = capture::capture_target(&target)
         .ok_or("Window not found or minimized")?;
-    let thumb = preview_thumbnail(&img);
-    let mut bytes = Vec::new();
-    thumb
-        .write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .map_err(|e| e.to_string())?;
+    let bytes = crate::diagnostics::encode_preview_png(&img)
+        .ok_or("Failed to encode preview image")?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
@@ -817,5 +769,22 @@ mod log_tail_tests {
         assert!(text.contains("final"));
         assert!(!text.contains("xxxx"));
         let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::windows_explorer_powershell;
+
+    #[test]
+    fn explorer_command_quotes_file_paths_with_spaces() {
+        let cmd = windows_explorer_powershell(r"C:\Users\Some User\logs\wavetrace.log", true);
+        assert!(cmd.contains("/select,\"C:\\Users\\Some User\\logs\\wavetrace.log\""));
+    }
+
+    #[test]
+    fn explorer_command_quotes_directory_paths_with_spaces() {
+        let cmd = windows_explorer_powershell(r"C:\Users\Some User\AppData\wavetrace\logs", false);
+        assert!(cmd.contains(r"'C:\Users\Some User\AppData\wavetrace\logs'"));
     }
 }

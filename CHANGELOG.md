@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.36] — 2026-07-19
+
+### Fixed
+
+- **Wave milestone notifications** — phone/desktop alerts fire when a wave skip crosses a milestone (e.g. notify at 1,000 even if the snapshot lands on wave 1,003), not only on exact multiples.
+- **Debug package on Windows** — Explorer opens reliably for log folder and generated zip (quoted paths); package still builds when screenshots fail.
+- **Coin/min OCR on high-tier q rates** — `@ 58q/min` style rates on dissonance upgrade screens parse correctly again.
+
+### Changed
+
+- **Debug package contents** — zip now includes redacted settings, live scanner state, target-window OCR probe (configured + resolved target, tier/wave/coin, sample OCR lines, thumbnail capture), database summary (recent runs), visible window list, paths, and up to three log tails (8 MiB each).
+
+---
+
 ## [0.2.35] — 2026-07-18
 
 ### Added

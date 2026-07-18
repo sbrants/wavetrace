@@ -145,7 +145,7 @@ export default function SettingsPage() {
       setDebugStatus(`Saved to ${result.path}`);
     } catch (e) {
       setDebugStatus(
-        reportUiError(e, "Settings.generateDebugPackage", { alert: false })
+        reportUiError(e, "Settings.generateDebugPackage")
       );
     } finally {
       setDebugBusy(false);
@@ -653,9 +653,11 @@ export default function SettingsPage() {
       <section>
         <h3>Support</h3>
         <p className="muted">
-          Build a zip with the latest <code>wavetrace.log</code> and screenshots
-          of the Dashboard, History, and Settings tabs. Saves to your Downloads
-          folder and opens Explorer with the file selected.
+          Build a zip with <code>wavetrace.log</code> (recent tail), settings,
+          scanner/runtime state, target-window OCR probe + capture, database summary, visible window list, and
+          screenshots of the Dashboard, History, and Settings tabs when capture
+          succeeds. Saves to your Downloads folder and opens Explorer with the
+          file selected.
         </p>
         <div className="toolbar">
           <button
@@ -667,7 +669,11 @@ export default function SettingsPage() {
           </button>
         </div>
         {debugStatus && (
-          <p className="muted" role="status" aria-live="polite">
+          <p
+            className={debugStatus.startsWith("Saved to") ? "muted" : "error"}
+            role="status"
+            aria-live="polite"
+          >
             {debugStatus}
           </p>
         )}

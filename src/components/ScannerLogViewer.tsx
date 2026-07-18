@@ -16,6 +16,7 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [folderStatus, setFolderStatus] = useState<string | null>(null);
   const [scannerOn, setScannerOn] = useState(false);
   const preRef = useRef<HTMLPreElement>(null);
   const stickToBottom = useRef(true);
@@ -81,7 +82,16 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
         </button>
         <button
           type="button"
-          onClick={() => api.openScannerLogsFolder().catch((e) => reportUiError(e, "ScannerLogViewer.openLogFolder"))}
+          onClick={() => {
+            setFolderStatus(null);
+            api
+              .openScannerLogsFolder()
+              .then(() => setFolderStatus("Opened log folder in Explorer."))
+              .catch((e) => {
+                const msg = reportUiError(e, "ScannerLogViewer.openLogFolder");
+                setFolderStatus(msg);
+              });
+          }}
         >
           Open log folder
         </button>
@@ -136,6 +146,17 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
               (scannerOn ? " · scanner running" : "")
           : ""}
       </p>
+      {folderStatus && (
+        <p
+          className={
+            folderStatus.startsWith("Opened") ? "muted scanner-log-meta" : "error"
+          }
+          role="status"
+          aria-live="polite"
+        >
+          {folderStatus}
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
       <pre
         ref={preRef}

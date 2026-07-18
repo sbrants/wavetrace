@@ -123,12 +123,14 @@ impl NotifyState {
                     coin_per_minute,
                 } => {
                     if let Some(every) = cfg.notify_wave_every {
-                        if *wave > 0 && *wave % every == 0 {
+                        if every > 0 {
                             let mut last = self.last_milestone_wave.lock().unwrap();
-                            if *last != *wave {
-                                *last = *wave;
+                            for milestone in
+                                crossed_wave_milestones(*wave, every, *last)
+                            {
+                                *last = milestone;
                                 let (title, body) = format_wave_milestone_notification(
-                                    *wave,
+                                    milestone,
                                     frame.tier.or(*tier),
                                     frame.coin_per_minute.or(*coin_per_minute),
                                 );
@@ -161,6 +163,28 @@ fn load_settings() -> Settings {
 
 fn ntfy_attach_capture(cfg: &Settings) -> bool {
     cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
+}
+
+/// Milestone waves newly reached by `wave` since `last_notified` (handles wave skips).
+fn crossed_wave_milestones(wave: u32, every: u32, last_notified: u32) -> Vec<u32> {
+    if every == 0 || wave == 0 {
+        return Vec::new();
+    }
+    let highest = (wave / every) * every;
+    if highest == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut next = if last_notified == 0 {
+        every
+    } else {
+        last_notified.saturating_add(every)
+    };
+    while next <= highest {
+        out.push(next);
+        next = next.saturating_add(every);
+    }
+    out
 }
 
 fn show(
@@ -427,6 +451,32 @@ mod tests {
         let (title, body) = format_wave_milestone_notification(2000, Some(15), Some(44.2e12));
         assert_eq!(title, "Wave 2,000");
         assert_eq!(body, "Tier 15 · 44.2T/min");
+    }
+
+    #[test]
+    fn crossed_wave_milestones_exact_hit() {
+        assert_eq!(crossed_wave_milestones(1000, 1000, 0), vec![1000]);
+        assert_eq!(crossed_wave_milestones(1000, 1000, 1000), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn crossed_wave_milestones_after_wave_skip() {
+        assert_eq!(crossed_wave_milestones(1003, 1000, 0), vec![1000]);
+        assert_eq!(crossed_wave_milestones(1003, 1000, 1000), Vec::<u32>::new());
+        assert_eq!(crossed_wave_milestones(2005, 1000, 1000), vec![2000]);
+    }
+
+    #[test]
+    fn crossed_wave_milestones_large_skip() {
+        assert_eq!(
+            crossed_wave_milestones(2500, 1000, 0),
+            vec![1000, 2000]
+        );
+    }
+
+    #[test]
+    fn crossed_wave_milestones_below_first() {
+        assert_eq!(crossed_wave_milestones(999, 1000, 0), Vec::<u32>::new());
     }
 
     #[test]
