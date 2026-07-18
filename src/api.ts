@@ -169,6 +169,7 @@ export const api = {
     invoke<ScreenCaptureAccess>("request_screen_capture_access"),
   openScreenRecordingSettings: () =>
     invoke<void>("open_screen_recording_settings"),
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),

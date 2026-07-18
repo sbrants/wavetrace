@@ -455,7 +455,13 @@ export default function SettingsPage() {
         <h4>Phone alerts (ntfy)</h4>
         <p className="muted">
           Install the free{" "}
-          <a href="https://ntfy.sh" target="_blank" rel="noreferrer">
+          <a
+            href="https://ntfy.sh"
+            onClick={(e) => {
+              e.preventDefault();
+              void api.openExternalUrl("https://ntfy.sh");
+            }}
+          >
             ntfy
           </a>{" "}
           app, subscribe to a hard-to-guess topic, then enter that topic below.

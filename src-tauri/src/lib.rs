@@ -50,6 +50,7 @@ pub fn run() {
             commands::screen_capture_access,
             commands::request_screen_capture_access,
             commands::open_screen_recording_settings,
+            commands::open_external_url,
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,
