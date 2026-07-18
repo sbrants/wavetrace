@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
+import { logUiError } from "../uiError";
 import {
   fetchUpdate,
   getUpdateChannel,
@@ -76,6 +77,12 @@ export default function AppUpdater({
       setProgress({ phase: "error", error: String(e) });
     }
   };
+
+  useEffect(() => {
+    if (progress.phase === "error" && progress.error) {
+      logUiError("AppUpdater", progress.error);
+    }
+  }, [progress]);
 
   if (!enabled) {
     if (variant === "banner") return null;

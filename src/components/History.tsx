@@ -14,6 +14,8 @@ import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
 import SortableTh from "./SortableTh";
 import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
+import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
+import { reportUiError } from "../uiError";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -59,7 +61,8 @@ export default function History() {
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
   const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
-  const [compareShowSkips, setCompareShowSkips] = useState(true);
+  const [compareShowSkips, setCompareShowSkips] = useState(false);
+  const [chartSelectMode, setChartSelectMode] = useState(false);
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
   );
@@ -105,7 +108,21 @@ export default function History() {
     try {
       await api.setRunComment(runId, value);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
+      reload();
+    }
+  }, [reload]);
+
+  const updateRunType = useCallback(async (runId: string, value: string) => {
+    const apply = (run: RunRow) =>
+      run.id === runId ? { ...run, run_type: value } : run;
+    setRuns((prev) => prev.map(apply));
+    setSelected((prev) => (prev ? apply(prev) : prev));
+    setCompareRuns((prev) => prev.map(apply));
+    try {
+      await api.setRunType(runId, value);
+    } catch (e) {
+      reportUiError(e, "History");
       reload();
     }
   }, [reload]);
@@ -126,6 +143,7 @@ export default function History() {
     setLiveChartSnapshots([]);
     setLiveChartWaveSkips([]);
     setLiveChartNormalJumps([]);
+    setChartSelectMode(false);
     setSelectedSnapshotIds(new Set());
     setSelectedWaveSkipIds(new Set());
     snapshotRowRefs.current.clear();
@@ -199,7 +217,7 @@ export default function History() {
       setChecked(new Set());
       reload();
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -226,7 +244,7 @@ export default function History() {
       );
       setCompareRuns(runsToCompare);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     } finally {
       setCompareLoading(false);
     }
@@ -317,7 +335,7 @@ export default function History() {
       const combined = updated.find((r) => r.id === newId) ?? null;
       setSelected(combined);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -334,7 +352,7 @@ export default function History() {
         `Downloaded ${result.snapshot_count} snapshot${result.snapshot_count === 1 ? "" : "s"} ✓`
       );
     } catch (e) {
-      alert(e);
+      reportUiError(e, "History");
     }
   };
 
@@ -350,7 +368,7 @@ export default function History() {
         `Downloaded ${result.run_count} run${result.run_count === 1 ? "" : "s"} ✓`
       );
     } catch (e) {
-      alert(e);
+      reportUiError(e, "History");
     }
   };
 
@@ -550,7 +568,7 @@ export default function History() {
       setSelectedSnapshotIds(new Set());
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -569,7 +587,7 @@ export default function History() {
       setSelectedWaveSkipIds(new Set());
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -592,7 +610,7 @@ export default function History() {
       });
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -615,7 +633,7 @@ export default function History() {
       });
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -670,8 +688,11 @@ export default function History() {
             }
           >
             <option value="">All run types</option>
-            <option value="farming">Farming</option>
-            <option value="tournament">Tournament</option>
+            {RUN_TYPE_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="filter-field">
@@ -821,12 +842,19 @@ export default function History() {
               </td>
               <td>{new Date(r.started_at).toLocaleString()}</td>
               <td>{duration(r)}</td>
-              <td>
-                {r.run_type === "tournament" ? (
-                  <span className="badge">tournament</span>
-                ) : (
-                  "farming"
-                )}
+              <td className="run-type-col" onClick={(e) => e.stopPropagation()}>
+                <select
+                  className="run-type-select"
+                  value={r.run_type}
+                  onChange={(e) => updateRunType(r.id, e.target.value)}
+                  aria-label={`Run type for run started ${r.started_at}`}
+                >
+                  {RUN_TYPE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td>{r.peak_tier ?? "—"}</td>
               <td>{r.final_wave ?? "—"}</td>
@@ -985,10 +1013,10 @@ export default function History() {
                   </td>
                   <td>{duration(r)}</td>
                   <td>
-                    {r.run_type === "tournament" ? (
-                      <span className="badge">tournament</span>
+                    {runTypeUsesBadge(r.run_type) ? (
+                      <span className="badge">{formatRunType(r.run_type)}</span>
                     ) : (
-                      "farming"
+                      formatRunType(r.run_type)
                     )}
                   </td>
                   <td>{r.peak_tier ?? "—"}</td>
@@ -1032,21 +1060,42 @@ export default function History() {
                   <span className="muted compare-live"> · live</span>
                 )}
               </h3>
-              <ChartScreenshotActions
-                targetRef={chartRef}
-                disabled={chartData.length === 0}
-              />
+              <div className="chart-card-actions">
+                <button
+                  type="button"
+                  className={chartSelectMode ? "primary" : undefined}
+                  onClick={() => {
+                    setChartSelectMode((on) => {
+                      if (on) {
+                        setSelectedSnapshotIds(new Set());
+                        setSelectedWaveSkipIds(new Set());
+                      }
+                      return !on;
+                    });
+                  }}
+                >
+                  {chartSelectMode ? "Exit select mode" : "Select mode"}
+                </button>
+                <ChartScreenshotActions
+                  targetRef={chartRef}
+                  disabled={chartData.length === 0}
+                />
+              </div>
             </div>
             <CoinVsWaveChart
               mode="single"
               data={chartData}
               waveSkips={skipMarkers}
               height={300}
-              selectedWaves={selectedWaves}
-              selectedSkipIds={[...selectedWaveSkipIds]}
-              onPointClick={toggleSnapshotWave}
-              onSkipClick={(id) => toggleWaveSkipId(id)}
-              onSelectWaves={selectSnapshotWaves}
+              selectedWaves={chartSelectMode ? selectedWaves : undefined}
+              selectedSkipIds={
+                chartSelectMode ? [...selectedWaveSkipIds] : undefined
+              }
+              onPointClick={chartSelectMode ? toggleSnapshotWave : undefined}
+              onSkipClick={
+                chartSelectMode ? (id) => toggleWaveSkipId(id) : undefined
+              }
+              onSelectWaves={chartSelectMode ? selectSnapshotWaves : undefined}
             />
           </div>
 
@@ -1064,10 +1113,12 @@ export default function History() {
                 )
               </h3>
               <div className="snapshot-panel-actions">
-                <span className="muted">
-                  Click coin points or skip points on the chart. Drag a rectangle
-                  to select coin/min snapshots. Shift+drag adds to the selection.
-                </span>
+                {chartSelectMode && (
+                  <span className="muted">
+                    Click coin or skip points on the chart. Drag a rectangle to
+                    select snapshots. Shift+drag adds to the selection.
+                  </span>
+                )}
                 <button
                   type="button"
                   disabled={

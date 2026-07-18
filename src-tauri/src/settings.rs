@@ -28,6 +28,15 @@ pub struct Settings {
     pub notify_window_lost: bool,
     #[serde(default)]
     pub notify_wave_every: Option<u32>,
+    /// Mirror desktop notifications to an [ntfy](https://ntfy.sh) topic.
+    #[serde(default)]
+    pub notify_ntfy_enabled: bool,
+    /// Attach the OCR capture frame to ntfy alerts (wave milestones and run ended).
+    #[serde(default = "default_true")]
+    pub notify_ntfy_attach_capture: bool,
+    /// Topic name (`my-secret-topic`) or full URL (`https://ntfy.sh/my-secret-topic`).
+    #[serde(default)]
+    pub notify_ntfy_topic: String,
 }
 
 fn default_true() -> bool {
@@ -43,6 +52,9 @@ impl Default for Settings {
             notify_run_ended: true,
             notify_window_lost: true,
             notify_wave_every: None,
+            notify_ntfy_enabled: false,
+            notify_ntfy_attach_capture: true,
+            notify_ntfy_topic: String::new(),
         }
     }
 }
@@ -90,6 +102,19 @@ pub fn load(conn: &Connection) -> Settings {
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_wave_every") {
         s.notify_wave_every = v.parse().ok();
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_enabled") {
+        if let Ok(on) = v.parse() {
+            s.notify_ntfy_enabled = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_attach_capture") {
+        if let Ok(on) = v.parse() {
+            s.notify_ntfy_attach_capture = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_topic") {
+        s.notify_ntfy_topic = v;
     }
     s
 }
@@ -172,7 +197,35 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     } else {
         db::set_setting(conn, "notify_wave_every", "")?;
     }
+    db::set_setting(
+        conn,
+        "notify_ntfy_enabled",
+        &s.notify_ntfy_enabled.to_string(),
+    )?;
+    db::set_setting(
+        conn,
+        "notify_ntfy_attach_capture",
+        &s.notify_ntfy_attach_capture.to_string(),
+    )?;
+    db::set_setting(conn, "notify_ntfy_topic", &s.notify_ntfy_topic)?;
     Ok(())
+}
+
+/// Resolve a topic name or URL into a publish endpoint for ntfy.
+pub fn resolve_ntfy_url(topic_or_url: &str) -> Result<String, String> {
+    let raw = topic_or_url.trim();
+    if raw.is_empty() {
+        return Err("ntfy topic is empty".into());
+    }
+    if raw.starts_with("https://") || raw.starts_with("http://") {
+        return Ok(raw.trim_end_matches('/').to_string());
+    }
+    if raw.contains('/') || raw.contains(' ') || raw.contains('?') {
+        return Err(
+            "Use a plain topic name (e.g. wavetrace-my-secret) or a full https:// URL".into(),
+        );
+    }
+    Ok(format!("https://ntfy.sh/{raw}"))
 }
 
 #[cfg(test)]
@@ -232,5 +285,37 @@ mod tests {
         assert!(s.notify_run_ended);
         assert!(s.notify_window_lost);
         assert_eq!(s.notify_wave_every, None);
+        assert!(!s.notify_ntfy_enabled);
+        assert!(s.notify_ntfy_topic.is_empty());
+    }
+
+    #[test]
+    fn resolve_ntfy_url_accepts_topic_or_full_url() {
+        assert_eq!(
+            resolve_ntfy_url("wavetrace-secret").unwrap(),
+            "https://ntfy.sh/wavetrace-secret"
+        );
+        assert_eq!(
+            resolve_ntfy_url("https://ntfy.example.com/my-topic/").unwrap(),
+            "https://ntfy.example.com/my-topic"
+        );
+        assert!(resolve_ntfy_url("").is_err());
+        assert!(resolve_ntfy_url("bad topic").is_err());
+    }
+
+    #[test]
+    fn save_and_load_ntfy_settings() {
+        let conn = db::open_in_memory().expect("db");
+        let s = Settings {
+            notify_ntfy_enabled: true,
+            notify_ntfy_attach_capture: false,
+            notify_ntfy_topic: "wavetrace-test".into(),
+            ..Settings::default()
+        };
+        save(&conn, &s).expect("save");
+        let loaded = load(&conn);
+        assert!(loaded.notify_ntfy_enabled);
+        assert!(!loaded.notify_ntfy_attach_capture);
+        assert_eq!(loaded.notify_ntfy_topic, "wavetrace-test");
     }
 }

@@ -4,10 +4,12 @@ pub mod capture;
 pub mod classify;
 pub mod commands;
 pub mod db;
+pub mod debug_package;
 pub mod export;
 pub mod fields;
 pub mod fixture_capture;
 pub mod fixture_corpus;
+pub mod dissonance_icons;
 pub mod notifications;
 pub mod ocr;
 pub mod parser;
@@ -50,9 +52,15 @@ pub fn run() {
             commands::screen_capture_access,
             commands::request_screen_capture_access,
             commands::open_screen_recording_settings,
+            commands::open_external_url,
+            commands::open_scanner_logs_folder,
+            commands::append_app_log,
+            commands::capture_app_window,
+            commands::generate_debug_package,
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,
+            commands::send_test_ntfy,
             commands::has_resumable_run,
             commands::start_scanner,
             commands::stop_scanner,
@@ -61,6 +69,7 @@ pub fn run() {
             commands::manual_new_run,
             commands::list_runs,
             commands::set_run_comment,
+            commands::set_run_type,
             commands::delete_runs,
             commands::delete_snapshot,
             commands::delete_snapshots,
@@ -85,6 +94,7 @@ pub fn run() {
             commands::capture_fixture_burst,
             commands::copy_image_to_clipboard,
             commands::read_scanner_log,
+            commands::get_app_data_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

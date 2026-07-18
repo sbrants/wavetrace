@@ -15,7 +15,7 @@ export interface LiveState {
   wave: number | null;
   coin_per_minute: number | null;
   run_active: boolean;
-  run_type: "farming" | "tournament" | null;
+  run_type: string | null;
   total_coin_warning: boolean;
   last_skip_multiplier: number | null;
   last_wave_delta: number | null;
@@ -46,6 +46,9 @@ export interface Settings {
   notify_run_ended: boolean;
   notify_window_lost: boolean;
   notify_wave_every: number | null;
+  notify_ntfy_enabled?: boolean;
+  notify_ntfy_attach_capture?: boolean;
+  notify_ntfy_topic?: string;
 }
 
 export interface RunRow {
@@ -158,6 +161,25 @@ export interface BackupRestore {
   backup_app_version: string | null;
 }
 
+export interface DebugScreenshot {
+  label: string;
+  png_base64: string;
+}
+
+export interface DebugPackageExport {
+  filename: string;
+  path: string;
+}
+
+export interface AppDataInfo {
+  app_data_dir: string;
+  logs_dir: string;
+  backups_dir: string;
+  database_path: string;
+  app_log_path: string;
+  install_kind: string;
+}
+
 export const api = {
   quitApp: () => invoke<void>("quit_app"),
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
@@ -167,9 +189,12 @@ export const api = {
     invoke<ScreenCaptureAccess>("request_screen_capture_access"),
   openScreenRecordingSettings: () =>
     invoke<void>("open_screen_recording_settings"),
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  openScannerLogsFolder: () => invoke<void>("open_scanner_logs_folder"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
+  sendTestNtfy: () => invoke<void>("send_test_ntfy"),
   hasResumableRun: () => invoke<boolean>("has_resumable_run"),
   startScanner: (mode: ScanStartMode) =>
     invoke<void>("start_scanner", { mode }),
@@ -180,6 +205,8 @@ export const api = {
   listRuns: (filter: RunFilter) => invoke<RunRow[]>("list_runs", { filter }),
   setRunComment: (runId: string, comment: string) =>
     invoke<void>("set_run_comment", { runId, comment }),
+  setRunType: (runId: string, runType: string) =>
+    invoke<void>("set_run_type", { runId, runType }),
   deleteRuns: (runIds: string[]) =>
     invoke<number>("delete_runs", { runIds }),
   deleteSnapshot: (snapshotId: string) =>
@@ -210,6 +237,12 @@ export const api = {
     invoke<BackupRestore>("restore_backup", { dataBase64 }),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
+  appendAppLog: (source: string, message: string) =>
+    invoke<void>("append_app_log", { source, message }),
+  captureAppWindow: () => invoke<string>("capture_app_window"),
+  generateDebugPackage: (screenshots: DebugScreenshot[]) =>
+    invoke<DebugPackageExport>("generate_debug_package", { screenshots }),
+  getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   captureFixtureBurst: (count: number, intervalMs: number) =>

@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::backup::{self, BackupExport, BackupRestore};
 use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
+use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
@@ -47,6 +48,95 @@ pub fn open_screen_recording_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Only http(s) URLs are supported".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn open_scanner_logs_folder() -> Result<(), String> {
+    let logs_dir = db::app_data_dir().join("logs");
+    std::fs::create_dir_all(&logs_dir).map_err(|e| e.to_string())?;
+    let log_file = db::app_log_path();
+    reveal_in_file_manager(if log_file.exists() {
+        &log_file
+    } else {
+        &logs_dir
+    })
+}
+
+fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let arg = if path.is_dir() {
+            path.display().to_string()
+        } else {
+            format!("/select,{}", path.display())
+        };
+        std::process::Command::new("explorer")
+            .arg(arg)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if path.is_file() {
+            cmd.arg("-R");
+        }
+        cmd.arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let target = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        Err("Opening folders is not supported on this platform".into())
+    }
+}
+
+#[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     Ok(settings::load(&conn()?))
 }
@@ -55,6 +145,11 @@ pub fn get_settings() -> Result<Settings, String> {
 pub fn save_settings(new_settings: Settings) -> Result<(), String> {
     capture::clear_window_cache();
     settings::save(&conn()?, &new_settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn send_test_ntfy() -> Result<(), String> {
+    crate::notifications::send_test_ntfy()
 }
 
 #[tauri::command]
@@ -88,16 +183,20 @@ pub fn live_state(state: State<AppState>) -> LiveState {
 
 #[tauri::command]
 pub fn manual_new_run(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let actions = state.scanner.machine.lock().unwrap().manual_new_run();
-    let c = conn()?;
+    let conn = conn()?;
+    let target = settings::resolve_target_window(&conn)?;
+    let actions = scanner::new_run_actions(
+        &mut state.scanner.machine.lock().unwrap(),
+        &target,
+    );
     let action_refs = actions.as_slice();
     scanner::apply_actions(
-        &c,
+        &conn,
         &state.scanner.current_run_id,
         action_refs,
         &db::app_data_dir().join("logs"),
     );
-    scanner::notify_scanner_actions(&app, action_refs);
+    scanner::notify_scanner_actions(&app, action_refs, None, crate::notifications::NotifyFrameContext::default());
     if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
         notify.reset_run_tracking();
     }
@@ -112,6 +211,11 @@ pub fn list_runs(filter: RunFilter) -> Result<Vec<RunRow>, String> {
 #[tauri::command]
 pub fn set_run_comment(run_id: String, comment: String) -> Result<(), String> {
     db::set_run_comment(&conn()?, &run_id, &comment).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_run_type(run_id: String, run_type: String) -> Result<(), String> {
+    db::set_run_type(&conn()?, &run_id, &run_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -311,6 +415,29 @@ pub fn restore_backup(state: State<AppState>, data_base64: String) -> Result<Bac
 }
 
 #[derive(Serialize)]
+pub struct AppDataInfo {
+    pub app_data_dir: String,
+    pub logs_dir: String,
+    pub backups_dir: String,
+    pub database_path: String,
+    pub app_log_path: String,
+    pub install_kind: String,
+}
+
+#[tauri::command]
+pub fn get_app_data_info() -> AppDataInfo {
+    let app_data = db::app_data_dir();
+    AppDataInfo {
+        app_data_dir: app_data.to_string_lossy().into_owned(),
+        logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
+        backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
+        database_path: db::database_path().to_string_lossy().into_owned(),
+        app_log_path: db::app_log_path().to_string_lossy().into_owned(),
+        install_kind: db::detect_install_kind(&app_data).to_string(),
+    }
+}
+
+#[derive(Serialize)]
 pub struct ScannerLogView {
     pub path: String,
     pub lines: Vec<String>,
@@ -366,10 +493,10 @@ fn read_file_tail_text(path: &std::path::Path, max_bytes: usize) -> Result<(Stri
     Ok((text, tail_truncated))
 }
 
-/// Tail the scanner log (last N lines, capped at 2 MiB from EOF).
+/// Tail the app log (last N lines, capped at 2 MiB from EOF).
 #[tauri::command]
 pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
-    let path = db::scanner_log_path();
+    let path = db::app_log_path();
     let path_str = path.to_string_lossy().to_string();
     if !path.exists() {
         return Ok(ScannerLogView {
@@ -395,6 +522,27 @@ pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
         total_lines,
         lines,
     })
+}
+
+#[tauri::command]
+pub fn append_app_log(source: String, message: String) -> Result<(), String> {
+    db::append_app_log(&format!("[UI:{source}] {message}"));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn capture_app_window() -> Result<String, String> {
+    let img = capture::capture_own_app_window()?;
+    capture::encode_png_base64(&img)
+}
+
+#[tauri::command]
+pub fn generate_debug_package(
+    screenshots: Vec<DebugScreenshotInput>,
+) -> Result<DebugPackageExport, String> {
+    let export = debug_package::create_debug_package(&screenshots)?;
+    reveal_in_file_manager(std::path::Path::new(&export.path))?;
+    Ok(export)
 }
 
 #[derive(Serialize)]
@@ -526,7 +674,7 @@ fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
     let fields = fields::ocr_probe_fields(&img)?;
     let ocr_ms = ocr_started.elapsed().as_millis() as u64;
 
-    let input = fields::poll_input_from_fields(&fields);
+    let input = fields::poll_input_from_fields(&fields, &img);
     let coin_per_minute = match input.coin {
         crate::parser::CoinReading::Rate(v) => Some(v),
         _ => None,

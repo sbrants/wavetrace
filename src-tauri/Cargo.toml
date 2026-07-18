@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.2.34"
+version = "0.2.35"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 license = "MIT"
@@ -18,7 +18,7 @@ base64 = "0.22.1"
 chrono = "0.4.45"
 dirs = "6.0.0"
 icu_locale_core = "2"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -26,6 +26,7 @@ spreadsheet-ods = "1.0.4"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
+ureq = "3.3.0"
 uuid = { version = "1.23.3", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 

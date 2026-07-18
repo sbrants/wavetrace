@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import { logUiError } from "./uiError";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -11,6 +12,13 @@ class ErrorBoundary extends React.Component<
 
   static getDerivedStateFromError(error: Error) {
     return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    const detail = info.componentStack
+      ? `${error.message}\n${info.componentStack}`
+      : error.message;
+    logUiError("React", detail);
   }
 
   render() {

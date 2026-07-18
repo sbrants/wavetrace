@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ScanStartMode, ScannerEvent } from "./api";
+import { reportUiError } from "./uiError";
 import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
@@ -34,6 +35,51 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [canResume, setCanResume] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
+  const tabRef = useRef<Tab>(tab);
+  const debugReturnTabRef = useRef<Tab | null>(null);
+
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+
+  useEffect(() => {
+    const onDebugCapture = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        phase: "start" | "switch" | "end";
+        tab?: Tab;
+      }>).detail;
+      const notifyReady = () => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("wavetrace-debug-tab-ready"));
+          });
+        });
+      };
+
+      if (detail.phase === "start") {
+        debugReturnTabRef.current = tabRef.current;
+        notifyReady();
+        return;
+      }
+      if (detail.phase === "switch" && detail.tab) {
+        setTab(detail.tab);
+        notifyReady();
+        return;
+      }
+      if (detail.phase === "end") {
+        const restore = debugReturnTabRef.current;
+        debugReturnTabRef.current = null;
+        if (restore) {
+          setTab(restore);
+        }
+        notifyReady();
+      }
+    };
+
+    window.addEventListener("wavetrace-debug-capture", onDebugCapture);
+    return () =>
+      window.removeEventListener("wavetrace-debug-capture", onDebugCapture);
+  }, []);
 
   const refreshCanResume = useCallback(() => {
     api.hasResumableRun().then(setCanResume).catch(() => setCanResume(false));
@@ -71,7 +117,7 @@ export default function App() {
           current_run_id: prev?.current_run_id ?? null,
         }));
       })
-      .catch((e) => alert(String(e)));
+      .catch((e) => reportUiError(e, "App.startScanner"));
   };
 
   const warning = scannerEvent?.live?.total_coin_warning ?? false;
@@ -170,9 +216,15 @@ export default function App() {
       <AppUpdater autoCheck variant="banner" />
 
       <main>
-        {tab === "dashboard" && <Dashboard event={scannerEvent} />}
-        {tab === "history" && <History />}
-        {tab === "settings" && <SettingsPage />}
+        <div hidden={tab !== "dashboard"}>
+          <Dashboard event={scannerEvent} />
+        </div>
+        <div hidden={tab !== "history"}>
+          <History />
+        </div>
+        <div hidden={tab !== "settings"}>
+          <SettingsPage />
+        </div>
       </main>
     </div>
   );

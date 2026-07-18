@@ -2,7 +2,7 @@
 //! "Game mode edge cases" decision flow in Goal.md.
 
 use crate::parser::{has_coin_icon_prefix, parse_coin_line, CoinReading};
-use crate::state_machine::{GameMode, PollInput};
+use crate::state_machine::{DissonanceKind, GameMode, PollInput};
 
 /// Find "<keyword> <int>[+]" anywhere inside a line, tolerating separators.
 /// OCR can merge the Tier/Wave panel with neighboring stats into one line,
@@ -43,6 +43,7 @@ pub fn classify(lines: &[String]) -> PollInput {
     let tier = extract_tier(lines, &mut tournament);
     let wave = extract_wave(lines);
     let coin = extract_coin_second_min(lines, tournament || end_of_run);
+    let dissonance = detect_dissonance(lines);
 
     let mode = if end_of_run {
         GameMode::EndOfRun
@@ -70,7 +71,85 @@ pub fn classify(lines: &[String]) -> PollInput {
         wave,
         coin,
         wave_skip_overlay: crate::parser::parse_wave_skip_overlay(lines),
+        dissonance,
     }
+}
+
+/// Detect dissonance (disco) run category from OCR lines.
+fn detect_dissonance(lines: &[String]) -> Option<DissonanceKind> {
+    for line in lines {
+        let lower = line.trim().to_lowercase();
+        if is_dissonance_run_context(&lower) {
+            if let Some(kind) = dissonance_kind_in_line(&lower) {
+                return Some(kind);
+            }
+        }
+    }
+
+    let frame_marker = lines.iter().any(|line| {
+        let lower = line.trim().to_lowercase();
+        (lower.contains("dissonant") || lower.contains("dissonance") || lower.contains("dissident"))
+            && !lower.contains("echo")
+            && (lower.contains("run")
+                || lower.contains("mode")
+                || lower == "dissonant"
+                || lower.starts_with("dissonant "))
+    });
+
+    if frame_marker {
+        for line in lines {
+            if let Some(kind) = dissonance_kind_in_line(&line.trim().to_lowercase()) {
+                return Some(kind);
+            }
+        }
+    }
+
+    None
+}
+
+fn is_dissonance_run_context(lower: &str) -> bool {
+    if lower.contains("dissonant echo") || lower.contains("dissonance echo") {
+        return false;
+    }
+    lower.contains("dissonant run")
+        || lower.contains("dissonance run")
+        || lower.contains("dissonant attack")
+        || lower.contains("dissonant defense")
+        || lower.contains("dissonant defence")
+        || lower.contains("dissonant utility")
+        || lower.contains("dissonant ultimate")
+        || lower.contains("attack dissonance")
+        || lower.contains("defense dissonance")
+        || lower.contains("defence dissonance")
+        || lower.contains("utility dissonance")
+        || (lower.contains("ultimate")
+            && lower.contains("weapon")
+            && (lower.contains("dissonant") || lower.contains("dissonance")))
+        || (lower.contains("disco")
+            && (lower.contains("attack")
+                || lower.contains("defense")
+                || lower.contains("defence")
+                || lower.contains("utility")
+                || lower.contains("ultimate")))
+}
+
+fn dissonance_kind_in_line(lower: &str) -> Option<DissonanceKind> {
+    if lower.contains("upgrade") || lower.contains("disabled") || lower.contains("workshop") {
+        return None;
+    }
+    if lower.contains("ultimate") && (lower.contains("weapon") || lower.contains("weapons")) {
+        return Some(DissonanceKind::UltimateWeapons);
+    }
+    if lower.contains("utility") {
+        return Some(DissonanceKind::Utility);
+    }
+    if lower.contains("defense") || lower.contains("defence") {
+        return Some(DissonanceKind::Defense);
+    }
+    if lower.contains("attack") {
+        return Some(DissonanceKind::Attack);
+    }
+    None
 }
 
 fn extract_tier(lines: &[String], tournament: &mut bool) -> Option<u32> {
@@ -228,6 +307,38 @@ mod tests {
         ]));
         assert_eq!(input.mode, GameMode::IntroSprint);
         assert_eq!(input.coin, CoinReading::Rate(0.0));
+    }
+
+    #[test]
+    fn dissonant_attack_run_screen() {
+        let input = classify(&s(&["Dissonant Attack", "Tier 14", "Wave 1"]));
+        assert_eq!(input.dissonance, Some(DissonanceKind::Attack));
+    }
+
+    #[test]
+    fn dissonant_ultimate_weapons_run_screen() {
+        let input = classify(&s(&[
+            "Dissonant Ultimate Weapons",
+            "Tier 18",
+            "Wave 1",
+        ]));
+        assert_eq!(input.dissonance, Some(DissonanceKind::UltimateWeapons));
+    }
+
+    #[test]
+    fn dissonant_echo_lab_is_not_a_run_type() {
+        let input = classify(&s(&[
+            "Dissonant Echo - Utility",
+            "Tier 14",
+            "Wave 4072",
+        ]));
+        assert_eq!(input.dissonance, None);
+    }
+
+    #[test]
+    fn dissonant_run_marker_with_category_line() {
+        let input = classify(&s(&["Dissonant Run", "Defense", "Tier 12", "Wave 1"]));
+        assert_eq!(input.dissonance, Some(DissonanceKind::Defense));
     }
 
     #[test]

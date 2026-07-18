@@ -262,8 +262,9 @@ installers, macOS DMGs (Apple Silicon + Intel), Linux AppImage, Arch binary, and
 6. **History** lists past runs with filtering, sorting, CSV/ODS export, chart
    screenshots, recorded-skip selection/deletion, and a **Skip vs coin/min** analytics panel
    per selected run.
-7. **Settings** also includes backup/restore, system tray and notification options,
-   the scanner log viewer (Advanced), update checks, and an embedded changelog.
+7. **Settings** also includes backup/restore, system tray and notification options
+   (including optional [ntfy](https://ntfy.sh) phone alerts), the scanner log viewer
+   (Advanced), update checks, and an embedded changelog.
 
 ### System tray (optional)
 

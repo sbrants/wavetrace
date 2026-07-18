@@ -82,29 +82,47 @@ pub fn database_path() -> PathBuf {
     preferred
 }
 
-pub fn scanner_log_path() -> PathBuf {
-    app_data_dir().join("logs").join("scanner.log")
+const APP_LOG_BASENAME: &str = "wavetrace.log";
+const LEGACY_LOG_BASENAME: &str = "scanner.log";
+
+pub fn app_log_path() -> PathBuf {
+    let logs_dir = app_data_dir().join("logs");
+    migrate_legacy_app_log(&logs_dir);
+    logs_dir.join(APP_LOG_BASENAME)
 }
 
-/// Per-file size before rotating to `scanner.log.1`, `scanner.log.2`, …
-const SCANNER_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
-/// `scanner.log` plus this many rotated segments (`scanner.log.1` …).
-const SCANNER_LOG_ROTATED_FILES: u32 = 9;
-
-fn maybe_rotate_scanner_log(logs_dir: &std::path::Path) {
-    maybe_rotate_scanner_log_with_limits(
-        logs_dir,
-        SCANNER_LOG_MAX_BYTES,
-        SCANNER_LOG_ROTATED_FILES,
-    );
+/// Renames `scanner.log` (+ rotated segments) to `wavetrace.log` on first access.
+fn migrate_legacy_app_log(logs_dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(logs_dir);
+    let legacy = logs_dir.join(LEGACY_LOG_BASENAME);
+    let current = logs_dir.join(APP_LOG_BASENAME);
+    if !current.exists() && legacy.exists() {
+        let _ = std::fs::rename(&legacy, &current);
+    }
+    for i in 1..=APP_LOG_ROTATED_FILES {
+        let legacy_rot = logs_dir.join(format!("{LEGACY_LOG_BASENAME}.{i}"));
+        let current_rot = logs_dir.join(format!("{APP_LOG_BASENAME}.{i}"));
+        if legacy_rot.exists() && !current_rot.exists() {
+            let _ = std::fs::rename(&legacy_rot, &current_rot);
+        }
+    }
 }
 
-fn maybe_rotate_scanner_log_with_limits(
+/// Per-file size before rotating to `wavetrace.log.1`, `wavetrace.log.2`, …
+const APP_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// `wavetrace.log` plus this many rotated segments (`wavetrace.log.1` …).
+const APP_LOG_ROTATED_FILES: u32 = 9;
+
+fn maybe_rotate_app_log(logs_dir: &std::path::Path) {
+    maybe_rotate_app_log_with_limits(logs_dir, APP_LOG_MAX_BYTES, APP_LOG_ROTATED_FILES);
+}
+
+fn maybe_rotate_app_log_with_limits(
     logs_dir: &std::path::Path,
     max_bytes: u64,
     max_rotated: u32,
 ) {
-    let path = logs_dir.join("scanner.log");
+    let path = logs_dir.join(APP_LOG_BASENAME);
     let Ok(meta) = std::fs::metadata(&path) else {
         return;
     };
@@ -112,36 +130,68 @@ fn maybe_rotate_scanner_log_with_limits(
         return;
     }
 
-    let oldest = logs_dir.join(format!("scanner.log.{max_rotated}"));
+    let oldest = logs_dir.join(format!("{APP_LOG_BASENAME}.{max_rotated}"));
     let _ = std::fs::remove_file(&oldest);
 
     for i in (1..max_rotated).rev() {
-        let from = logs_dir.join(format!("scanner.log.{i}"));
-        let to = logs_dir.join(format!("scanner.log.{}", i + 1));
+        let from = logs_dir.join(format!("{APP_LOG_BASENAME}.{i}"));
+        let to = logs_dir.join(format!("{APP_LOG_BASENAME}.{}", i + 1));
         if from.exists() {
             let _ = std::fs::remove_file(&to);
             let _ = std::fs::rename(&from, &to);
         }
     }
 
-    let first = logs_dir.join("scanner.log.1");
+    let first = logs_dir.join(format!("{APP_LOG_BASENAME}.1"));
     let _ = std::fs::remove_file(&first);
     let _ = std::fs::rename(&path, &first);
 }
 
-pub fn append_scanner_log(msg: &str) {
+pub fn append_app_log(msg: &str) {
     use std::io::Write;
 
     let logs_dir = app_data_dir().join("logs");
+    migrate_legacy_app_log(&logs_dir);
     let _ = std::fs::create_dir_all(&logs_dir);
-    maybe_rotate_scanner_log(&logs_dir);
-    let path = logs_dir.join("scanner.log");
+    maybe_rotate_app_log(&logs_dir);
+    let path = logs_dir.join(APP_LOG_BASENAME);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
     {
         writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339()).ok();
+    }
+}
+
+/// How the app was installed, inferred from the resolved app data path.
+pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
+    let path = app_data_dir.to_string_lossy();
+    #[cfg(target_os = "windows")]
+    {
+        if path.contains("\\Packages\\") && path.contains("\\LocalCache\\Roaming") {
+            return "microsoft_store";
+        }
+        return "windows_direct";
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if path.contains("/Containers/") {
+            return "mac_sandbox";
+        }
+        return "mac_direct";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if path.contains("/.var/app/") {
+            return "linux_flatpak";
+        }
+        return "linux_direct";
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        "unknown"
     }
 }
 
@@ -377,6 +427,20 @@ pub fn set_run_comment(conn: &Connection, run_id: &str, comment: &str) -> rusqli
     Ok(())
 }
 
+pub fn set_run_type(conn: &Connection, run_id: &str, run_type: &str) -> rusqlite::Result<()> {
+    if crate::state_machine::RunType::try_from_db_str(run_type).is_none() {
+        return Err(rusqlite::Error::InvalidParameterName(run_type.to_string()));
+    }
+    let updated = conn.execute(
+        "UPDATE runs SET run_type = ?2 WHERE id = ?1",
+        params![run_id, run_type],
+    )?;
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CombineRunsError {
     TooFewRuns,
@@ -433,6 +497,28 @@ fn merge_run_comments(comments: &[Option<String>]) -> Option<String> {
         1 => Some(parts[0].clone()),
         _ => Some(parts.join(" · ")),
     }
+}
+
+fn combine_run_type(source_runs: &[SourceRun]) -> String {
+    if source_runs.iter().any(|r| r.run_type == "tournament") {
+        return "tournament".to_string();
+    }
+    let mut types: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for run in source_runs {
+        types.insert(run.run_type.as_str());
+    }
+    if types.len() == 1 {
+        return source_runs[0].run_type.clone();
+    }
+    let dissonance: Vec<&str> = source_runs
+        .iter()
+        .map(|r| r.run_type.as_str())
+        .filter(|t| t.starts_with("dissonance_"))
+        .collect();
+    if !dissonance.is_empty() && dissonance.iter().all(|t| *t == dissonance[0]) {
+        return dissonance[0].to_string();
+    }
+    "farming".to_string()
 }
 
 /// Merge multiple ended runs into one when their snapshot waves form a strictly
@@ -510,11 +596,7 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
         .max()
         .unwrap()
         .to_string();
-    let run_type = if source_runs.iter().any(|r| r.run_type == "tournament") {
-        "tournament".to_string()
-    } else {
-        "farming".to_string()
-    };
+    let run_type = combine_run_type(&source_runs);
     let peak_tier = combined_snapshots.iter().filter_map(|s| s.tier).max();
     let final_wave = combined_snapshots.last().map(|s| s.wave);
     let comment = merge_run_comments(
@@ -994,6 +1076,16 @@ mod tests {
     }
 
     #[test]
+    fn run_type_roundtrip() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "farming").unwrap();
+        set_run_type(&conn, &id, "dissonance_utility").unwrap();
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].run_type, "dissonance_utility");
+        assert!(set_run_type(&conn, &id, "invalid").is_err());
+    }
+
+    #[test]
     fn list_runs_filters_by_date_range() {
         let conn = open_in_memory().unwrap();
         let old = start_run(&conn, "farming").unwrap();
@@ -1392,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn scanner_log_rotation_keeps_numbered_segments() {
+    fn app_log_rotation_keeps_numbered_segments() {
         use std::io::Write;
 
         let dir = std::env::temp_dir().join(format!(
@@ -1408,23 +1500,82 @@ mod tests {
             write!(f, "{label}{}", "x".repeat(1100)).unwrap();
         };
 
-        write_chunk("scanner.log", "active-");
-        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
-        assert!(!dir.join("scanner.log").exists());
-        assert!(dir.join("scanner.log.1").exists());
+        write_chunk("wavetrace.log", "active-");
+        maybe_rotate_app_log_with_limits(&dir, 1000, 2);
+        assert!(!dir.join("wavetrace.log").exists());
+        assert!(dir.join("wavetrace.log.1").exists());
 
-        write_chunk("scanner.log", "active2-");
-        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
-        assert!(dir.join("scanner.log.1").exists());
-        assert!(dir.join("scanner.log.2").exists());
-        assert!(!dir.join("scanner.log.3").exists());
+        write_chunk("wavetrace.log", "active2-");
+        maybe_rotate_app_log_with_limits(&dir, 1000, 2);
+        assert!(dir.join("wavetrace.log.1").exists());
+        assert!(dir.join("wavetrace.log.2").exists());
+        assert!(!dir.join("wavetrace.log.3").exists());
 
-        write_chunk("scanner.log", "active3-");
-        maybe_rotate_scanner_log_with_limits(&dir, 1000, 2);
-        let third = std::fs::read_to_string(dir.join("scanner.log.2")).unwrap();
+        write_chunk("wavetrace.log", "active3-");
+        maybe_rotate_app_log_with_limits(&dir, 1000, 2);
+        let third = std::fs::read_to_string(dir.join("wavetrace.log.2")).unwrap();
         assert!(third.starts_with("active2-"));
-        assert!(!dir.join("scanner.log.3").exists());
+        assert!(!dir.join("wavetrace.log.3").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_legacy_scanner_log_filename() {
+        let dir = std::env::temp_dir().join(format!(
+            "wavetrace_log_migrate_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("scanner.log"), "legacy\n").unwrap();
+        std::fs::write(dir.join("scanner.log.1"), "rotated\n").unwrap();
+
+        migrate_legacy_app_log(&dir);
+
+        assert!(!dir.join("scanner.log").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("wavetrace.log")).unwrap(),
+            "legacy\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("wavetrace.log.1")).unwrap(),
+            "rotated\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn detect_install_kind_microsoft_store_path() {
+        let path = std::path::Path::new(
+            r"C:\Users\test\AppData\Local\Packages\Meringue.WaveTrace_q6e7nywx05438\LocalCache\Roaming\wavetrace",
+        );
+        assert_eq!(detect_install_kind(path), "microsoft_store");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn detect_install_kind_windows_direct_path() {
+        let path = std::path::Path::new(r"C:\Users\test\AppData\Roaming\wavetrace");
+        assert_eq!(detect_install_kind(path), "windows_direct");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detect_install_kind_mac_sandbox_path() {
+        let path = std::path::Path::new(
+            "/Users/test/Library/Containers/com.wavetrace.app/Data/Library/Application Support/wavetrace",
+        );
+        assert_eq!(detect_install_kind(path), "mac_sandbox");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detect_install_kind_mac_direct_path() {
+        let path =
+            std::path::Path::new("/Users/test/Library/Application Support/wavetrace");
+        assert_eq!(detect_install_kind(path), "mac_direct");
     }
 }

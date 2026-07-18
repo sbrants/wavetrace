@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api,
+  AppDataInfo,
   formatCoin,
   ScreenCaptureAccess,
   Settings,
@@ -10,6 +11,13 @@ import { downloadBase64File } from "../exportDownload";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
+import { installKindNote } from "../appDataInfo";
+import {
+  NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES,
+  ntfyWaveMilestoneWarning,
+} from "../ntfySettings";
+import { reportUiError } from "../uiError";
+import { captureDebugScreenshots } from "../debugPackage";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -74,16 +82,23 @@ export default function SettingsPage() {
   const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [ntfyStatus, setNtfyStatus] = useState<string | null>(null);
+  const [ntfyBusy, setNtfyBusy] = useState(false);
+  const [debugBusy, setDebugBusy] = useState(false);
+  const [debugStatus, setDebugStatus] = useState<string | null>(null);
+  const [appData, setAppData] = useState<AppDataInfo | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
-    const [loadedSettings, listedWindows, access] = await Promise.all([
+    const [loadedSettings, listedWindows, access, dataPaths] = await Promise.all([
       api.getSettings(),
       api.listWindows(),
       api.screenCaptureAccess(),
+      api.getAppDataInfo(),
     ]);
     setWindows(listedWindows);
     setScreenAccess(access);
+    setAppData(dataPaths);
     setSettings(withDefaultWindow(loadedSettings, listedWindows));
   };
 
@@ -111,17 +126,52 @@ export default function SettingsPage() {
 
   if (!settings) return <p className="muted">Loading…</p>;
 
+  const ntfyWaveWarning = ntfyWaveMilestoneWarning(settings);
+
   const save = async () => {
     await api.saveSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
 
+  const generateDebugPackage = async () => {
+    setDebugBusy(true);
+    setDebugStatus(null);
+    try {
+      setDebugStatus("Capturing app screenshots…");
+      const screenshots = await captureDebugScreenshots();
+      setDebugStatus("Building debug package…");
+      const result = await api.generateDebugPackage(screenshots);
+      setDebugStatus(`Saved to ${result.path}`);
+    } catch (e) {
+      setDebugStatus(
+        reportUiError(e, "Settings.generateDebugPackage", { alert: false })
+      );
+    } finally {
+      setDebugBusy(false);
+    }
+  };
+
+  const sendTestNtfy = async () => {
+    setNtfyBusy(true);
+    setNtfyStatus(null);
+    try {
+      await api.saveSettings(settings);
+      await api.sendTestNtfy();
+      setNtfyStatus("Test sent — check the ntfy app on your phone.");
+    } catch (e) {
+      const msg = reportUiError(e, "Settings.sendTestNtfy", { alert: false });
+      setNtfyStatus(msg);
+    } finally {
+      setNtfyBusy(false);
+    }
+  };
+
   const showPreview = async () => {
     try {
       setPreview(await api.previewCapture());
     } catch (e) {
-      alert(e);
+      reportUiError(e, "Settings.previewCapture");
     }
   };
 
@@ -144,7 +194,7 @@ export default function SettingsPage() {
         `Backup saved (${result.run_count} runs, ${result.snapshot_count} snapshots).`
       );
     } catch (e) {
-      setBackupStatus(String(e));
+      setBackupStatus(reportUiError(e, "Settings.exportBackup", { alert: false }));
     } finally {
       setBackupBusy(false);
     }
@@ -185,7 +235,7 @@ export default function SettingsPage() {
             : "")
       );
     } catch (err) {
-      setBackupStatus(String(err));
+      setBackupStatus(reportUiError(err, "Settings.restoreBackup", { alert: false }));
     } finally {
       setBackupBusy(false);
     }
@@ -323,7 +373,7 @@ export default function SettingsPage() {
                 setProbe(await api.probeOcr());
                 setProbeStatus(null);
               } catch (e) {
-                const msg = String(e);
+                const msg = reportUiError(e, "Settings.probeOcr", { alert: false });
                 setProbeError(msg);
                 setProbeStatus(null);
               } finally {
@@ -381,7 +431,8 @@ export default function SettingsPage() {
       <section>
         <h3>Background</h3>
         <p className="muted">
-          Keep WaveTrace in the system tray while scanning. Notifications are local only.
+          Keep WaveTrace in the system tray while scanning. Desktop notifications
+          stay local; optional ntfy can mirror the same events to your phone.
           When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
         </p>
         <label className="checkbox-inline">
@@ -434,6 +485,78 @@ export default function SettingsPage() {
             />
           </label>
         </div>
+        {ntfyWaveWarning && (
+          <div className="permission-callout">
+            <p>{ntfyWaveWarning}</p>
+          </div>
+        )}
+
+        <h4>Phone alerts (ntfy)</h4>
+        <p className="muted">
+          Install the free{" "}
+          <a
+            href="https://ntfy.sh"
+            onClick={(e) => {
+              e.preventDefault();
+              void api.openExternalUrl("https://ntfy.sh");
+            }}
+          >
+            ntfy
+          </a>{" "}
+          app, subscribe to a hard-to-guess topic, then enter that topic below.
+          Anyone who knows the topic can read messages, so treat it like a password.
+          The toggles above also control what is sent to your phone. With screenshots
+          enabled, use wave milestones of{" "}
+          {NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES.toLocaleString()}+ to stay within
+          ntfy.sh attachment limits.
+        </p>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_ntfy_enabled ?? false}
+            onChange={(e) =>
+              setSettings({ ...settings, notify_ntfy_enabled: e.target.checked })
+            }
+          />
+          Send notifications to ntfy
+        </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_ntfy_attach_capture ?? true}
+            disabled={!(settings.notify_ntfy_enabled ?? false)}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                notify_ntfy_attach_capture: e.target.checked,
+              })
+            }
+          />
+          Attach game screenshot to ntfy (wave milestones and run ended)
+        </label>
+        <div className="row">
+          <label>
+            ntfy topic or URL
+            <input
+              type="text"
+              placeholder="wavetrace-your-secret-topic"
+              value={settings.notify_ntfy_topic ?? ""}
+              onChange={(e) =>
+                setSettings({ ...settings, notify_ntfy_topic: e.target.value })
+              }
+            />
+          </label>
+        </div>
+        <div className="toolbar">
+          <button
+            type="button"
+            disabled={ntfyBusy || !(settings.notify_ntfy_topic ?? "").trim()}
+            onClick={sendTestNtfy}
+          >
+            {ntfyBusy ? "Sending…" : "Send test notification"}
+          </button>
+        </div>
+        {ntfyStatus && <p className="muted">{ntfyStatus}</p>}
       </section>
 
       <section>
@@ -443,6 +566,15 @@ export default function SettingsPage() {
           Stop the scanner first. Backups are zip files you can copy to another PC or
           external drive.
         </p>
+        {appData && (
+          <p className="muted">
+            {installKindNote(appData.install_kind)}
+            <br />
+            Database: <code>{appData.database_path}</code>
+            <br />
+            Backups folder: <code>{appData.backups_dir}</code>
+          </p>
+        )}
         <div className="toolbar">
           <button disabled={backupBusy} onClick={exportBackup}>
             Back up now…
@@ -490,7 +622,7 @@ export default function SettingsPage() {
             }}
           />
         </label>
-        <p className="muted">Polling interval and scanner log.</p>
+        <p className="muted">Polling interval, app log, and support tools.</p>
       </section>
 
       {showAdvanced && (
@@ -516,7 +648,30 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <ScannerLogViewer />
+      <ScannerLogViewer appData={appData} />
+
+      <section>
+        <h3>Support</h3>
+        <p className="muted">
+          Build a zip with the latest <code>wavetrace.log</code> and screenshots
+          of the Dashboard, History, and Settings tabs. Saves to your Downloads
+          folder and opens Explorer with the file selected.
+        </p>
+        <div className="toolbar">
+          <button
+            type="button"
+            disabled={debugBusy}
+            onClick={generateDebugPackage}
+          >
+            {debugBusy ? "Generating…" : "Generate debugging package"}
+          </button>
+        </div>
+        {debugStatus && (
+          <p className="muted" role="status" aria-live="polite">
+            {debugStatus}
+          </p>
+        )}
+      </section>
         </>
       )}
 

@@ -21,7 +21,14 @@ body {
   color: var(--text);
 }
 
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+}
+
 #root {
+  height: 100%;
   min-height: 100vh;
 }
 
@@ -808,6 +815,21 @@ tbody tr.selected {
   min-width: 200px;
 }
 
+.run-type-col {
+  width: 180px;
+  min-width: 180px;
+}
+
+.run-type-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
 .comment-input {
   display: block;
   width: 100%;
@@ -833,6 +855,10 @@ tbody tr.selected {
   border-radius: 10px;
   padding: 16px;
   margin-bottom: 16px;
+}
+
+.settings code {
+  overflow-wrap: anywhere;
 }
 
 .settings h3 {
@@ -949,7 +975,7 @@ select {
   max-height: 360px;
   overflow: auto;
   padding: 12px 14px;
-  background: var(--panel);
+  background: #0f1830;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 13px;

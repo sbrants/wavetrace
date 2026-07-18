@@ -71,6 +71,50 @@
         "coin_per_minute": null
       },
       "notes": "GAME STATS + RETRY — ends run, no snapshot."
+    },
+    {
+      "file": "attack dissonance.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 15,
+        "wave": 10,
+        "coin_per_minute": 0,
+        "dissonance": "attack"
+      },
+      "notes": "Attack dissonance — purple sword icon beside Tier/Wave; ATTACK UPGRADES disabled."
+    },
+    {
+      "file": "defense dissonance.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 15,
+        "wave": 10,
+        "coin_per_minute": 0,
+        "dissonance": "defense"
+      },
+      "notes": "Defense dissonance — purple shield icon beside Tier/Wave."
+    },
+    {
+      "file": "utility dissonance.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 15,
+        "wave": 10,
+        "coin_per_minute": 0,
+        "dissonance": "utility"
+      },
+      "notes": "Utility dissonance — purple star icon beside Tier/Wave."
+    },
+    {
+      "file": "ultimate weapons dissonance.png",
+      "game_mode": "normal",
+      "expect": {
+        "tier": 15,
+        "wave": 10,
+        "coin_per_minute": 0,
+        "dissonance": "ultimate_weapons"
+      },
+      "notes": "Ultimate Weapons dissonance — purple triangle icon beside Tier/Wave."
     }
   ]
 }
