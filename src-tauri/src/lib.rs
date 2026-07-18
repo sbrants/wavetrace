@@ -4,6 +4,7 @@ pub mod capture;
 pub mod classify;
 pub mod commands;
 pub mod db;
+pub mod debug_package;
 pub mod export;
 pub mod fields;
 pub mod fixture_capture;
@@ -54,6 +55,8 @@ pub fn run() {
             commands::open_external_url,
             commands::open_scanner_logs_folder,
             commands::append_app_log,
+            commands::capture_app_window,
+            commands::generate_debug_package,
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,

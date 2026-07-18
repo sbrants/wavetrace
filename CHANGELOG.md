@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Editable run type in History** — change a run's type from the History table dropdown (e.g. to fix a mis-tagged run).
 - **Open log folder** — Settings → Advanced → **Open log folder** reveals `wavetrace.log` in Explorer (or the logs directory if the file does not exist yet).
 - **UI errors in app log** — alerts and inline error messages from the UI are appended to `wavetrace.log` with a `[UI:…]` prefix for easier support debugging.
+- **Debugging package** — Settings → Advanced → **Generate debugging package** downloads a zip with `wavetrace.log`, system info, and screenshots of the Dashboard, History, and Settings tabs.
 
 ### Changed
 

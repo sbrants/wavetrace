@@ -161,6 +161,16 @@ export interface BackupRestore {
   backup_app_version: string | null;
 }
 
+export interface DebugScreenshot {
+  label: string;
+  png_base64: string;
+}
+
+export interface DebugPackageExport {
+  filename: string;
+  data_base64: string;
+}
+
 export interface AppDataInfo {
   app_data_dir: string;
   logs_dir: string;
@@ -229,6 +239,9 @@ export const api = {
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
   appendAppLog: (source: string, message: string) =>
     invoke<void>("append_app_log", { source, message }),
+  captureAppWindow: () => invoke<string>("capture_app_window"),
+  generateDebugPackage: (screenshots: DebugScreenshot[]) =>
+    invoke<DebugPackageExport>("generate_debug_package", { screenshots }),
   getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),

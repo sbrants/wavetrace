@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::backup::{self, BackupExport, BackupRestore};
 use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
+use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
@@ -527,6 +528,19 @@ pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
 pub fn append_app_log(source: String, message: String) -> Result<(), String> {
     db::append_app_log(&format!("[UI:{source}] {message}"));
     Ok(())
+}
+
+#[tauri::command]
+pub fn capture_app_window() -> Result<String, String> {
+    let img = capture::capture_own_app_window()?;
+    capture::encode_png_base64(&img)
+}
+
+#[tauri::command]
+pub fn generate_debug_package(
+    screenshots: Vec<DebugScreenshotInput>,
+) -> Result<DebugPackageExport, String> {
+    debug_package::create_debug_package(&screenshots)
 }
 
 #[derive(Serialize)]

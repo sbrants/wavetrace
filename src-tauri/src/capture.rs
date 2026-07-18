@@ -1,5 +1,6 @@
 //! Window enumeration and capture via xcap.
 
+use base64::Engine;
 use std::sync::Mutex;
 
 use image::RgbaImage;
@@ -428,6 +429,32 @@ pub fn crop_region(img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> RgbaImage
     let w = w.min(img.width() - x).max(1);
     let h = h.min(img.height() - y).max(1);
     image::imageops::crop_imm(img, x, y, w, h).to_image()
+}
+
+/// Capture the WaveTrace application window (for debug/support bundles).
+pub fn capture_own_app_window() -> Result<RgbaImage, String> {
+    let windows = xcap::Window::all().map_err(|e| e.to_string())?;
+    for w in &windows {
+        let title = w.title().unwrap_or_default();
+        let app = w.app_name().unwrap_or_default();
+        if !is_our_app_window(&title, &app) {
+            continue;
+        }
+        if let Some(img) = try_capture_window(w) {
+            return Ok(img);
+        }
+    }
+    Err("Could not capture the WaveTrace window. Make sure the app window is visible.".into())
+}
+
+pub fn encode_png_base64(img: &RgbaImage) -> Result<String, String> {
+    use std::io::Cursor;
+
+    let mut buf = Vec::new();
+    image::DynamicImage::ImageRgba8(img.clone())
+        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| format!("png encode failed: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(buf))
 }
 
 #[cfg(test)]

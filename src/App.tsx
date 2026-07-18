@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ScanStartMode, ScannerEvent } from "./api";
 import { reportUiError } from "./uiError";
 import Dashboard from "./components/Dashboard";
@@ -35,6 +35,51 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [canResume, setCanResume] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
+  const tabRef = useRef<Tab>(tab);
+  const debugReturnTabRef = useRef<Tab | null>(null);
+
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+
+  useEffect(() => {
+    const onDebugCapture = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        phase: "start" | "switch" | "end";
+        tab?: Tab;
+      }>).detail;
+      const notifyReady = () => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("wavetrace-debug-tab-ready"));
+          });
+        });
+      };
+
+      if (detail.phase === "start") {
+        debugReturnTabRef.current = tabRef.current;
+        notifyReady();
+        return;
+      }
+      if (detail.phase === "switch" && detail.tab) {
+        setTab(detail.tab);
+        notifyReady();
+        return;
+      }
+      if (detail.phase === "end") {
+        const restore = debugReturnTabRef.current;
+        debugReturnTabRef.current = null;
+        if (restore) {
+          setTab(restore);
+        }
+        notifyReady();
+      }
+    };
+
+    window.addEventListener("wavetrace-debug-capture", onDebugCapture);
+    return () =>
+      window.removeEventListener("wavetrace-debug-capture", onDebugCapture);
+  }, []);
 
   const refreshCanResume = useCallback(() => {
     api.hasResumableRun().then(setCanResume).catch(() => setCanResume(false));

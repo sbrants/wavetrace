@@ -17,6 +17,7 @@ import {
   ntfyWaveMilestoneWarning,
 } from "../ntfySettings";
 import { reportUiError } from "../uiError";
+import { captureDebugScreenshots } from "../debugPackage";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -83,6 +84,8 @@ export default function SettingsPage() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [ntfyStatus, setNtfyStatus] = useState<string | null>(null);
   const [ntfyBusy, setNtfyBusy] = useState(false);
+  const [debugBusy, setDebugBusy] = useState(false);
+  const [debugStatus, setDebugStatus] = useState<string | null>(null);
   const [appData, setAppData] = useState<AppDataInfo | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,6 +132,29 @@ export default function SettingsPage() {
     await api.saveSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+  };
+
+  const generateDebugPackage = async () => {
+    setDebugBusy(true);
+    setDebugStatus(null);
+    try {
+      setDebugStatus("Capturing app screenshots…");
+      const screenshots = await captureDebugScreenshots();
+      setDebugStatus("Building debug package…");
+      const result = await api.generateDebugPackage(screenshots);
+      downloadBase64File(
+        result.data_base64,
+        result.filename,
+        "application/zip"
+      );
+      setDebugStatus("Debug package downloaded.");
+    } catch (e) {
+      setDebugStatus(
+        reportUiError(e, "Settings.generateDebugPackage", { alert: false })
+      );
+    } finally {
+      setDebugBusy(false);
+    }
   };
 
   const sendTestNtfy = async () => {
@@ -601,7 +627,7 @@ export default function SettingsPage() {
             }}
           />
         </label>
-        <p className="muted">Polling interval and scanner log.</p>
+        <p className="muted">Polling interval, app log, and support tools.</p>
       </section>
 
       {showAdvanced && (
@@ -628,6 +654,29 @@ export default function SettingsPage() {
       </section>
 
       <ScannerLogViewer appData={appData} />
+
+      <section>
+        <h3>Support</h3>
+        <p className="muted">
+          Build a zip with the latest <code>wavetrace.log</code> and screenshots
+          of the Dashboard, History, and Settings tabs. Share it when reporting
+          bugs or odd scanner behavior.
+        </p>
+        <div className="toolbar">
+          <button
+            type="button"
+            disabled={debugBusy}
+            onClick={generateDebugPackage}
+          >
+            {debugBusy ? "Generating…" : "Generate debugging package"}
+          </button>
+        </div>
+        {debugStatus && (
+          <p className="muted" role="status" aria-live="polite">
+            {debugStatus}
+          </p>
+        )}
+      </section>
         </>
       )}
 
