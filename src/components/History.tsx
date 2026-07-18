@@ -59,7 +59,8 @@ export default function History() {
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
   const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
-  const [compareShowSkips, setCompareShowSkips] = useState(true);
+  const [compareShowSkips, setCompareShowSkips] = useState(false);
+  const [chartSelectMode, setChartSelectMode] = useState(false);
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
   );
@@ -126,6 +127,7 @@ export default function History() {
     setLiveChartSnapshots([]);
     setLiveChartWaveSkips([]);
     setLiveChartNormalJumps([]);
+    setChartSelectMode(false);
     setSelectedSnapshotIds(new Set());
     setSelectedWaveSkipIds(new Set());
     snapshotRowRefs.current.clear();
@@ -1032,21 +1034,42 @@ export default function History() {
                   <span className="muted compare-live"> · live</span>
                 )}
               </h3>
-              <ChartScreenshotActions
-                targetRef={chartRef}
-                disabled={chartData.length === 0}
-              />
+              <div className="chart-card-actions">
+                <button
+                  type="button"
+                  className={chartSelectMode ? "primary" : undefined}
+                  onClick={() => {
+                    setChartSelectMode((on) => {
+                      if (on) {
+                        setSelectedSnapshotIds(new Set());
+                        setSelectedWaveSkipIds(new Set());
+                      }
+                      return !on;
+                    });
+                  }}
+                >
+                  {chartSelectMode ? "Exit select mode" : "Select mode"}
+                </button>
+                <ChartScreenshotActions
+                  targetRef={chartRef}
+                  disabled={chartData.length === 0}
+                />
+              </div>
             </div>
             <CoinVsWaveChart
               mode="single"
               data={chartData}
               waveSkips={skipMarkers}
               height={300}
-              selectedWaves={selectedWaves}
-              selectedSkipIds={[...selectedWaveSkipIds]}
-              onPointClick={toggleSnapshotWave}
-              onSkipClick={(id) => toggleWaveSkipId(id)}
-              onSelectWaves={selectSnapshotWaves}
+              selectedWaves={chartSelectMode ? selectedWaves : undefined}
+              selectedSkipIds={
+                chartSelectMode ? [...selectedWaveSkipIds] : undefined
+              }
+              onPointClick={chartSelectMode ? toggleSnapshotWave : undefined}
+              onSkipClick={
+                chartSelectMode ? (id) => toggleWaveSkipId(id) : undefined
+              }
+              onSelectWaves={chartSelectMode ? selectSnapshotWaves : undefined}
             />
           </div>
 
@@ -1064,10 +1087,12 @@ export default function History() {
                 )
               </h3>
               <div className="snapshot-panel-actions">
-                <span className="muted">
-                  Click coin points or skip points on the chart. Drag a rectangle
-                  to select coin/min snapshots. Shift+drag adds to the selection.
-                </span>
+                {chartSelectMode && (
+                  <span className="muted">
+                    Click coin or skip points on the chart. Drag a rectangle to
+                    select snapshots. Shift+drag adds to the selection.
+                  </span>
+                )}
                 <button
                   type="button"
                   disabled={
