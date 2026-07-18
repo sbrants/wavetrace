@@ -31,6 +31,9 @@ pub struct Settings {
     /// Mirror desktop notifications to an [ntfy](https://ntfy.sh) topic.
     #[serde(default)]
     pub notify_ntfy_enabled: bool,
+    /// Attach the OCR capture frame to ntfy alerts (wave milestones and run ended).
+    #[serde(default = "default_true")]
+    pub notify_ntfy_attach_capture: bool,
     /// Topic name (`my-secret-topic`) or full URL (`https://ntfy.sh/my-secret-topic`).
     #[serde(default)]
     pub notify_ntfy_topic: String,
@@ -50,6 +53,7 @@ impl Default for Settings {
             notify_window_lost: true,
             notify_wave_every: None,
             notify_ntfy_enabled: false,
+            notify_ntfy_attach_capture: true,
             notify_ntfy_topic: String::new(),
         }
     }
@@ -102,6 +106,11 @@ pub fn load(conn: &Connection) -> Settings {
     if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_enabled") {
         if let Ok(on) = v.parse() {
             s.notify_ntfy_enabled = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_attach_capture") {
+        if let Ok(on) = v.parse() {
+            s.notify_ntfy_attach_capture = on;
         }
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_topic") {
@@ -192,6 +201,11 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         conn,
         "notify_ntfy_enabled",
         &s.notify_ntfy_enabled.to_string(),
+    )?;
+    db::set_setting(
+        conn,
+        "notify_ntfy_attach_capture",
+        &s.notify_ntfy_attach_capture.to_string(),
     )?;
     db::set_setting(conn, "notify_ntfy_topic", &s.notify_ntfy_topic)?;
     Ok(())
@@ -294,12 +308,14 @@ mod tests {
         let conn = db::open_in_memory().expect("db");
         let s = Settings {
             notify_ntfy_enabled: true,
+            notify_ntfy_attach_capture: false,
             notify_ntfy_topic: "wavetrace-test".into(),
             ..Settings::default()
         };
         save(&conn, &s).expect("save");
         let loaded = load(&conn);
         assert!(loaded.notify_ntfy_enabled);
+        assert!(!loaded.notify_ntfy_attach_capture);
         assert_eq!(loaded.notify_ntfy_topic, "wavetrace-test");
     }
 }

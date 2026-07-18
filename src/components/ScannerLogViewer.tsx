@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ScannerLogView } from "../api";
+import { api, AppDataInfo, ScannerLogView } from "../api";
+import { installKindNote } from "../appDataInfo";
 
 const LINE_OPTIONS = [50, 100, 200, 500] as const;
 
-export default function ScannerLogViewer() {
+interface ScannerLogViewerProps {
+  appData?: AppDataInfo | null;
+}
+
+export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
   const [log, setLog] = useState<ScannerLogView | null>(null);
   const [maxLines, setMaxLines] = useState(100);
   const [filter, setFilter] = useState("");
@@ -62,9 +67,12 @@ export default function ScannerLogViewer() {
   return (
     <section>
       <h3>Scanner log</h3>
+      {appData && (
+        <p className="muted">{installKindNote(appData.install_kind)}</p>
+      )}
       <p className="muted">
         Poll timings and OCR output from the background scanner. Log file:{" "}
-        <code>{log?.path ?? "…"}</code>
+        <code>{log?.path ?? appData?.scanner_log_path ?? "…"}</code>
       </p>
       <div className="row scanner-log-toolbar">
         <button type="button" onClick={refresh} disabled={loading}>

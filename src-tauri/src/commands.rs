@@ -348,6 +348,29 @@ pub fn restore_backup(state: State<AppState>, data_base64: String) -> Result<Bac
 }
 
 #[derive(Serialize)]
+pub struct AppDataInfo {
+    pub app_data_dir: String,
+    pub logs_dir: String,
+    pub backups_dir: String,
+    pub database_path: String,
+    pub scanner_log_path: String,
+    pub install_kind: String,
+}
+
+#[tauri::command]
+pub fn get_app_data_info() -> AppDataInfo {
+    let app_data = db::app_data_dir();
+    AppDataInfo {
+        app_data_dir: app_data.to_string_lossy().into_owned(),
+        logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
+        backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
+        database_path: db::database_path().to_string_lossy().into_owned(),
+        scanner_log_path: db::scanner_log_path().to_string_lossy().into_owned(),
+        install_kind: db::detect_install_kind(&app_data).to_string(),
+    }
+}
+
+#[derive(Serialize)]
 pub struct ScannerLogView {
     pub path: String,
     pub lines: Vec<String>,

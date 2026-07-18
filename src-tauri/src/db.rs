@@ -86,6 +86,37 @@ pub fn scanner_log_path() -> PathBuf {
     app_data_dir().join("logs").join("scanner.log")
 }
 
+/// How the app was installed, inferred from the resolved app data path.
+pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
+    let path = app_data_dir.to_string_lossy();
+    #[cfg(target_os = "windows")]
+    {
+        if path.contains("\\Packages\\") && path.contains("\\LocalCache\\Roaming") {
+            return "microsoft_store";
+        }
+        return "windows_direct";
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if path.contains("/Containers/") {
+            return "mac_sandbox";
+        }
+        return "mac_direct";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if path.contains("/.var/app/") {
+            return "linux_flatpak";
+        }
+        return "linux_direct";
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        "unknown"
+    }
+}
+
 /// Per-file size before rotating to `scanner.log.1`, `scanner.log.2`, …
 const SCANNER_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
 /// `scanner.log` plus this many rotated segments (`scanner.log.1` …).
@@ -1426,5 +1457,38 @@ mod tests {
         assert!(!dir.join("scanner.log.3").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn detect_install_kind_microsoft_store_path() {
+        let path = std::path::Path::new(
+            r"C:\Users\test\AppData\Local\Packages\Meringue.WaveTrace_q6e7nywx05438\LocalCache\Roaming\wavetrace",
+        );
+        assert_eq!(detect_install_kind(path), "microsoft_store");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn detect_install_kind_windows_direct_path() {
+        let path = std::path::Path::new(r"C:\Users\test\AppData\Roaming\wavetrace");
+        assert_eq!(detect_install_kind(path), "windows_direct");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detect_install_kind_mac_sandbox_path() {
+        let path = std::path::Path::new(
+            "/Users/test/Library/Containers/com.wavetrace.app/Data/Library/Application Support/wavetrace",
+        );
+        assert_eq!(detect_install_kind(path), "mac_sandbox");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detect_install_kind_mac_direct_path() {
+        let path =
+            std::path::Path::new("/Users/test/Library/Application Support/wavetrace");
+        assert_eq!(detect_install_kind(path), "mac_direct");
     }
 }

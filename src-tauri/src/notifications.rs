@@ -109,7 +109,13 @@ impl NotifyState {
                         *avg_coin_per_minute,
                         frame.coin_per_minute.or(*last_coin_per_minute),
                     );
-                    show(app, &title, &body, cfg.notify_ntfy_enabled, capture);
+                    show(
+                        app,
+                        &title,
+                        &body,
+                        ntfy_attach_capture(&cfg),
+                        capture,
+                    );
                 }
                 Action::Snapshot {
                     wave,
@@ -126,7 +132,13 @@ impl NotifyState {
                                     frame.tier.or(*tier),
                                     frame.coin_per_minute.or(*coin_per_minute),
                                 );
-                                show(app, &title, &body, cfg.notify_ntfy_enabled, capture);
+                                show(
+                                    app,
+                                    &title,
+                                    &body,
+                                    ntfy_attach_capture(&cfg),
+                                    capture,
+                                );
                             }
                         }
                     }
@@ -145,6 +157,10 @@ fn load_settings() -> Settings {
     crate::db::open()
         .map(|conn| settings::load(&conn))
         .unwrap_or_default()
+}
+
+fn ntfy_attach_capture(cfg: &Settings) -> bool {
+    cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
 }
 
 fn show(
@@ -274,6 +290,54 @@ fn encode_capture_png(img: &RgbaImage) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+/// ntfy.sh allows 2 MB per attachment (public server); stay safely below that.
+const NTFY_ATTACH_MAX_BYTES: usize = 1_900_000;
+const NTFY_ATTACH_MAX_WIDTH: u32 = 720;
+
+struct NtfyAttachment {
+    bytes: Vec<u8>,
+    content_type: &'static str,
+    filename: &'static str,
+}
+
+fn prepare_ntfy_capture(img: &RgbaImage) -> Result<NtfyAttachment, String> {
+    use image::codecs::jpeg::JpegEncoder;
+
+    let mut rgba = img.clone();
+    while rgba.width() > NTFY_ATTACH_MAX_WIDTH {
+        let new_w = (rgba.width() * 3 / 4).max(NTFY_ATTACH_MAX_WIDTH);
+        let new_h =
+            ((rgba.height() as u64 * new_w as u64) / rgba.width().max(1) as u64) as u32;
+        rgba = image::imageops::resize(
+            &rgba,
+            new_w,
+            new_h.max(1),
+            image::imageops::FilterType::Triangle,
+        );
+    }
+
+    let rgb = image::DynamicImage::ImageRgba8(rgba).to_rgb8();
+    for quality in [85u8, 75, 65, 55, 45, 35] {
+        let mut buf = Vec::new();
+        let mut enc = JpegEncoder::new_with_quality(&mut buf, quality);
+        enc.encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| format!("jpeg encode failed: {e}"))?;
+        if buf.len() <= NTFY_ATTACH_MAX_BYTES {
+            return Ok(NtfyAttachment {
+                bytes: buf,
+                content_type: "image/jpeg",
+                filename: "game.jpg",
+            });
+        }
+    }
+    Err("game capture is too large for ntfy even after compression".into())
+}
+
 /// Fire-and-forget ntfy publish using saved settings (when enabled).
 fn publish_ntfy_async(title: &str, body: &str, capture: Option<RgbaImage>) {
     let cfg = load_settings();
@@ -285,8 +349,8 @@ fn publish_ntfy_async(title: &str, body: &str, capture: Option<RgbaImage>) {
     let topic = cfg.notify_ntfy_topic.clone();
     std::thread::spawn(move || {
         let result = if let Some(frame) = capture {
-            match encode_capture_png(&frame) {
-                Ok(png) => publish_ntfy_with_image(&topic, &title, &body, &png),
+            match prepare_ntfy_capture(&frame) {
+                Ok(att) => publish_ntfy_with_attachment(&topic, &title, &body, &att),
                 Err(e) => {
                     eprintln!("ntfy capture encode failed: {e}");
                     publish_ntfy(&topic, &title, &body)
@@ -317,22 +381,22 @@ pub fn publish_ntfy(topic_or_url: &str, title: &str, body: &str) -> Result<(), S
     Ok(())
 }
 
-/// Publish a notification with the OCR capture frame attached (sync).
-pub fn publish_ntfy_with_image(
+/// Publish a notification with a compressed capture attached (sync).
+fn publish_ntfy_with_attachment(
     topic_or_url: &str,
     title: &str,
     body: &str,
-    png: &[u8],
+    attachment: &NtfyAttachment,
 ) -> Result<(), String> {
     let url = settings::resolve_ntfy_url(topic_or_url)?;
     let response = ureq::put(&url)
         .header("Title", title)
         .header("Message", body)
-        .header("Filename", "game.png")
-        .header("Content-Type", "image/png")
+        .header("Filename", attachment.filename)
+        .header("Content-Type", attachment.content_type)
         .header("Tags", "bell")
         .header("Priority", "default")
-        .send(png)
+        .send(&attachment.bytes)
         .map_err(|e| format!("ntfy image upload failed: {e}"))?;
     let status = response.status();
     if !status.is_success() {
@@ -387,6 +451,21 @@ mod tests {
         assert!(body.contains("42.1T/min avg"));
         assert!(body.contains("127 snapshots"));
         assert!(body.contains("farming"));
+    }
+
+    #[test]
+    fn prepare_ntfy_capture_fits_public_limit() {
+        let img = RgbaImage::from_fn(884, 1880, |x, y| {
+            image::Rgba([
+                ((x * 3) % 256) as u8,
+                ((y * 5) % 256) as u8,
+                128,
+                255,
+            ])
+        });
+        let att = prepare_ntfy_capture(&img).expect("jpeg");
+        assert!(att.bytes.len() <= NTFY_ATTACH_MAX_BYTES);
+        assert_eq!(att.content_type, "image/jpeg");
     }
 
     #[test]

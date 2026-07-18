@@ -47,6 +47,7 @@ export interface Settings {
   notify_window_lost: boolean;
   notify_wave_every: number | null;
   notify_ntfy_enabled?: boolean;
+  notify_ntfy_attach_capture?: boolean;
   notify_ntfy_topic?: string;
 }
 
@@ -160,6 +161,15 @@ export interface BackupRestore {
   backup_app_version: string | null;
 }
 
+export interface AppDataInfo {
+  app_data_dir: string;
+  logs_dir: string;
+  backups_dir: string;
+  database_path: string;
+  scanner_log_path: string;
+  install_kind: string;
+}
+
 export const api = {
   quitApp: () => invoke<void>("quit_app"),
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
@@ -214,6 +224,7 @@ export const api = {
     invoke<BackupRestore>("restore_backup", { dataBase64 }),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
+  getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   captureFixtureBurst: (count: number, intervalMs: number) =>

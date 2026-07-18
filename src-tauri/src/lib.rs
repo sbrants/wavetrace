@@ -87,6 +87,7 @@ pub fn run() {
             commands::capture_fixture_burst,
             commands::copy_image_to_clipboard,
             commands::read_scanner_log,
+            commands::get_app_data_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

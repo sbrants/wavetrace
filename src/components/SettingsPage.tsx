@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api,
+  AppDataInfo,
   formatCoin,
   ScreenCaptureAccess,
   Settings,
@@ -10,6 +11,11 @@ import { downloadBase64File } from "../exportDownload";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
+import { installKindNote } from "../appDataInfo";
+import {
+  NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES,
+  ntfyWaveMilestoneWarning,
+} from "../ntfySettings";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -76,16 +82,19 @@ export default function SettingsPage() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [ntfyStatus, setNtfyStatus] = useState<string | null>(null);
   const [ntfyBusy, setNtfyBusy] = useState(false);
+  const [appData, setAppData] = useState<AppDataInfo | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
-    const [loadedSettings, listedWindows, access] = await Promise.all([
+    const [loadedSettings, listedWindows, access, dataPaths] = await Promise.all([
       api.getSettings(),
       api.listWindows(),
       api.screenCaptureAccess(),
+      api.getAppDataInfo(),
     ]);
     setWindows(listedWindows);
     setScreenAccess(access);
+    setAppData(dataPaths);
     setSettings(withDefaultWindow(loadedSettings, listedWindows));
   };
 
@@ -112,6 +121,8 @@ export default function SettingsPage() {
   }, [probing]);
 
   if (!settings) return <p className="muted">Loading…</p>;
+
+  const ntfyWaveWarning = ntfyWaveMilestoneWarning(settings);
 
   const save = async () => {
     await api.saveSettings(settings);
@@ -451,6 +462,11 @@ export default function SettingsPage() {
             />
           </label>
         </div>
+        {ntfyWaveWarning && (
+          <div className="permission-callout">
+            <p>{ntfyWaveWarning}</p>
+          </div>
+        )}
 
         <h4>Phone alerts (ntfy)</h4>
         <p className="muted">
@@ -466,9 +482,10 @@ export default function SettingsPage() {
           </a>{" "}
           app, subscribe to a hard-to-guess topic, then enter that topic below.
           Anyone who knows the topic can read messages, so treat it like a password.
-          Wave milestones and run-ended alerts attach the game capture that was OCR'd
-          for that moment (text-only on desktop). The toggles above also control what
-          is sent to your phone.
+          The toggles above also control what is sent to your phone. With screenshots
+          enabled, use wave milestones of{" "}
+          {NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES.toLocaleString()}+ to stay within
+          ntfy.sh attachment limits.
         </p>
         <label className="checkbox-inline">
           <input
@@ -479,6 +496,20 @@ export default function SettingsPage() {
             }
           />
           Send notifications to ntfy
+        </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_ntfy_attach_capture ?? true}
+            disabled={!(settings.notify_ntfy_enabled ?? false)}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                notify_ntfy_attach_capture: e.target.checked,
+              })
+            }
+          />
+          Attach game screenshot to ntfy (wave milestones and run ended)
         </label>
         <div className="row">
           <label>
@@ -512,6 +543,15 @@ export default function SettingsPage() {
           Stop the scanner first. Backups are zip files you can copy to another PC or
           external drive.
         </p>
+        {appData && (
+          <p className="muted">
+            {installKindNote(appData.install_kind)}
+            <br />
+            Database: <code>{appData.database_path}</code>
+            <br />
+            Backups folder: <code>{appData.backups_dir}</code>
+          </p>
+        )}
         <div className="toolbar">
           <button disabled={backupBusy} onClick={exportBackup}>
             Back up now…
@@ -585,7 +625,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <ScannerLogViewer />
+      <ScannerLogViewer appData={appData} />
         </>
       )}
 
