@@ -972,6 +972,8 @@ select {
 }
 
 .changelog-panel .changelog-scroll {
+  max-height: 360px;
+  overflow: auto;
   padding: 12px 14px;
   background: #0f1830;
   border: 1px solid var(--border);
