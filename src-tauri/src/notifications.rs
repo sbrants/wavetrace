@@ -153,6 +153,14 @@ impl NotifyState {
     pub fn reset_run_tracking(&self) {
         *self.last_milestone_wave.lock().unwrap() = 0;
     }
+
+    /// After resume, treat milestones at or below `wave` as already notified.
+    pub fn seed_milestone_from_wave(&self, wave: u32, every: Option<u32>) {
+        let Some(every) = every.filter(|&n| n > 0) else {
+            return;
+        };
+        *self.last_milestone_wave.lock().unwrap() = (wave / every) * every;
+    }
 }
 
 fn load_settings() -> Settings {
@@ -165,26 +173,16 @@ fn ntfy_attach_capture(cfg: &Settings) -> bool {
     cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
 }
 
-/// Milestone waves newly reached by `wave` since `last_notified` (handles wave skips).
+/// Highest milestone newly reached by `wave` since `last_notified` (at most one alert per snapshot).
 fn crossed_wave_milestones(wave: u32, every: u32, last_notified: u32) -> Vec<u32> {
     if every == 0 || wave == 0 {
         return Vec::new();
     }
     let highest = (wave / every) * every;
-    if highest == 0 {
+    if highest == 0 || highest <= last_notified {
         return Vec::new();
     }
-    let mut out = Vec::new();
-    let mut next = if last_notified == 0 {
-        every
-    } else {
-        last_notified.saturating_add(every)
-    };
-    while next <= highest {
-        out.push(next);
-        next = next.saturating_add(every);
-    }
-    out
+    vec![highest]
 }
 
 fn show(
@@ -467,11 +465,17 @@ mod tests {
     }
 
     #[test]
-    fn crossed_wave_milestones_large_skip() {
-        assert_eq!(
-            crossed_wave_milestones(2500, 1000, 0),
-            vec![1000, 2000]
-        );
+    fn crossed_wave_milestones_large_skip_notifies_latest_only() {
+        assert_eq!(crossed_wave_milestones(2500, 1000, 0), vec![2000]);
+    }
+
+    #[test]
+    fn seed_milestone_from_wave_skips_already_passed() {
+        let state = NotifyState::default();
+        state.seed_milestone_from_wave(5003, Some(100));
+        assert_eq!(*state.last_milestone_wave.lock().unwrap(), 5000);
+        assert_eq!(crossed_wave_milestones(5003, 100, 5000), Vec::<u32>::new());
+        assert_eq!(crossed_wave_milestones(5100, 100, 5000), vec![5100]);
     }
 
     #[test]

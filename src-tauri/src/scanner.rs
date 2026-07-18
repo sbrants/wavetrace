@@ -102,13 +102,21 @@ impl Scanner {
 
         let log_path = db::app_data_dir().join("logs");
         std::fs::create_dir_all(&log_path).ok();
-        let start_actions = match mode {
-            ScanStartMode::NewRun => new_run_actions(
-                &mut self.machine.lock().unwrap(),
-                &target,
+        let (start_actions, resume_wave) = match mode {
+            ScanStartMode::NewRun => (
+                new_run_actions(&mut self.machine.lock().unwrap(), &target),
+                None,
             ),
-            ScanStartMode::ResumePrevious => self.prepare_resume(&conn)?,
+            ScanStartMode::ResumePrevious => {
+                let wave = self.prepare_resume(&conn)?;
+                (Vec::new(), wave)
+            }
         };
+        if let Some(wave) = resume_wave {
+            if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
+                notify.seed_milestone_from_wave(wave, cfg.notify_wave_every);
+            }
+        }
         if !start_actions.is_empty() {
             apply_actions(&conn, &self.current_run_id, &start_actions, &log_path);
             notify_scanner_actions(&app, &start_actions, None, NotifyFrameContext::default());
@@ -189,20 +197,21 @@ impl Scanner {
         Ok(())
     }
 
-    fn prepare_resume(&self, conn: &rusqlite::Connection) -> Result<Vec<Action>, String> {
+    fn prepare_resume(&self, conn: &rusqlite::Connection) -> Result<Option<u32>, String> {
         let Some((id, run_type)) = db::latest_open_run(conn).map_err(|e| e.to_string())? else {
             return Err("No run to resume — start a new run instead.".into());
         };
         let (last_wave, peak_tier) = db::snapshot_stats(conn, &id).map_err(|e| e.to_string())?;
+        let last_wave = last_wave.unwrap_or(0) as u32;
         let run_type = RunType::from_db_str(&run_type);
         // Always re-sync from DB: the game may have advanced while the scanner was stopped.
         self.machine.lock().unwrap().resume_from_db(
             run_type,
-            last_wave.unwrap_or(0) as u32,
+            last_wave,
             peak_tier.map(|t| t as u32),
         );
         *self.current_run_id.lock().unwrap() = Some(id);
-        Ok(Vec::new())
+        Ok(Some(last_wave))
     }
 }
 
