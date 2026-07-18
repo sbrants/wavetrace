@@ -289,15 +289,15 @@ pub fn apply_actions(
             }
         };
         if let Err(e) = result {
-            db::append_scanner_log(&format!("DB error applying {action:?}: {e}"));
+            db::append_app_log(&format!("DB error applying {action:?}: {e}"));
         } else if matches!(action, Action::WaveSkip { .. }) {
-            db::append_scanner_log(&format!("Recorded {action:?}"));
+            db::append_app_log(&format!("Recorded {action:?}"));
         }
     }
 }
 
 fn log_line(_dir: &std::path::Path, msg: &str) {
-    db::append_scanner_log(msg);
+    db::append_app_log(msg);
 }
 
 fn emit(

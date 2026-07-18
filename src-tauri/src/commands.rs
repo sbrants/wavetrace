@@ -82,7 +82,7 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 pub fn open_scanner_logs_folder() -> Result<(), String> {
     let logs_dir = db::app_data_dir().join("logs");
     std::fs::create_dir_all(&logs_dir).map_err(|e| e.to_string())?;
-    let log_file = db::scanner_log_path();
+    let log_file = db::app_log_path();
     reveal_in_file_manager(if log_file.exists() {
         &log_file
     } else {
@@ -419,7 +419,7 @@ pub struct AppDataInfo {
     pub logs_dir: String,
     pub backups_dir: String,
     pub database_path: String,
-    pub scanner_log_path: String,
+    pub app_log_path: String,
     pub install_kind: String,
 }
 
@@ -431,7 +431,7 @@ pub fn get_app_data_info() -> AppDataInfo {
         logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
         backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
         database_path: db::database_path().to_string_lossy().into_owned(),
-        scanner_log_path: db::scanner_log_path().to_string_lossy().into_owned(),
+        app_log_path: db::app_log_path().to_string_lossy().into_owned(),
         install_kind: db::detect_install_kind(&app_data).to_string(),
     }
 }
@@ -492,10 +492,10 @@ fn read_file_tail_text(path: &std::path::Path, max_bytes: usize) -> Result<(Stri
     Ok((text, tail_truncated))
 }
 
-/// Tail the scanner log (last N lines, capped at 2 MiB from EOF).
+/// Tail the app log (last N lines, capped at 2 MiB from EOF).
 #[tauri::command]
 pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
-    let path = db::scanner_log_path();
+    let path = db::app_log_path();
     let path_str = path.to_string_lossy().to_string();
     if !path.exists() {
         return Ok(ScannerLogView {
@@ -521,6 +521,12 @@ pub fn read_scanner_log(max_lines: usize) -> Result<ScannerLogView, String> {
         total_lines,
         lines,
     })
+}
+
+#[tauri::command]
+pub fn append_app_log(source: String, message: String) -> Result<(), String> {
+    db::append_app_log(&format!("[UI:{source}] {message}"));
+    Ok(())
 }
 
 #[derive(Serialize)]

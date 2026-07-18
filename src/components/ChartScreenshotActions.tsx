@@ -1,4 +1,5 @@
 import { useState, type RefObject } from "react";
+import { reportUiError } from "../uiError";
 import {
   captureChartCard,
   chartScreenshotFilename,
@@ -41,7 +42,7 @@ export default function ChartScreenshotActions({
       await copyChartScreenshot(blob);
       flash("Copied ✓");
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "ChartScreenshot.copy");
     } finally {
       setBusy(false);
     }
@@ -54,7 +55,7 @@ export default function ChartScreenshotActions({
       downloadChartScreenshot(blob, filename());
       flash("Downloaded ✓");
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "ChartScreenshot.download");
     } finally {
       setBusy(false);
     }

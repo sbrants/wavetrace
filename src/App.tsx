@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ScanStartMode, ScannerEvent } from "./api";
+import { reportUiError } from "./uiError";
 import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
@@ -71,7 +72,7 @@ export default function App() {
           current_run_id: prev?.current_run_id ?? null,
         }));
       })
-      .catch((e) => alert(String(e)));
+      .catch((e) => reportUiError(e, "App.startScanner"));
   };
 
   const warning = scannerEvent?.live?.total_coin_warning ?? false;

@@ -10,13 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Phone notifications via ntfy** — Settings → Background can mirror run-ended, window-lost, and wave-milestone alerts to an [ntfy](https://ntfy.sh) topic on your phone. Enter a private topic (or full URL), enable the toggle, and use **Send test notification** to verify. Run-ended and wave-milestone ntfy messages include stats and can attach the game-window capture frame that was OCR'd for that poll (toggle **Attach game capture**; JPEG-compressed to stay under ntfy.sh size limits).
 - **Dissonance run types** — runs are tagged as Attack, Defense, Utility, or Ultimate Weapons dissonance (in addition to farming and tournament). Detection uses the purple workshop icons beside Tier/Wave (sword, shield, star, triangle) with OCR text as a fallback.
 - **Editable run type in History** — change a run's type from the History table dropdown (e.g. to fix a mis-tagged run).
-- **Open log folder** — Settings → Advanced → **Open log folder** reveals `scanner.log` in Explorer (or the logs directory if the file does not exist yet).
+- **Open log folder** — Settings → Advanced → **Open log folder** reveals `wavetrace.log` in Explorer (or the logs directory if the file does not exist yet).
+- **UI errors in app log** — alerts and inline error messages from the UI are appended to `wavetrace.log` with a `[UI:…]` prefix for easier support debugging.
 
 ### Changed
 
 - **History chart select mode** — single-run charts are view-only until **Select mode** is enabled; snapshot/skip rectangle selection and deletion are unchanged in the tables. Compare overlay wave skips are hidden by default (**Show wave jumps**).
 - **Tab state preserved** — Dashboard, History, and Settings stay mounted when switching tabs so comparisons, filters, and selections survive tab changes.
 - **Settings backup paths** — database and log paths now reflect Microsoft Store vs direct Windows/Mac installs.
+- **App log file** — diagnostic log renamed from `scanner.log` to `wavetrace.log` (existing files are migrated on first access).
 
 ### Fixed
 

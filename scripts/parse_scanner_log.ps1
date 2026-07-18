@@ -1,6 +1,15 @@
-$log = Join-Path $env:APPDATA "wavetrace\logs\scanner.log"
+$log = Join-Path $env:APPDATA "wavetrace\logs\wavetrace.log"
+if (-not (Test-Path $log)) {
+    $log = Join-Path $env:APPDATA "wavetrace\logs\scanner.log"
+}
+if (-not (Test-Path $log)) {
+    $log = Join-Path $env:APPDATA "wavewatch\logs\wavetrace.log"
+}
 if (-not (Test-Path $log)) {
     $log = Join-Path $env:APPDATA "wavewatch\logs\scanner.log"
+}
+if (-not (Test-Path $log)) {
+    $log = Join-Path $env:APPDATA "towerrun\logs\wavetrace.log"
 }
 if (-not (Test-Path $log)) {
     $log = Join-Path $env:APPDATA "towerrun\logs\scanner.log"

@@ -166,7 +166,7 @@ export interface AppDataInfo {
   logs_dir: string;
   backups_dir: string;
   database_path: string;
-  scanner_log_path: string;
+  app_log_path: string;
   install_kind: string;
 }
 
@@ -227,6 +227,8 @@ export const api = {
     invoke<BackupRestore>("restore_backup", { dataBase64 }),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
+  appendAppLog: (source: string, message: string) =>
+    invoke<void>("append_app_log", { source, message }),
   getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),

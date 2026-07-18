@@ -16,6 +16,7 @@ import {
   NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES,
   ntfyWaveMilestoneWarning,
 } from "../ntfySettings";
+import { reportUiError } from "../uiError";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -138,7 +139,8 @@ export default function SettingsPage() {
       await api.sendTestNtfy();
       setNtfyStatus("Test sent — check the ntfy app on your phone.");
     } catch (e) {
-      setNtfyStatus(String(e));
+      const msg = reportUiError(e, "Settings.sendTestNtfy", { alert: false });
+      setNtfyStatus(msg);
     } finally {
       setNtfyBusy(false);
     }
@@ -148,7 +150,7 @@ export default function SettingsPage() {
     try {
       setPreview(await api.previewCapture());
     } catch (e) {
-      alert(e);
+      reportUiError(e, "Settings.previewCapture");
     }
   };
 
@@ -171,7 +173,7 @@ export default function SettingsPage() {
         `Backup saved (${result.run_count} runs, ${result.snapshot_count} snapshots).`
       );
     } catch (e) {
-      setBackupStatus(String(e));
+      setBackupStatus(reportUiError(e, "Settings.exportBackup", { alert: false }));
     } finally {
       setBackupBusy(false);
     }
@@ -212,7 +214,7 @@ export default function SettingsPage() {
             : "")
       );
     } catch (err) {
-      setBackupStatus(String(err));
+      setBackupStatus(reportUiError(err, "Settings.restoreBackup", { alert: false }));
     } finally {
       setBackupBusy(false);
     }
@@ -350,7 +352,7 @@ export default function SettingsPage() {
                 setProbe(await api.probeOcr());
                 setProbeStatus(null);
               } catch (e) {
-                const msg = String(e);
+                const msg = reportUiError(e, "Settings.probeOcr", { alert: false });
                 setProbeError(msg);
                 setProbeStatus(null);
               } finally {

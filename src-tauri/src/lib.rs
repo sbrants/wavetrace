@@ -53,6 +53,7 @@ pub fn run() {
             commands::open_screen_recording_settings,
             commands::open_external_url,
             commands::open_scanner_logs_folder,
+            commands::append_app_log,
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,

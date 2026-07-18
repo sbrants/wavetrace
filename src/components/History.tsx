@@ -15,6 +15,7 @@ import SkipCoinAnalytics from "./SkipCoinAnalytics";
 import SortableTh from "./SortableTh";
 import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
 import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
+import { reportUiError } from "../uiError";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -107,7 +108,7 @@ export default function History() {
     try {
       await api.setRunComment(runId, value);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
       reload();
     }
   }, [reload]);
@@ -121,7 +122,7 @@ export default function History() {
     try {
       await api.setRunType(runId, value);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
       reload();
     }
   }, [reload]);
@@ -216,7 +217,7 @@ export default function History() {
       setChecked(new Set());
       reload();
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -243,7 +244,7 @@ export default function History() {
       );
       setCompareRuns(runsToCompare);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     } finally {
       setCompareLoading(false);
     }
@@ -334,7 +335,7 @@ export default function History() {
       const combined = updated.find((r) => r.id === newId) ?? null;
       setSelected(combined);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -351,7 +352,7 @@ export default function History() {
         `Downloaded ${result.snapshot_count} snapshot${result.snapshot_count === 1 ? "" : "s"} ✓`
       );
     } catch (e) {
-      alert(e);
+      reportUiError(e, "History");
     }
   };
 
@@ -367,7 +368,7 @@ export default function History() {
         `Downloaded ${result.run_count} run${result.run_count === 1 ? "" : "s"} ✓`
       );
     } catch (e) {
-      alert(e);
+      reportUiError(e, "History");
     }
   };
 
@@ -567,7 +568,7 @@ export default function History() {
       setSelectedSnapshotIds(new Set());
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -586,7 +587,7 @@ export default function History() {
       setSelectedWaveSkipIds(new Set());
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -609,7 +610,7 @@ export default function History() {
       });
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 
@@ -632,7 +633,7 @@ export default function History() {
       });
       await refreshSelectedRun(true);
     } catch (e) {
-      alert(String(e));
+      reportUiError(e, "History");
     }
   };
 

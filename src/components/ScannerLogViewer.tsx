@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, AppDataInfo, ScannerLogView } from "../api";
 import { installKindNote } from "../appDataInfo";
+import { reportUiError } from "../uiError";
 
 const LINE_OPTIONS = [50, 100, 200, 500] as const;
 
@@ -25,7 +26,7 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
     try {
       setLog(await api.readScannerLog(maxLines));
     } catch (e) {
-      setError(String(e));
+      setError(reportUiError(e, "ScannerLogViewer.load", { alert: false }));
     } finally {
       setLoading(false);
     }
@@ -66,13 +67,13 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
 
   return (
     <section>
-      <h3>Scanner log</h3>
+      <h3>App log</h3>
       {appData && (
         <p className="muted">{installKindNote(appData.install_kind)}</p>
       )}
       <p className="muted">
         Poll timings and OCR output from the background scanner. Log file:{" "}
-        <code>{log?.path ?? appData?.scanner_log_path ?? "…"}</code>
+        <code>{log?.path ?? appData?.app_log_path ?? "…"}</code>
       </p>
       <div className="row scanner-log-toolbar">
         <button type="button" onClick={refresh} disabled={loading}>
@@ -80,7 +81,7 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
         </button>
         <button
           type="button"
-          onClick={() => api.openScannerLogsFolder().catch((e) => alert(e))}
+          onClick={() => api.openScannerLogsFolder().catch((e) => reportUiError(e, "ScannerLogViewer.openLogFolder"))}
         >
           Open log folder
         </button>
@@ -120,7 +121,7 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
         <button
           type="button"
           disabled={filtered.length === 0}
-          onClick={() => copyVisible().catch((e) => alert(e))}
+          onClick={() => copyVisible().catch((e) => reportUiError(e, "ScannerLogViewer.copy"))}
         >
           Copy visible
         </button>
@@ -139,7 +140,7 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
       <pre
         ref={preRef}
         className="scanner-log-view"
-        aria-label="Scanner log output"
+        aria-label="App log output"
         onScroll={() => {
           if (!preRef.current) return;
           const el = preRef.current;
