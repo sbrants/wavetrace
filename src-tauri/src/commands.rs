@@ -58,6 +58,11 @@ pub fn save_settings(new_settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn send_test_ntfy() -> Result<(), String> {
+    crate::notifications::send_test_ntfy()
+}
+
+#[tauri::command]
 pub fn has_resumable_run(state: State<AppState>) -> Result<bool, String> {
     state.scanner.has_resumable_run()
 }
@@ -97,7 +102,7 @@ pub fn manual_new_run(app: AppHandle, state: State<AppState>) -> Result<(), Stri
         action_refs,
         &db::app_data_dir().join("logs"),
     );
-    scanner::notify_scanner_actions(&app, action_refs);
+    scanner::notify_scanner_actions(&app, action_refs, None, crate::notifications::NotifyFrameContext::default());
     if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
         notify.reset_run_tracking();
     }

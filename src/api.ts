@@ -46,6 +46,8 @@ export interface Settings {
   notify_run_ended: boolean;
   notify_window_lost: boolean;
   notify_wave_every: number | null;
+  notify_ntfy_enabled?: boolean;
+  notify_ntfy_topic?: string;
 }
 
 export interface RunRow {
@@ -170,6 +172,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
+  sendTestNtfy: () => invoke<void>("send_test_ntfy"),
   hasResumableRun: () => invoke<boolean>("has_resumable_run"),
   startScanner: (mode: ScanStartMode) =>
     invoke<void>("start_scanner", { mode }),

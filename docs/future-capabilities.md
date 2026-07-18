@@ -20,7 +20,7 @@ DMGs for Apple Silicon and Intel on GitHub Releases. Follow-ups: Developer ID si
 
 ### 4. Notifications ✅ shipped
 
-Lightweight wins: run ended, target window lost for N minutes, optional “wave X” milestone. Local-only, no cloud. On Tauri that likely means the **notification** plugin plus a capability entry when added.
+Lightweight wins: run ended, target window lost for N minutes, optional “wave X” milestone. Local desktop notifications plus optional **ntfy** phone mirror (Settings → Background).
 
 ### 5. More tracked fields (carefully)
 

@@ -26,6 +26,7 @@ spreadsheet-ods = "1.0.4"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
+ureq = "3.3.0"
 uuid = { version = "1.23.3", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 

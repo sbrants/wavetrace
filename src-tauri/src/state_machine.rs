@@ -68,6 +68,10 @@ pub enum Action {
     EndRun {
         final_wave: u32,
         peak_tier: Option<u32>,
+        run_type: RunType,
+        snapshot_count: u32,
+        avg_coin_per_minute: Option<f64>,
+        last_coin_per_minute: Option<f64>,
     },
 }
 
@@ -109,6 +113,9 @@ struct ActiveRun {
     peak_tier: Option<u32>,
     accumulating_for_wave: Option<u32>,
     coin_samples: Vec<f64>,
+    snapshots_saved: u32,
+    coin_sum: f64,
+    coin_rate_snapshots: u32,
 }
 
 /// Debounce: a value must be seen on `DEBOUNCE` consecutive polls to be
@@ -504,10 +511,10 @@ impl RunStateMachine {
             let final_wave = run
                 .last_saved_wave
                 .max(run.accumulating_for_wave.unwrap_or(0));
-            actions.push(Action::EndRun {
+            actions.push(run.end_run_action(
                 final_wave,
-                peak_tier: run.peak_tier,
-            });
+                self.last_coin_rate.or(self.last_seen_coin),
+            ));
         }
         // Forget confirmed wave so the next confirmed reading can start a run
         // even if it is > 1.
@@ -613,10 +620,10 @@ impl RunStateMachine {
                 let final_wave = run
                     .last_saved_wave
                     .max(run.accumulating_for_wave.unwrap_or(0));
-                actions.push(Action::EndRun {
+                actions.push(run.end_run_action(
                     final_wave,
-                    peak_tier: run.peak_tier,
-                });
+                    self.last_coin_rate.or(self.last_seen_coin),
+                ));
             }
             // Reset debounce so a stale confirmed wave can't restart the run
             // before the game actually shows wave 1 again.
@@ -699,10 +706,10 @@ impl RunStateMachine {
                             let final_wave = ended
                                 .last_saved_wave
                                 .max(ended.accumulating_for_wave.unwrap_or(0));
-                            actions.push(Action::EndRun {
+                            actions.push(ended.end_run_action(
                                 final_wave,
-                                peak_tier: ended.peak_tier,
-                            });
+                                self.last_coin_rate.or(self.last_seen_coin),
+                            ));
                             let run_type = if self.tournament_seen {
                                 RunType::Tournament
                             } else {
@@ -774,6 +781,30 @@ fn new_active_run(run_type: RunType) -> ActiveRun {
         peak_tier: None,
         accumulating_for_wave: None,
         coin_samples: Vec::new(),
+        snapshots_saved: 0,
+        coin_sum: 0.0,
+        coin_rate_snapshots: 0,
+    }
+}
+
+impl ActiveRun {
+    fn end_run_action(&self, final_wave: u32, last_coin_per_minute: Option<f64>) -> Action {
+        Action::EndRun {
+            final_wave,
+            peak_tier: self.peak_tier,
+            run_type: self.run_type,
+            snapshot_count: self.snapshots_saved,
+            avg_coin_per_minute: self.avg_coin_per_minute(),
+            last_coin_per_minute,
+        }
+    }
+
+    fn avg_coin_per_minute(&self) -> Option<f64> {
+        if self.coin_rate_snapshots == 0 {
+            None
+        } else {
+            Some(self.coin_sum / self.coin_rate_snapshots as f64)
+        }
     }
 }
 
@@ -787,6 +818,11 @@ fn flush_completed_wave(run: &mut ActiveRun, wave: u32, tier: Option<u32>) -> Ve
     run.last_saved_wave = wave;
     if let Some(t) = tier {
         run.peak_tier = Some(run.peak_tier.map_or(t, |p| p.max(t)));
+    }
+    run.snapshots_saved += 1;
+    if let Some(c) = coin_per_minute {
+        run.coin_sum += c;
+        run.coin_rate_snapshots += 1;
     }
     vec![Action::Snapshot {
         wave,
@@ -1209,7 +1245,11 @@ mod tests {
                 },
                 Action::EndRun {
                     final_wave: 2,
-                    peak_tier: Some(11)
+                    peak_tier: Some(11),
+                    run_type: RunType::Farming,
+                    snapshot_count: 2,
+                    avg_coin_per_minute: Some(10.0),
+                    last_coin_per_minute: Some(10.0),
                 }
             ]
         );
@@ -1267,7 +1307,11 @@ mod tests {
         let actions = feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(10.0)));
         assert!(actions.contains(&Action::EndRun {
             final_wave: 450,
-            peak_tier: Some(14)
+            peak_tier: Some(14),
+            run_type: RunType::Farming,
+            snapshot_count: 2,
+            avg_coin_per_minute: Some(10.0),
+            last_coin_per_minute: Some(10.0),
         }));
         assert!(actions.contains(&Action::StartRun {
             run_type: RunType::Farming
@@ -1297,7 +1341,11 @@ mod tests {
                 },
                 Action::EndRun {
                     final_wave: 3,
-                    peak_tier: Some(14)
+                    peak_tier: Some(14),
+                    run_type: RunType::Farming,
+                    snapshot_count: 3,
+                    avg_coin_per_minute: Some(1.0),
+                    last_coin_per_minute: Some(1.0),
                 }
             ]
         );

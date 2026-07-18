@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::notifications::NotifyFrameContext;
 use crate::state_machine::{Action, LiveState, RunStateMachine, RunType};
 use crate::{capture, db, fields, settings};
 
@@ -107,7 +108,7 @@ impl Scanner {
         };
         if !start_actions.is_empty() {
             apply_actions(&conn, &self.current_run_id, &start_actions, &log_path);
-            notify_scanner_actions(&app, &start_actions);
+            notify_scanner_actions(&app, &start_actions, None, NotifyFrameContext::default());
         }
 
         let running = self.running.clone();
@@ -165,10 +166,11 @@ impl Scanner {
                                 fields.all_lines,
                             ),
                         );
+                        let frame_ctx = crate::notifications::frame_context_from_poll(&input);
                         let actions = machine.lock().unwrap().poll(input);
                         if !actions.is_empty() {
                             apply_actions(&conn, &current_run_id, &actions, &log_path);
-                            notify_scanner_actions(&app, &actions);
+                            notify_scanner_actions(&app, &actions, Some(&full), frame_ctx);
                         }
                         "scanning"
                     }
@@ -257,6 +259,7 @@ pub fn apply_actions(
             Action::EndRun {
                 final_wave,
                 peak_tier,
+                ..
             } => {
                 let id = current_run_id.lock().unwrap().take();
                 match id {
@@ -303,9 +306,14 @@ fn emit(
     app.emit("scanner-update", event).ok();
 }
 
-pub fn notify_scanner_actions(app: &AppHandle, actions: &[Action]) {
+pub fn notify_scanner_actions(
+    app: &AppHandle,
+    actions: &[Action],
+    capture: Option<&image::RgbaImage>,
+    frame: NotifyFrameContext,
+) {
     if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
-        notify.on_actions(app, actions);
+        notify.on_actions(app, actions, capture, frame);
     }
 }
 

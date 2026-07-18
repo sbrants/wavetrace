@@ -74,6 +74,8 @@ export default function SettingsPage() {
   const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [ntfyStatus, setNtfyStatus] = useState<string | null>(null);
+  const [ntfyBusy, setNtfyBusy] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -115,6 +117,20 @@ export default function SettingsPage() {
     await api.saveSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+  };
+
+  const sendTestNtfy = async () => {
+    setNtfyBusy(true);
+    setNtfyStatus(null);
+    try {
+      await api.saveSettings(settings);
+      await api.sendTestNtfy();
+      setNtfyStatus("Test sent — check the ntfy app on your phone.");
+    } catch (e) {
+      setNtfyStatus(String(e));
+    } finally {
+      setNtfyBusy(false);
+    }
   };
 
   const showPreview = async () => {
@@ -381,7 +397,8 @@ export default function SettingsPage() {
       <section>
         <h3>Background</h3>
         <p className="muted">
-          Keep WaveTrace in the system tray while scanning. Notifications are local only.
+          Keep WaveTrace in the system tray while scanning. Desktop notifications
+          stay local; optional ntfy can mirror the same events to your phone.
           When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
         </p>
         <label className="checkbox-inline">
@@ -434,6 +451,52 @@ export default function SettingsPage() {
             />
           </label>
         </div>
+
+        <h4>Phone alerts (ntfy)</h4>
+        <p className="muted">
+          Install the free{" "}
+          <a href="https://ntfy.sh" target="_blank" rel="noreferrer">
+            ntfy
+          </a>{" "}
+          app, subscribe to a hard-to-guess topic, then enter that topic below.
+          Anyone who knows the topic can read messages, so treat it like a password.
+          Wave milestones and run-ended alerts attach the game capture that was OCR'd
+          for that moment (text-only on desktop). The toggles above also control what
+          is sent to your phone.
+        </p>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_ntfy_enabled ?? false}
+            onChange={(e) =>
+              setSettings({ ...settings, notify_ntfy_enabled: e.target.checked })
+            }
+          />
+          Send notifications to ntfy
+        </label>
+        <div className="row">
+          <label>
+            ntfy topic or URL
+            <input
+              type="text"
+              placeholder="wavetrace-your-secret-topic"
+              value={settings.notify_ntfy_topic ?? ""}
+              onChange={(e) =>
+                setSettings({ ...settings, notify_ntfy_topic: e.target.value })
+              }
+            />
+          </label>
+        </div>
+        <div className="toolbar">
+          <button
+            type="button"
+            disabled={ntfyBusy || !(settings.notify_ntfy_topic ?? "").trim()}
+            onClick={sendTestNtfy}
+          >
+            {ntfyBusy ? "Sending…" : "Send test notification"}
+          </button>
+        </div>
+        {ntfyStatus && <p className="muted">{ntfyStatus}</p>}
       </section>
 
       <section>

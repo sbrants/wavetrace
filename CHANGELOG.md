@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Phone notifications via ntfy** — Settings → Background can mirror run-ended, window-lost, and wave-milestone alerts to an [ntfy](https://ntfy.sh) topic on your phone. Enter a private topic (or full URL), enable the toggle, and use **Send test notification** to verify. Run-ended and wave-milestone ntfy messages include stats and attach the game-window capture frame that was OCR'd for that poll (no extra screenshot).
+
 ## [0.2.34] — 2026-06-29
 
 ### Changed

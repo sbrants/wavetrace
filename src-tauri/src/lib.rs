@@ -53,6 +53,7 @@ pub fn run() {
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,
+            commands::send_test_ntfy,
             commands::has_resumable_run,
             commands::start_scanner,
             commands::stop_scanner,
