@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.35] — 2026-07-18
+
 ### Added
 
 - **Phone notifications via ntfy** — Settings → Background can mirror run-ended, window-lost, and wave-milestone alerts to an [ntfy](https://ntfy.sh) topic on your phone. Enter a private topic (or full URL), enable the toggle, and use **Send test notification** to verify. Run-ended and wave-milestone ntfy messages include stats and can attach the game-window capture frame that was OCR'd for that poll (toggle **Attach game capture**; JPEG-compressed to stay under ntfy.sh size limits).
@@ -12,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Editable run type in History** — change a run's type from the History table dropdown (e.g. to fix a mis-tagged run).
 - **Open log folder** — Settings → Advanced → **Open log folder** reveals `wavetrace.log` in Explorer (or the logs directory if the file does not exist yet).
 - **UI errors in app log** — alerts and inline error messages from the UI are appended to `wavetrace.log` with a `[UI:…]` prefix for easier support debugging.
-- **Debugging package** — Settings → Advanced → **Generate debugging package** downloads a zip with `wavetrace.log`, system info, and screenshots of the Dashboard, History, and Settings tabs.
+- **Debugging package** — Settings → Advanced → **Generate debugging package** saves a zip with `wavetrace.log`, system info, and screenshots of the Dashboard, History, and Settings tabs to your Downloads folder and opens Explorer with the file selected.
 
 ### Changed
 
@@ -25,7 +29,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Settings external links** — ntfy help and other `https://` links open in the system browser (Tauri webviews do not navigate to external URLs).
 - **ntfy attachment size** — optional screenshot toggle, JPEG compression under ntfy.sh limits, and a warning when wave-milestone notifications with images are more frequent than recommended (~every 1000 waves).
-- **Settings scrollbar** — removed the nested changelog scrollbox; long paths wrap and the main pane handles scrolling without a duplicate body scrollbar.
+- **Settings layout** — remove duplicate body scrollbar on the settings page; embedded changelog keeps a bounded scroll area in Advanced.
+- **New run on dissonance** — manual **New run** preserves dissonance/tournament hints and avoids WinRT OCR on the UI thread (fixes `RoInitialize` errors).
+
+---
 
 ## [0.2.34] — 2026-06-29
 

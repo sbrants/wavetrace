@@ -168,7 +168,7 @@ export interface DebugScreenshot {
 
 export interface DebugPackageExport {
   filename: string;
-  data_base64: string;
+  path: string;
 }
 
 export interface AppDataInfo {

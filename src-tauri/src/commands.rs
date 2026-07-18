@@ -540,7 +540,9 @@ pub fn capture_app_window() -> Result<String, String> {
 pub fn generate_debug_package(
     screenshots: Vec<DebugScreenshotInput>,
 ) -> Result<DebugPackageExport, String> {
-    debug_package::create_debug_package(&screenshots)
+    let export = debug_package::create_debug_package(&screenshots)?;
+    reveal_in_file_manager(std::path::Path::new(&export.path))?;
+    Ok(export)
 }
 
 #[derive(Serialize)]

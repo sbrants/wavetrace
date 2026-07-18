@@ -142,12 +142,7 @@ export default function SettingsPage() {
       const screenshots = await captureDebugScreenshots();
       setDebugStatus("Building debug package…");
       const result = await api.generateDebugPackage(screenshots);
-      downloadBase64File(
-        result.data_base64,
-        result.filename,
-        "application/zip"
-      );
-      setDebugStatus("Debug package downloaded.");
+      setDebugStatus(`Saved to ${result.path}`);
     } catch (e) {
       setDebugStatus(
         reportUiError(e, "Settings.generateDebugPackage", { alert: false })
@@ -659,8 +654,8 @@ export default function SettingsPage() {
         <h3>Support</h3>
         <p className="muted">
           Build a zip with the latest <code>wavetrace.log</code> and screenshots
-          of the Dashboard, History, and Settings tabs. Share it when reporting
-          bugs or odd scanner behavior.
+          of the Dashboard, History, and Settings tabs. Saves to your Downloads
+          folder and opens Explorer with the file selected.
         </p>
         <div className="toolbar">
           <button

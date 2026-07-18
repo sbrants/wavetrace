@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
+use std::path::PathBuf;
 
 use base64::Engine;
 use chrono::Utc;
@@ -36,7 +37,7 @@ pub struct DebugPackageManifest {
 #[derive(Debug, Serialize)]
 pub struct DebugPackageExport {
     pub filename: String,
-    pub data_base64: String,
+    pub path: String,
 }
 
 pub fn debug_package_filename() -> String {
@@ -75,9 +76,21 @@ fn read_latest_log() -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-pub fn create_debug_package(
+fn debug_package_output_dir() -> PathBuf {
+    dirs::download_dir().unwrap_or_else(|| db::app_data_dir().join("debug-packages"))
+}
+
+pub fn write_debug_package(bytes: &[u8], filename: &str) -> Result<PathBuf, String> {
+    let dir = debug_package_output_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(filename);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+pub fn build_debug_package_zip(
     screenshots: &[DebugScreenshotInput],
-) -> Result<DebugPackageExport, String> {
+) -> Result<(Vec<u8>, String), String> {
     if screenshots.is_empty() {
         return Err("At least one screenshot is required.".into());
     }
@@ -146,9 +159,17 @@ pub fn create_debug_package(
         zip.finish().map_err(|e| e.to_string())?;
     }
 
+    Ok((zip_bytes, debug_package_filename()))
+}
+
+pub fn create_debug_package(
+    screenshots: &[DebugScreenshotInput],
+) -> Result<DebugPackageExport, String> {
+    let (bytes, filename) = build_debug_package_zip(screenshots)?;
+    let path = write_debug_package(&bytes, &filename)?;
     Ok(DebugPackageExport {
-        filename: debug_package_filename(),
-        data_base64: base64::engine::general_purpose::STANDARD.encode(zip_bytes),
+        filename,
+        path: path.to_string_lossy().into_owned(),
     })
 }
 
@@ -177,10 +198,7 @@ mod tests {
             },
         ];
 
-        let export = create_debug_package(&shots).expect("zip");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(export.data_base64)
-            .expect("base64");
+        let (bytes, _) = build_debug_package_zip(&shots).expect("zip");
         let cursor = Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).expect("archive");
 
