@@ -79,6 +79,63 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_scanner_logs_folder() -> Result<(), String> {
+    let logs_dir = db::app_data_dir().join("logs");
+    std::fs::create_dir_all(&logs_dir).map_err(|e| e.to_string())?;
+    let log_file = db::scanner_log_path();
+    reveal_in_file_manager(if log_file.exists() {
+        &log_file
+    } else {
+        &logs_dir
+    })
+}
+
+fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let arg = if path.is_dir() {
+            path.display().to_string()
+        } else {
+            format!("/select,{}", path.display())
+        };
+        std::process::Command::new("explorer")
+            .arg(arg)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if path.is_file() {
+            cmd.arg("-R");
+        }
+        cmd.arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let target = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        Err("Opening folders is not supported on this platform".into())
+    }
+}
+
+#[tauri::command]
 pub fn get_settings() -> Result<Settings, String> {
     Ok(settings::load(&conn()?))
 }

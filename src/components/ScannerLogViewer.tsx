@@ -78,6 +78,12 @@ export default function ScannerLogViewer({ appData }: ScannerLogViewerProps) {
         <button type="button" onClick={refresh} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
         </button>
+        <button
+          type="button"
+          onClick={() => api.openScannerLogsFolder().catch((e) => alert(e))}
+        >
+          Open log folder
+        </button>
         <label className="scanner-log-auto">
           <input
             type="checkbox"

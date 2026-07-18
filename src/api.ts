@@ -180,6 +180,7 @@ export const api = {
   openScreenRecordingSettings: () =>
     invoke<void>("open_screen_recording_settings"),
   openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  openScannerLogsFolder: () => invoke<void>("open_scanner_logs_folder"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
