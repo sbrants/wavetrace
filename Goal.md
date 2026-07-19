@@ -7,7 +7,7 @@
 
 **WaveTrace** is an automatic per-wave tracker for the idle game **The Tower**. The app captures screenshots of the game, uses OCR to read Tier, Coin/Minute, and Wave, and records snapshots to a local database whenever the wave increments. A web-based UI displays live stats, charts, and run history.
 
-**Current status (v0.2.25):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** DMGs and in-app updater shipped in v0.2.9/v0.2.11 but **recent macOS releases are currently broken** — tracked in [#4](https://github.com/sbrants/wavetrace/issues/4). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are shipped on Windows/Linux. **Wave skip** detection, charting, and resume catch-up shipped in v0.2.22–v0.2.23; **skip/coin analytics**, Intro Sprint fixes, dev branding, and **accessibility (phases A–B)** in v0.2.24; **wave jump** display and chart UX in v0.2.25. See [Phases](#phases) and [Distribution](#distribution).
+**Current status (v0.2.37):** Phase 1 is **shipped on Windows 10+** via GitHub Releases and the **Microsoft Store**. **macOS 10.15+** DMGs and in-app updater are **shipped** (OCR regression fixed in v0.2.33; Screen Recording guidance in v0.2.34). Linux builds (AppImage + Arch binary) and GitHub in-app auto-update are shipped on all desktop platforms. Recent releases: **wave skip** analytics and resume catch-up (v0.2.22–v0.2.25); **dissonance run types**, **ntfy phone notifications**, debug package, and History run-type editing (v0.2.35–v0.2.36); **ntfy milestone flood** fix (v0.2.37). See [Phases](#phases) and [Distribution](#distribution).
 
 **Platform rollout is phased** — see [Phases](#phases) and the platform matrix below. Phase 1 targets **Windows desktop first**; Linux followed in v0.1.x.
 
@@ -18,18 +18,18 @@
 | ----- | --------------------- | ------------------------------------------------------------ | ------ |
 | 1     | Windows 10+           | Emulator or game window                                      | **Shipped** (v0.1.0+) |
 | 1b    | Linux                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.1.2+) |
-| 1b    | macOS                 | Same as Phase 1 (Tesseract OCR)                              | **Broken** (releases; fix in progress) |
+| 1b    | macOS                 | Same as Phase 1 (Tesseract OCR)                              | **Shipped** (v0.2.9+; OCR fixed v0.2.33) |
 | 2     | All Phase 1 platforms | Background capture (stretch); date-range filters **done**    | Partial |
 | 3+    | Android, iOS          | Direct app capture (separate implementation)                 | Future |
 
 ### Distribution
 
 
-| Channel | Windows artifact | Updates | Status (v0.2.24) |
+| Channel | Windows artifact | Updates | Status (v0.2.37) |
 | ------- | ---------------- | ------- | ----------------- |
 | GitHub Releases | NSIS `.exe`, MSI | In-app updater (`latest.json`) | **Shipped** |
 | Microsoft Store | MSIX (`runFullTrust`) | Microsoft Store | **Shipped** |
-| macOS (GitHub) | `.dmg` (arm64 + x86_64) | In-app updater (`latest.json`) | **Broken** (v0.2.9+ builds regressing) |
+| macOS (GitHub) | `.dmg` (arm64 + x86_64) | In-app updater (`latest.json`) | **Shipped** |
 | Arch | `PKGBUILD` / binary | Package manager | **Shipped** (maintainer-built) |
 | Linux | AppImage | In-app updater (AppImage) | **Shipped** (CI) |
 
@@ -142,8 +142,8 @@ When the in-game **Wave Skipped!** banner appears, the scanner records a **wave 
 
 ### OCR engine
 
-- **Windows:** `Windows.Media.Ocr` (built into Windows 10+; no extra install)
-- **Linux:** Tesseract (`tesseract-ocr-eng`); same full-frame + line-classification pipeline
+- **Windows:** `Windows.Media.Ocr` (built into Windows 10+; no extra install); full-frame capture
+- **Linux / macOS:** Tesseract (`tessdata_best` on macOS); region-based OCR on captured window regions where applicable
 - Full-window capture is downscaled (max width 900px) before OCR to keep poll latency reasonable
 - OCR returns text lines; the classifier finds Tier, Wave, and coin rate from line content
 
@@ -153,10 +153,11 @@ When the in-game **Wave Skipped!** banner appears, the scanner records a **wave 
 - **Wave** — first integer after the word `Wave`
 - **Coin** — requires at least two lines containing `/min` (or Windows-OCR equivalents); the **second** match is the coin rate; the first is usually cash (`$…/min`)
 - Parser normalizes common Windows OCR quirks (e.g. `@ 3.48TVfnjn` → `3.48T/min`)
+- **Dissonance upgrade screens** — `@ 35q/min` style rates (suffix `q`/`Q` at high tier) parse correctly (v0.2.36+)
 
 ### Failure behavior
 
-- **OCR failure:** log to `{app_data}/logs/scanner.log`; skip field updates for that poll
+- **OCR failure:** log to `{app_data}/logs/wavetrace.log`; skip field updates for that poll
 - **OCR parse failure:** log raw lines; keep last known good value for live display only (do not persist bad coin rate)
 
 ---
@@ -319,10 +320,11 @@ For suffixes beyond `ac`, continue the pattern: each subsequent two-letter suffi
 - **New run starts** when:
   - (a) first `wave = 1` confirmed after app launch or after the previous run ended, OR
   - (b) user clicks **New Run**
-- **Run type** is set once when the run starts:
+- **Run type** is set when the run starts (and editable later in History):
   - `tournament` if tournament mode is detected (`Tier N+` or trophy icon) on the first confirmed poll of the run
+  - `dissonance_attack`, `dissonance_defense`, `dissonance_utility`, or `dissonance_ultimate_weapons` when dissonance workshop icons (sword, shield, star, triangle) or OCR text indicate the category (v0.2.35+)
   - `farming` otherwise (stored as `run_type = 'farming'` in SQLite)
-  - `run_type` does not change mid-run
+  - User can correct mis-tags via the History run-type dropdown (v0.2.35+)
 - **Snapshot saved** when: confirmed wave increases by exactly 1 vs the last saved wave for the current run
 - Each snapshot stores: `run_id`, `wave`, `tier`, `coin_per_minute`, `recorded_at` (UTC ISO-8601)
 - **Coin/min per snapshot:** average all `/min` readings collected while the confirmed wave was stable (multiple poll cycles on the same wave); `null` if no rate was seen before the wave advanced
@@ -387,13 +389,13 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 | id         | TEXT PK | UUID                                                  |
 | started_at | TEXT    | UTC ISO-8601                                          |
 | ended_at   | TEXT    | nullable                                              |
-| run_type   | TEXT    | `farming` or `tournament`; set at run start, immutable |
+| run_type   | TEXT    | `farming`, `tournament`, or `dissonance_*`; set at run start; editable in History |
 | peak_tier  | INTEGER | max tier seen during run                              |
 | final_wave | INTEGER | last wave before run ended                            |
 | comment    | TEXT    | optional user note (editable in History)              |
 
 
-`run_type` distinguishes runs that share the same tier number — e.g. a farming run at Tier 17 (`farming`) vs a tournament run showing `Tier 17+` (`tournament`).
+`run_type` distinguishes runs that share the same tier number — e.g. a farming run at Tier 17 (`farming`) vs a tournament run showing `Tier 17+` (`tournament`) vs dissonance workshop runs (`dissonance_attack`, etc.).
 
 ### snapshots
 
@@ -454,9 +456,9 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 
 ### Run history
 
-- Table: started_at, duration, run_type, peak_tier, final_wave, avg coin/min, per-run **comment** (editable inline)
+- Table: started_at, duration, run_type (editable dropdown), peak_tier, final_wave, avg coin/min, per-run **comment** (editable inline)
 - Sort by: date, final_wave, peak_tier, avg coin/min
-- Filter by: min wave, min tier, run_type (`farming` / `tournament` / all), **date range** (started_at)
+- Filter by: min wave, min tier, run_type (`farming` / `tournament` / dissonance / all), **date range** (started_at)
 - Pagination (5–100 per page)
 - Select a run to view its chart; select multiple runs to **compare** (overlay chart + summary table)
 - **Wave jumps (chart)** — dual-axis jump line; `+1` from consecutive snapshots, larger values from recorded skips only
@@ -470,8 +472,8 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Select target window (window picker); auto-preselect a window whose title contains `"The Tower"` when none is saved yet
 - Preview captured window
 - **Probe OCR** — full-frame OCR on live capture (tier, wave, coin/min, raw lines)
-- **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`) and **scanner log viewer** (tail active `scanner.log`, last N lines capped at 2 MiB from EOF)
-- **Background** — minimize to tray on window close; desktop notifications (run ended, window lost, optional wave milestones); **Exit** in the header when tray mode is on
+- **Advanced** (checkbox, persisted in `localStorage`): polling interval (`poll_interval_ms`); **scanner log viewer** (tail active `wavetrace.log`, last N lines capped at 2 MiB from EOF); **Open log folder**; **Generate debugging package** (zip with redacted settings, runtime state, target-window OCR probe, DB summary, window list, paths, log tails, and optional UI screenshots)
+- **Background** — minimize to tray on window close; desktop notifications (run ended, window lost, optional wave milestones every N waves); optional **ntfy** phone mirror (private topic, test notification, optional game-capture attachment on milestones/run ended); milestone state seeds from last saved wave on resume (v0.2.37+); **Exit** in the header when tray mode is on
 - **Backup & restore** — export/import full local database as a zip (`manifest.json` + `wavetrace.db`); safety copy before restore
 - **Check for updates** — GitHub/direct-download builds only (`latest.json`; Windows NSIS, macOS, Linux AppImage). Microsoft Store builds show Store update guidance (`VITE_STORE_DISTRIBUTION`)
 - Embedded **changelog** (from `CHANGELOG.md`)
@@ -486,7 +488,7 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - No network required for MVP
 - App data stored in OS-standard app data directory
 - Logs written to `{app_data}/logs/` for debugging OCR failures
-- **Scanner log rotation:** when `scanner.log` exceeds **20 MiB**, it rotates to `scanner.log.1` … `scanner.log.9` (~**200 MiB** total on disk). The in-app log viewer tails the active `scanner.log` only.
+- **Scanner log rotation:** when `wavetrace.log` exceeds **20 MiB**, it rotates to `wavetrace.log.1` … `wavetrace.log.9` (~**200 MiB** total on disk). Legacy `scanner.log` is migrated on first access. The in-app log viewer tails the active `wavetrace.log` only.
 
 ---
 
@@ -501,16 +503,16 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - Resume run; chart screenshots; scanner log viewer
 - OCR regression corpus in `fixtures/captured/`
 
-### Phase 1b — Linux ✅ shipped (v0.1.2+); macOS ✅ shipped (v0.2.9+)
+### Phase 1b — Linux ✅ shipped (v0.1.2+); macOS ✅ shipped (v0.2.9+, OCR fixed v0.2.33)
 
 - **Linux:** AppImage (Ubuntu 24.04 CI), Arch `x86_64` binary, Tesseract OCR, PKGBUILD
-- **macOS:** DMG for Apple Silicon and Intel; Tesseract OCR bundled in CI builds; Screen Recording permission required
+- **macOS:** DMG for Apple Silicon and Intel; Tesseract OCR (`tessdata_best`) bundled in CI builds; frame preprocessing for phone-mirroring captures; Screen Recording permission required (Settings documents stale privacy entries after ad-hoc auto-updates)
 
 ### Phase 2 — partial
 
 - Background capture when game is occluded (stretch; document per-OS limits) — **not started**
 
-**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3+), system tray + notifications (v0.2.6+), local backup/restore (v0.2.7+), **wave skip tracking + History skip analytics** (v0.2.22+)
+**Already shipped (from Phase 2 / stretch list):** run comparison overlay, history pagination, chart screenshot copy/download, date-range filters, in-app auto-update (v0.2.0+), Microsoft Trusted Signing wiring (optional signed builds), Microsoft Store MSIX packaging (v0.2.3+), system tray + desktop notifications (v0.2.6+), local backup/restore (v0.2.7+), **wave skip tracking + History skip analytics** (v0.2.22+), **dissonance run types + History run-type editing** (v0.2.35+), **ntfy phone notifications** (v0.2.35+), **debug package export** (v0.2.35–v0.2.36)
 
 ### Phase 3 — future
 
@@ -532,9 +534,11 @@ When `game_mode = total_coin`, show a **prominent warning banner** on the live d
 - [x] Edge-case game modes (`total_coin`, `intro_sprint`, `tournament`, `end_of_run`) handled per [Game mode edge cases](#game-mode-edge-cases)
 - [x] Live dashboard shows a warning banner when `game_mode = total_coin`
 - [x] Wave skips detected, charted, and editable in History (v0.2.22+)
+- [x] Dissonance run types detected and editable in History (v0.2.35+)
+- [x] Optional ntfy phone notifications for run ended / window lost / wave milestones (v0.2.35+)
 - [x] Works on Windows 10+
 - [x] Works on Linux (Tesseract OCR; Phase 1b)
-- [x] macOS build (Phase 1b; v0.2.9 — DMG, Tesseract, screen capture permission)
+- [x] macOS build (Phase 1b; v0.2.9+ — DMG, Tesseract, screen capture permission; OCR/data recording fixed v0.2.33)
 
 ---
 
@@ -724,7 +728,7 @@ workflow: [microsoft-store/README.md](microsoft-store/README.md).
 ## Open questions
 
 - Microsoft Store listing maintenance and certification for new MSIX versions
-- macOS Developer ID signing + notarization for frictionless Gatekeeper installs
+- macOS Developer ID signing + notarization for frictionless Gatekeeper installs (GitHub DMG builds work; ad-hoc signing may require Screen Recording re-grant after auto-update)
 - Additional tracked fields beyond Tier, Coin/Minute, Wave (future)
 - Background capture when game window is occluded (Phase 2)
 - Future feature ideas: [docs/future-capabilities.md](docs/future-capabilities.md)
