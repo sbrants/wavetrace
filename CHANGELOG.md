@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.37] — 2026-07-19
+
+### Fixed
+
+- **ntfy wave-milestone flood** — resuming a run or catching up after a long pause no longer spams phone alerts for every missed milestone; milestone state is seeded from the last saved wave on resume, and at most one milestone alert is sent per snapshot.
+
+---
+
 ## [0.2.36] — 2026-07-19
 
 ### Fixed
