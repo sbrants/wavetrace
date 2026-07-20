@@ -465,6 +465,43 @@ export default function SettingsPage() {
           />
           Notify when the game window is not found
         </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.notify_research_complete ?? true}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                notify_research_complete: e.target.checked,
+              })
+            }
+          />
+          Notify when lab research completes
+        </label>
+        <div className="row">
+          <label>
+            Coin/min unavailable alert (after N seconds, optional)
+            <input
+              type="number"
+              min={0}
+              step={30}
+              placeholder="off"
+              value={settings.notify_coin_unavailable_after_secs ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                setSettings({
+                  ...settings,
+                  notify_coin_unavailable_after_secs:
+                    raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
+                });
+              }}
+            />
+          </label>
+        </div>
+        <p className="muted">
+          Fires when the game shows total coins instead of coins/min for longer than
+          this (same condition as the dashboard warning). Leave empty to disable.
+        </p>
         <div className="row">
           <label>
             Wave milestone (every N waves, optional)

@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use image::RgbaImage;
 use tauri::{AppHandle, Manager};
@@ -9,7 +10,7 @@ use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 use crate::parser::CoinReading;
 use crate::settings::{self, Settings};
-use crate::state_machine::{Action, PollInput, RunType};
+use crate::state_machine::{Action, LiveState, PollInput, RunType};
 
 /// OCR values from the same capture frame as an optional screenshot attachment.
 #[derive(Debug, Clone, Copy, Default)]
@@ -32,6 +33,9 @@ pub struct NotifyState {
     last_status: Mutex<String>,
     window_lost_notified: AtomicBool,
     last_milestone_wave: Mutex<u32>,
+    last_research_notified: Mutex<Option<String>>,
+    coin_unavailable_since: Mutex<Option<Instant>>,
+    coin_unavailable_notified: AtomicBool,
     permission_requested: AtomicBool,
 }
 
@@ -41,6 +45,9 @@ impl Default for NotifyState {
             last_status: Mutex::new(String::new()),
             window_lost_notified: AtomicBool::new(false),
             last_milestone_wave: Mutex::new(0),
+            last_research_notified: Mutex::new(None),
+            coin_unavailable_since: Mutex::new(None),
+            coin_unavailable_notified: AtomicBool::new(false),
             permission_requested: AtomicBool::new(false),
         }
     }
@@ -77,6 +84,107 @@ impl NotifyState {
             }
         } else if status == "scanning" && prev == "window_not_found" {
             self.window_lost_notified.store(false, Ordering::SeqCst);
+        }
+    }
+
+    pub fn on_poll(
+        &self,
+        app: &AppHandle,
+        ocr_lines: &[String],
+        live: &LiveState,
+        capture: Option<&RgbaImage>,
+        frame: NotifyFrameContext,
+    ) {
+        let cfg = load_settings();
+        if cfg.notify_research_complete {
+            self.check_research_complete(app, ocr_lines, &cfg, capture, frame);
+        }
+        self.check_coin_unavailable(app, live, &cfg, capture);
+    }
+
+    fn check_research_complete(
+        &self,
+        app: &AppHandle,
+        ocr_lines: &[String],
+        cfg: &Settings,
+        capture: Option<&RgbaImage>,
+        frame: NotifyFrameContext,
+    ) {
+        let Some(name) = parse_research_complete(ocr_lines) else {
+            *self.last_research_notified.lock().unwrap() = None;
+            return;
+        };
+        let mut last = self.last_research_notified.lock().unwrap();
+        if last.as_deref() == Some(name.as_str()) {
+            return;
+        }
+        *last = Some(name.clone());
+        drop(last);
+        let mut parts = vec![name];
+        if let Some(t) = frame.tier.or(live_tier_hint(ocr_lines)) {
+            parts.push(format!("Tier {t}"));
+        }
+        if let Some(coin) = frame.coin_per_minute {
+            parts.push(format_coin(coin));
+        }
+        let body = parts.join(" · ");
+        show(
+            app,
+            "Lab research complete",
+            &body,
+            ntfy_attach_capture(cfg),
+            capture,
+        );
+    }
+
+    fn check_coin_unavailable(
+        &self,
+        app: &AppHandle,
+        live: &LiveState,
+        cfg: &Settings,
+        capture: Option<&RgbaImage>,
+    ) {
+        let Some(threshold_secs) = cfg.notify_coin_unavailable_after_secs.filter(|&n| n > 0) else {
+            *self.coin_unavailable_since.lock().unwrap() = None;
+            self.coin_unavailable_notified
+                .store(false, Ordering::SeqCst);
+            return;
+        };
+
+        if live.run_active && live.total_coin_warning {
+            let mut since = self.coin_unavailable_since.lock().unwrap();
+            if since.is_none() {
+                *since = Some(Instant::now());
+            }
+            let elapsed = since.unwrap().elapsed();
+            drop(since);
+            if elapsed >= std::time::Duration::from_secs(threshold_secs as u64)
+                && !self
+                    .coin_unavailable_notified
+                    .swap(true, Ordering::SeqCst)
+            {
+                let mins = elapsed.as_secs() / 60;
+                let body = if mins >= 1 {
+                    format!(
+                        "Game is showing total coins, not coins/min, for {mins}+ min. Snapshots won't update coin/min until the rate returns."
+                    )
+                } else {
+                    format!(
+                        "Game is showing total coins, not coins/min, for {threshold_secs}+ seconds. Snapshots won't update coin/min until the rate returns."
+                    )
+                };
+                show(
+                    app,
+                    "Coin/min unavailable",
+                    &body,
+                    ntfy_attach_capture(cfg),
+                    capture,
+                );
+            }
+        } else {
+            *self.coin_unavailable_since.lock().unwrap() = None;
+            self.coin_unavailable_notified
+                .store(false, Ordering::SeqCst);
         }
     }
 
@@ -152,6 +260,10 @@ impl NotifyState {
 
     pub fn reset_run_tracking(&self) {
         *self.last_milestone_wave.lock().unwrap() = 0;
+        *self.last_research_notified.lock().unwrap() = None;
+        *self.coin_unavailable_since.lock().unwrap() = None;
+        self.coin_unavailable_notified
+            .store(false, Ordering::SeqCst);
     }
 
     /// After resume, treat milestones at or below `wave` as already notified.
@@ -171,6 +283,45 @@ fn load_settings() -> Settings {
 
 fn ntfy_attach_capture(cfg: &Settings) -> bool {
     cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
+}
+
+/// Lab upgrade name from OCR banner ("Research Complete: Starting Cash Lv.33").
+pub fn parse_research_complete(lines: &[String]) -> Option<String> {
+    for (i, line) in lines.iter().enumerate() {
+        let lower = line.to_lowercase();
+        if !lower.contains("research complete") {
+            continue;
+        }
+        if let Some((_, rest)) = line.split_once(':') {
+            let name = rest.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+        if let Some(next) = lines.get(i + 1) {
+            let name = next.trim();
+            if !name.is_empty()
+                && !name.starts_with('@')
+                && !name.eq_ignore_ascii_case("CLAIM")
+            {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn live_tier_hint(lines: &[String]) -> Option<u32> {
+    for line in lines {
+        let lower = line.to_lowercase();
+        if let Some(rest) = lower.strip_prefix("tier ") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(t) = digits.parse() {
+                return Some(t);
+            }
+        }
+    }
+    None
 }
 
 /// Highest milestone newly reached by `wave` since `last_notified` (at most one alert per snapshot).
@@ -476,6 +627,33 @@ mod tests {
         assert_eq!(*state.last_milestone_wave.lock().unwrap(), 5000);
         assert_eq!(crossed_wave_milestones(5003, 100, 5000), Vec::<u32>::new());
         assert_eq!(crossed_wave_milestones(5100, 100, 5000), vec![5100]);
+    }
+
+    #[test]
+    fn parse_research_complete_from_colon_line() {
+        let lines = vec![
+            "Executed 928 times".into(),
+            "Research Complete:".into(),
+            "Starting Cash Lv.33".into(),
+        ];
+        assert_eq!(
+            parse_research_complete(&lines).as_deref(),
+            Some("Starting Cash Lv.33")
+        );
+    }
+
+    #[test]
+    fn parse_research_complete_inline() {
+        let lines = vec!["Research Complete: Battle Condition Reduction Lv.8".into()];
+        assert_eq!(
+            parse_research_complete(&lines).as_deref(),
+            Some("Battle Condition Reduction Lv.8")
+        );
+    }
+
+    #[test]
+    fn parse_research_complete_absent() {
+        assert_eq!(parse_research_complete(&["Wave 100".into()]), None);
     }
 
     #[test]

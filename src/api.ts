@@ -45,6 +45,8 @@ export interface Settings {
   minimize_to_tray: boolean;
   notify_run_ended: boolean;
   notify_window_lost: boolean;
+  notify_research_complete?: boolean;
+  notify_coin_unavailable_after_secs?: number | null;
   notify_wave_every: number | null;
   notify_ntfy_enabled?: boolean;
   notify_ntfy_attach_capture?: boolean;

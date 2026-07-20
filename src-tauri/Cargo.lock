@@ -3640,7 +3640,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prettyplease"
-version = "0.2.37"
+version = "0.2.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
@@ -6013,7 +6013,7 @@ dependencies = [
 
 [[package]]
 name = "wavetrace"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "arboard",
  "base64 0.22.1",

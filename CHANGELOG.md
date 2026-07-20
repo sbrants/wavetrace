@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.38] — 2026-07-20
+
+### Added
+
+- **Lab research complete notifications** — desktop and ntfy alerts when OCR sees `Research Complete:` (e.g. `Starting Cash Lv.33`). Toggle in Settings → Background (on by default).
+- **Coin/min unavailable alert** — optional notification after the game shows total coins instead of coins/min for a configurable number of seconds (same condition as the dashboard warning). Set the threshold in Settings → Background; leave empty to disable.
+
+---
+
 ## [0.2.37] — 2026-07-19
 
 ### Fixed

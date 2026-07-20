@@ -26,6 +26,12 @@ pub struct Settings {
     pub notify_run_ended: bool,
     #[serde(default = "default_true")]
     pub notify_window_lost: bool,
+    /// Alert when lab research completes (OCR: "Research Complete:").
+    #[serde(default = "default_true")]
+    pub notify_research_complete: bool,
+    /// Alert after coin/min has been unavailable this many seconds (total-coin screen).
+    #[serde(default)]
+    pub notify_coin_unavailable_after_secs: Option<u32>,
     #[serde(default)]
     pub notify_wave_every: Option<u32>,
     /// Mirror desktop notifications to an [ntfy](https://ntfy.sh) topic.
@@ -51,6 +57,8 @@ impl Default for Settings {
             minimize_to_tray: true,
             notify_run_ended: true,
             notify_window_lost: true,
+            notify_research_complete: true,
+            notify_coin_unavailable_after_secs: None,
             notify_wave_every: None,
             notify_ntfy_enabled: false,
             notify_ntfy_attach_capture: true,
@@ -99,6 +107,14 @@ pub fn load(conn: &Connection) -> Settings {
         if let Ok(on) = v.parse() {
             s.notify_window_lost = on;
         }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_research_complete") {
+        if let Ok(on) = v.parse() {
+            s.notify_research_complete = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_coin_unavailable_after_secs") {
+        s.notify_coin_unavailable_after_secs = v.parse().ok().filter(|&n| n > 0);
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_wave_every") {
         s.notify_wave_every = v.parse().ok();
@@ -192,6 +208,20 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     db::set_setting(conn, "minimize_to_tray", &s.minimize_to_tray.to_string())?;
     db::set_setting(conn, "notify_run_ended", &s.notify_run_ended.to_string())?;
     db::set_setting(conn, "notify_window_lost", &s.notify_window_lost.to_string())?;
+    db::set_setting(
+        conn,
+        "notify_research_complete",
+        &s.notify_research_complete.to_string(),
+    )?;
+    if let Some(n) = s.notify_coin_unavailable_after_secs {
+        db::set_setting(
+            conn,
+            "notify_coin_unavailable_after_secs",
+            &n.to_string(),
+        )?;
+    } else {
+        db::set_setting(conn, "notify_coin_unavailable_after_secs", "")?;
+    }
     if let Some(n) = s.notify_wave_every {
         db::set_setting(conn, "notify_wave_every", &n.to_string())?;
     } else {

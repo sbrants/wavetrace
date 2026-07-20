@@ -178,10 +178,25 @@ impl Scanner {
                             ),
                         );
                         let frame_ctx = crate::notifications::frame_context_from_poll(&input);
-                        let actions = machine.lock().unwrap().poll(input);
+                        let (actions, live) = {
+                            let mut sm = machine.lock().unwrap();
+                            let actions = sm.poll(input);
+                            let live = sm.live_state();
+                            (actions, live)
+                        };
                         if !actions.is_empty() {
                             apply_actions(&conn, &current_run_id, &actions, &log_path);
                             notify_scanner_actions(&app, &actions, Some(&full), frame_ctx);
+                        }
+                        if let Some(notify) = app.try_state::<crate::notifications::NotifyState>()
+                        {
+                            notify.on_poll(
+                                &app,
+                                &fields.all_lines,
+                                &live,
+                                Some(&full),
+                                frame_ctx,
+                            );
                         }
                         "scanning"
                     }
