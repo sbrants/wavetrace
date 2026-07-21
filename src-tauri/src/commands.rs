@@ -164,8 +164,18 @@ pub fn save_settings(new_settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn send_test_ntfy() -> Result<(), String> {
-    crate::notifications::send_test_ntfy()
+pub fn send_test_ntfy(app: AppHandle) -> Result<(), String> {
+    crate::notifications::send_test_ntfy(&app)
+}
+
+#[tauri::command]
+pub fn get_ntfy_status(state: State<crate::notifications::NotifyState>) -> crate::notifications::NtfyStatusInfo {
+    state.ntfy_status()
+}
+
+#[tauri::command]
+pub fn clear_ntfy_rate_limit(state: State<crate::notifications::NotifyState>) {
+    state.clear_ntfy_rate_limit();
 }
 
 #[tauri::command]

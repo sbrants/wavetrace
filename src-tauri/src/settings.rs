@@ -26,9 +26,15 @@ pub struct Settings {
     pub notify_run_ended: bool,
     #[serde(default = "default_true")]
     pub notify_window_lost: bool,
+    /// Show alerts in the OS notification center.
+    #[serde(default = "default_true")]
+    pub notify_desktop_enabled: bool,
     /// Alert when lab research completes (OCR: "Research Complete:").
     #[serde(default = "default_true")]
     pub notify_research_complete: bool,
+    /// Alert when an event mission completes in-run (OCR: "EVENT MISSION COMPLETED").
+    #[serde(default = "default_true")]
+    pub notify_event_mission_complete: bool,
     /// Alert after coin/min has been unavailable this many seconds (total-coin screen).
     #[serde(default)]
     pub notify_coin_unavailable_after_secs: Option<u32>,
@@ -37,7 +43,7 @@ pub struct Settings {
     /// Mirror desktop notifications to an [ntfy](https://ntfy.sh) topic.
     #[serde(default)]
     pub notify_ntfy_enabled: bool,
-    /// Attach the OCR capture frame to ntfy alerts (wave milestones and run ended).
+    /// Attach the OCR capture frame to ntfy alerts (milestones, run ended, in-game popups).
     #[serde(default = "default_true")]
     pub notify_ntfy_attach_capture: bool,
     /// Topic name (`my-secret-topic`) or full URL (`https://ntfy.sh/my-secret-topic`).
@@ -57,7 +63,9 @@ impl Default for Settings {
             minimize_to_tray: true,
             notify_run_ended: true,
             notify_window_lost: true,
+            notify_desktop_enabled: true,
             notify_research_complete: true,
+            notify_event_mission_complete: true,
             notify_coin_unavailable_after_secs: None,
             notify_wave_every: None,
             notify_ntfy_enabled: false,
@@ -108,9 +116,19 @@ pub fn load(conn: &Connection) -> Settings {
             s.notify_window_lost = on;
         }
     }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_desktop_enabled") {
+        if let Ok(on) = v.parse() {
+            s.notify_desktop_enabled = on;
+        }
+    }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_research_complete") {
         if let Ok(on) = v.parse() {
             s.notify_research_complete = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_event_mission_complete") {
+        if let Ok(on) = v.parse() {
+            s.notify_event_mission_complete = on;
         }
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_coin_unavailable_after_secs") {
@@ -210,8 +228,18 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     db::set_setting(conn, "notify_window_lost", &s.notify_window_lost.to_string())?;
     db::set_setting(
         conn,
+        "notify_desktop_enabled",
+        &s.notify_desktop_enabled.to_string(),
+    )?;
+    db::set_setting(
+        conn,
         "notify_research_complete",
         &s.notify_research_complete.to_string(),
+    )?;
+    db::set_setting(
+        conn,
+        "notify_event_mission_complete",
+        &s.notify_event_mission_complete.to_string(),
     )?;
     if let Some(n) = s.notify_coin_unavailable_after_secs {
         db::set_setting(

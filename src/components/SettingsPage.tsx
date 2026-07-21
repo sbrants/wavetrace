@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
   AppDataInfo,
   formatCoin,
+  NtfyStatusInfo,
   ScreenCaptureAccess,
   Settings,
   WindowInfo,
@@ -11,11 +13,9 @@ import { downloadBase64File } from "../exportDownload";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
+import NotificationOption from "./NotificationOption";
 import { installKindNote } from "../appDataInfo";
-import {
-  NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES,
-  ntfyWaveMilestoneWarning,
-} from "../ntfySettings";
+import { ntfyWaveMilestoneWarning } from "../ntfySettings";
 import { reportUiError } from "../uiError";
 import { captureDebugScreenshots } from "../debugPackage";
 
@@ -84,6 +84,7 @@ export default function SettingsPage() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [ntfyStatus, setNtfyStatus] = useState<string | null>(null);
   const [ntfyBusy, setNtfyBusy] = useState(false);
+  const [ntfyRateLimit, setNtfyRateLimit] = useState<NtfyStatusInfo | null>(null);
   const [debugBusy, setDebugBusy] = useState(false);
   const [debugStatus, setDebugStatus] = useState<string | null>(null);
   const [appData, setAppData] = useState<AppDataInfo | null>(null);
@@ -110,6 +111,30 @@ export default function SettingsPage() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  const refreshNtfyStatus = async () => {
+    try {
+      const status = await api.getNtfyStatus();
+      setNtfyRateLimit(status.rateLimited ? status : null);
+    } catch {
+      // ignore — status is optional UI sugar
+    }
+  };
+
+  useEffect(() => {
+    void refreshNtfyStatus();
+    let unlisten: UnlistenFn | undefined;
+    void listen<NtfyStatusInfo>("ntfy-rate-limited", (event) => {
+      if (event.payload.rateLimited) {
+        setNtfyRateLimit(event.payload);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      void unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -159,12 +184,19 @@ export default function SettingsPage() {
       await api.saveSettings(settings);
       await api.sendTestNtfy();
       setNtfyStatus("Test sent — check the ntfy app on your phone.");
+      await refreshNtfyStatus();
     } catch (e) {
       const msg = reportUiError(e, "Settings.sendTestNtfy", { alert: false });
       setNtfyStatus(msg);
+      await refreshNtfyStatus();
     } finally {
       setNtfyBusy(false);
     }
+  };
+
+  const dismissNtfyRateLimit = async () => {
+    await api.clearNtfyRateLimit();
+    setNtfyRateLimit(null);
   };
 
   const showPreview = async () => {
@@ -431,9 +463,8 @@ export default function SettingsPage() {
       <section>
         <h3>Background</h3>
         <p className="muted">
-          Keep WaveTrace in the system tray while scanning. Desktop notifications
-          stay local; optional ntfy can mirror the same events to your phone.
-          When minimize to tray is on, use <strong>Exit</strong> in the header to quit completely.
+          Keep WaveTrace in the system tray while scanning. When minimize to tray
+          is on, use <strong>Exit</strong> in the header to quit completely.
         </p>
         <label className="checkbox-inline">
           <input
@@ -445,155 +476,209 @@ export default function SettingsPage() {
           />
           Minimize to tray when the window is closed
         </label>
-        <label className="checkbox-inline">
-          <input
-            type="checkbox"
-            checked={settings.notify_run_ended ?? true}
-            onChange={(e) =>
-              setSettings({ ...settings, notify_run_ended: e.target.checked })
-            }
-          />
-          Notify when a run ends
-        </label>
-        <label className="checkbox-inline">
-          <input
-            type="checkbox"
-            checked={settings.notify_window_lost ?? true}
-            onChange={(e) =>
-              setSettings({ ...settings, notify_window_lost: e.target.checked })
-            }
-          />
-          Notify when the game window is not found
-        </label>
-        <label className="checkbox-inline">
-          <input
-            type="checkbox"
-            checked={settings.notify_research_complete ?? true}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                notify_research_complete: e.target.checked,
-              })
-            }
-          />
-          Notify when lab research completes
-        </label>
-        <div className="row">
-          <label>
-            Coin/min unavailable alert (after N seconds, optional)
-            <input
-              type="number"
-              min={0}
-              step={30}
-              placeholder="off"
-              value={settings.notify_coin_unavailable_after_secs ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                setSettings({
-                  ...settings,
-                  notify_coin_unavailable_after_secs:
-                    raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
-                });
-              }}
-            />
-          </label>
-        </div>
-        <p className="muted">
-          Fires when the game shows total coins instead of coins/min for longer than
-          this (same condition as the dashboard warning). Leave empty to disable.
-        </p>
-        <div className="row">
-          <label>
-            Wave milestone (every N waves, optional)
-            <input
-              type="number"
-              min={0}
-              step={100}
-              placeholder="off"
-              value={settings.notify_wave_every ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                setSettings({
-                  ...settings,
-                  notify_wave_every:
-                    raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
-                });
-              }}
-            />
-          </label>
-        </div>
-        {ntfyWaveWarning && (
-          <div className="permission-callout">
-            <p>{ntfyWaveWarning}</p>
-          </div>
-        )}
+      </section>
 
-        <h4>Phone alerts (ntfy)</h4>
+      <section>
+        <h3>Notifications</h3>
         <p className="muted">
-          Install the free{" "}
-          <a
-            href="https://ntfy.sh"
-            onClick={(e) => {
-              e.preventDefault();
-              void api.openExternalUrl("https://ntfy.sh");
-            }}
-          >
-            ntfy
-          </a>{" "}
-          app, subscribe to a hard-to-guess topic, then enter that topic below.
-          Anyone who knows the topic can read messages, so treat it like a password.
-          The toggles above also control what is sent to your phone. With screenshots
-          enabled, use wave milestones of{" "}
-          {NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES.toLocaleString()}+ to stay within
-          ntfy.sh attachment limits.
+          Choose which events can notify you, then pick how they are delivered
+          (desktop, phone, or both).
         </p>
-        <label className="checkbox-inline">
-          <input
-            type="checkbox"
-            checked={settings.notify_ntfy_enabled ?? false}
-            onChange={(e) =>
-              setSettings({ ...settings, notify_ntfy_enabled: e.target.checked })
+
+        <div className="notification-group">
+          <h4>Run tracking</h4>
+          <NotificationOption
+            id="notify-run-ended"
+            label="Run ended"
+            description="When a run stops and final stats are saved."
+            checked={settings.notify_run_ended ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_run_ended: checked })
             }
           />
-          Send notifications to ntfy
-        </label>
-        <label className="checkbox-inline">
-          <input
-            type="checkbox"
+          <NotificationOption
+            id="notify-wave-every"
+            label="Wave milestone"
+            description="Every N waves during a run (e.g. 1,000). Leave empty to disable."
+            control={
+              <input
+                id="notify-wave-every"
+                type="number"
+                min={0}
+                step={100}
+                placeholder="off"
+                value={settings.notify_wave_every ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  setSettings({
+                    ...settings,
+                    notify_wave_every:
+                      raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
+                  });
+                }}
+              />
+            }
+          />
+          {ntfyWaveWarning && (
+            <div className="permission-callout notification-inline-callout">
+              <p>{ntfyWaveWarning}</p>
+            </div>
+          )}
+          <NotificationOption
+            id="notify-coin-unavailable"
+            label="Coin/min unavailable"
+            description="After N seconds on the total-coins screen (same as the dashboard warning). Leave empty to disable."
+            control={
+              <input
+                id="notify-coin-unavailable"
+                type="number"
+                min={0}
+                step={30}
+                placeholder="off"
+                value={settings.notify_coin_unavailable_after_secs ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  setSettings({
+                    ...settings,
+                    notify_coin_unavailable_after_secs:
+                      raw === "" ? null : Math.max(1, Number.parseInt(raw, 10) || 0),
+                  });
+                }}
+              />
+            }
+          />
+        </div>
+
+        <div className="notification-group">
+          <h4>Scanner health</h4>
+          <NotificationOption
+            id="notify-window-lost"
+            label="Game window not found"
+            description="When WaveTrace can't see the target window during a scan."
+            checked={settings.notify_window_lost ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_window_lost: checked })
+            }
+          />
+        </div>
+
+        <div className="notification-group">
+          <h4>In-game popups</h4>
+          <p className="muted notification-group-intro">
+            Detected from OCR text while you play (mid-run banners).
+          </p>
+          <NotificationOption
+            id="notify-research-complete"
+            label="Lab research complete"
+            description='When OCR sees "Research Complete:" (e.g. Starting Cash Lv.33).'
+            checked={settings.notify_research_complete ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_research_complete: checked })
+            }
+          />
+          <NotificationOption
+            id="notify-event-mission-complete"
+            label="Event mission complete"
+            description='When OCR sees "EVENT MISSION COMPLETED" (e.g. Stun 50,000 enemies…).'
+            checked={settings.notify_event_mission_complete ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_event_mission_complete: checked })
+            }
+          />
+        </div>
+
+        <div className="notification-group notification-delivery">
+          <h4>Delivery</h4>
+          <p className="muted notification-group-intro">
+            Enable one or both channels. Phone alerts use a private ntfy topic —
+            anyone who knows the topic can read messages, so treat it like a
+            password.
+          </p>
+          {ntfyRateLimit?.message && (
+            <div className="permission-callout notification-inline-callout">
+              <p>
+                <strong>ntfy rate limit (HTTP 429).</strong> {ntfyRateLimit.message}
+              </p>
+              <div className="row">
+                <button type="button" onClick={() => void dismissNtfyRateLimit()}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+          <NotificationOption
+            id="notify-desktop-enabled"
+            label="Desktop notifications"
+            description="Show alerts in your OS notification center."
+            checked={settings.notify_desktop_enabled ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_desktop_enabled: checked })
+            }
+          />
+          <NotificationOption
+            id="notify-ntfy-enabled"
+            label="Phone alerts (ntfy)"
+            description="Mirror enabled events above to the ntfy app on your phone."
+            checked={settings.notify_ntfy_enabled ?? false}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_ntfy_enabled: checked })
+            }
+          />
+          <NotificationOption
+            id="notify-ntfy-attach"
+            label="Attach game screenshot to phone alerts"
+            description="JPEG capture on phone alerts: wave milestones, run ended, lab research, and event missions."
             checked={settings.notify_ntfy_attach_capture ?? true}
             disabled={!(settings.notify_ntfy_enabled ?? false)}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                notify_ntfy_attach_capture: e.target.checked,
-              })
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_ntfy_attach_capture: checked })
             }
           />
-          Attach game screenshot to ntfy (wave milestones and run ended)
-        </label>
-        <div className="row">
-          <label>
-            ntfy topic or URL
-            <input
-              type="text"
-              placeholder="wavetrace-your-secret-topic"
-              value={settings.notify_ntfy_topic ?? ""}
-              onChange={(e) =>
-                setSettings({ ...settings, notify_ntfy_topic: e.target.value })
+          <div className="notification-field-row">
+            <label htmlFor="notify-ntfy-topic">
+              ntfy topic or URL
+              <input
+                id="notify-ntfy-topic"
+                type="text"
+                placeholder="wavetrace-your-secret-topic"
+                value={settings.notify_ntfy_topic ?? ""}
+                disabled={!(settings.notify_ntfy_enabled ?? false)}
+                onChange={(e) =>
+                  setSettings({ ...settings, notify_ntfy_topic: e.target.value })
+                }
+              />
+            </label>
+          </div>
+          <p className="muted">
+            Install the free{" "}
+            <a
+              href="https://ntfy.sh"
+              onClick={(e) => {
+                e.preventDefault();
+                void api.openExternalUrl("https://ntfy.sh");
+              }}
+            >
+              ntfy
+            </a>{" "}
+            app, subscribe to your topic, then use{" "}
+            <strong>Send test notification</strong> to verify delivery (tests phone
+            setup only; does not depend on the event toggles above).
+          </p>
+          <div className="toolbar">
+            <button
+              type="button"
+              disabled={
+                ntfyBusy ||
+                !(settings.notify_ntfy_enabled ?? false) ||
+                !(settings.notify_ntfy_topic ?? "").trim()
               }
-            />
-          </label>
+              onClick={sendTestNtfy}
+            >
+              {ntfyBusy ? "Sending…" : "Send test notification"}
+            </button>
+          </div>
+          {ntfyStatus && <p className="muted">{ntfyStatus}</p>}
         </div>
-        <div className="toolbar">
-          <button
-            type="button"
-            disabled={ntfyBusy || !(settings.notify_ntfy_topic ?? "").trim()}
-            onClick={sendTestNtfy}
-          >
-            {ntfyBusy ? "Sending…" : "Send test notification"}
-          </button>
-        </div>
-        {ntfyStatus && <p className="muted">{ntfyStatus}</p>}
       </section>
 
       <section>

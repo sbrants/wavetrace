@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.39] — 2026-07-21
+
+### Added
+
+- **Event mission complete notifications** — desktop and ntfy alerts when OCR sees `EVENT MISSION COMPLETED` during a run (e.g. Stun 50,000 enemies…). Toggle in Settings → Notifications → In-game popups (on by default).
+- **Desktop notifications toggle** — Settings → Notifications → Delivery can disable OS alerts while keeping ntfy phone alerts.
+- **ntfy rate-limit warning** — HTTP 429 responses show a dismissible callout in Settings with guidance to reduce notification frequency (wave milestones, screenshots).
+
+### Changed
+
+- **Settings notifications layout** — split Background vs Notifications; grouped event toggles (run tracking, scanner health, in-game popups) with one-line descriptions; Delivery section separates desktop and phone channels.
+
+---
+
 ## [0.2.38] — 2026-07-20
 
 ### Added

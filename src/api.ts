@@ -45,12 +45,19 @@ export interface Settings {
   minimize_to_tray: boolean;
   notify_run_ended: boolean;
   notify_window_lost: boolean;
+  notify_desktop_enabled?: boolean;
   notify_research_complete?: boolean;
+  notify_event_mission_complete?: boolean;
   notify_coin_unavailable_after_secs?: number | null;
   notify_wave_every: number | null;
   notify_ntfy_enabled?: boolean;
   notify_ntfy_attach_capture?: boolean;
   notify_ntfy_topic?: string;
+}
+
+export interface NtfyStatusInfo {
+  rateLimited: boolean;
+  message: string | null;
 }
 
 export interface RunRow {
@@ -197,6 +204,8 @@ export const api = {
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
   sendTestNtfy: () => invoke<void>("send_test_ntfy"),
+  getNtfyStatus: () => invoke<NtfyStatusInfo>("get_ntfy_status"),
+  clearNtfyRateLimit: () => invoke<void>("clear_ntfy_rate_limit"),
   hasResumableRun: () => invoke<boolean>("has_resumable_run"),
   startScanner: (mode: ScanStartMode) =>
     invoke<void>("start_scanner", { mode }),

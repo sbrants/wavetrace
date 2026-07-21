@@ -62,6 +62,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::send_test_ntfy,
+            commands::get_ntfy_status,
+            commands::clear_ntfy_rate_limit,
             commands::has_resumable_run,
             commands::start_scanner,
             commands::stop_scanner,

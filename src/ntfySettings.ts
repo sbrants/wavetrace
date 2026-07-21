@@ -21,7 +21,7 @@ export function ntfyWaveMilestoneWarning(settings: Settings): string | null {
   if (every < NTFY_MIN_WAVE_EVERY_WITH_IMAGES) {
     return (
       `Wave milestones every ${every.toLocaleString()} waves send many screenshots to ntfy ` +
-      `and can hit attachment limits (HTTP 413 on ntfy.sh). Use ${NTFY_MIN_WAVE_EVERY_WITH_IMAGES.toLocaleString()}+ ` +
+      `and can hit rate or size limits (HTTP 429 or 413 on ntfy.sh). Use ${NTFY_MIN_WAVE_EVERY_WITH_IMAGES.toLocaleString()}+ ` +
       `(recommended ${NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES.toLocaleString()}), disable screenshots below, ` +
       `or clear the milestone field.`
     );
@@ -29,7 +29,7 @@ export function ntfyWaveMilestoneWarning(settings: Settings): string | null {
   if (every < NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES) {
     return (
       `With screenshots enabled, ${NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES.toLocaleString()} waves ` +
-      `between milestones is safer on ntfy.sh's attachment limits.`
+      `between milestones is safer on ntfy.sh (avoids HTTP 429 rate limits and attachment quotas).`
     );
   }
   return null;

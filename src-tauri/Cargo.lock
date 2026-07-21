@@ -6013,7 +6013,7 @@ dependencies = [
 
 [[package]]
 name = "wavetrace"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "arboard",
  "base64 0.22.1",

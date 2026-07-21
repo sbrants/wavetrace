@@ -866,6 +866,98 @@ tbody tr.selected {
   margin-bottom: 10px;
 }
 
+.settings h4 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.notification-group {
+  margin: 16px 0 0;
+  padding-top: 4px;
+}
+
+.notification-group + .notification-group {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.notification-group-intro {
+  margin: 0 0 8px;
+}
+
+.notification-delivery {
+  margin-top: 20px;
+}
+
+.notification-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.notification-option:last-child {
+  border-bottom: none;
+}
+
+.notification-option-control {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.notification-option-control input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+.notification-option-control input[type="number"],
+.notification-option-control input[type="text"] {
+  width: 7rem;
+}
+
+.notification-option-label {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.notification-option-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.notification-field-row {
+  margin: 10px 0;
+}
+
+.notification-field-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notification-field-row input {
+  max-width: 28rem;
+}
+
+.notification-inline-callout {
+  margin: 8px 0 12px;
+}
+
 .settings-advanced-toggle {
   display: flex;
   flex-direction: column;

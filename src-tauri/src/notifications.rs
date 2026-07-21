@@ -2,10 +2,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
-use tauri::{AppHandle, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 use crate::parser::CoinReading;
@@ -29,13 +30,30 @@ pub fn frame_context_from_poll(input: &PollInput) -> NotifyFrameContext {
     }
 }
 
+/// User-facing hint when ntfy.sh returns HTTP 429.
+pub const NTFY_RATE_LIMIT_HINT: &str = "ntfy rate-limited WaveTrace (HTTP 429). Notifications are arriving too often — increase wave milestones (try 1,000+ waves), disable screenshot attachments, or turn off some alert types.";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NtfyStatusInfo {
+    pub rate_limited: bool,
+    pub message: Option<String>,
+}
+
+struct NtfyRateLimitState {
+    message: String,
+    since: Instant,
+}
+
 pub struct NotifyState {
     last_status: Mutex<String>,
     window_lost_notified: AtomicBool,
     last_milestone_wave: Mutex<u32>,
     last_research_notified: Mutex<Option<String>>,
+    last_event_mission_notified: Mutex<Option<String>>,
     coin_unavailable_since: Mutex<Option<Instant>>,
     coin_unavailable_notified: AtomicBool,
+    ntfy_rate_limit: Mutex<Option<NtfyRateLimitState>>,
     permission_requested: AtomicBool,
 }
 
@@ -46,14 +64,51 @@ impl Default for NotifyState {
             window_lost_notified: AtomicBool::new(false),
             last_milestone_wave: Mutex::new(0),
             last_research_notified: Mutex::new(None),
+            last_event_mission_notified: Mutex::new(None),
             coin_unavailable_since: Mutex::new(None),
             coin_unavailable_notified: AtomicBool::new(false),
+            ntfy_rate_limit: Mutex::new(None),
             permission_requested: AtomicBool::new(false),
         }
     }
 }
 
 impl NotifyState {
+    pub fn ntfy_status(&self) -> NtfyStatusInfo {
+        let mut guard = self.ntfy_rate_limit.lock().unwrap();
+        if let Some(state) = guard.as_ref() {
+            if state.since.elapsed() > Duration::from_secs(86_400) {
+                *guard = None;
+            }
+        }
+        match guard.as_ref() {
+            Some(state) => NtfyStatusInfo {
+                rate_limited: true,
+                message: Some(state.message.clone()),
+            },
+            None => NtfyStatusInfo {
+                rate_limited: false,
+                message: None,
+            },
+        }
+    }
+
+    pub fn clear_ntfy_rate_limit(&self) {
+        *self.ntfy_rate_limit.lock().unwrap() = None;
+    }
+
+    fn record_ntfy_rate_limit(&self, app: &AppHandle) {
+        {
+            let mut guard = self.ntfy_rate_limit.lock().unwrap();
+            *guard = Some(NtfyRateLimitState {
+                message: NTFY_RATE_LIMIT_HINT.to_string(),
+                since: Instant::now(),
+            });
+        }
+        let status = self.ntfy_status();
+        let _ = app.emit("ntfy-rate-limited", status);
+    }
+
     pub fn ensure_permission(&self, app: &AppHandle) {
         if self.permission_requested.swap(true, Ordering::SeqCst) {
             return;
@@ -99,6 +154,9 @@ impl NotifyState {
         if cfg.notify_research_complete {
             self.check_research_complete(app, ocr_lines, &cfg, capture, frame);
         }
+        if cfg.notify_event_mission_complete {
+            self.check_event_mission_complete(app, ocr_lines, &cfg, capture, frame);
+        }
         self.check_coin_unavailable(app, live, &cfg, capture);
     }
 
@@ -131,6 +189,42 @@ impl NotifyState {
         show(
             app,
             "Lab research complete",
+            &body,
+            ntfy_attach_capture(cfg),
+            capture,
+        );
+    }
+
+    fn check_event_mission_complete(
+        &self,
+        app: &AppHandle,
+        ocr_lines: &[String],
+        cfg: &Settings,
+        capture: Option<&RgbaImage>,
+        frame: NotifyFrameContext,
+    ) {
+        let Some(mission) = parse_event_mission_complete(ocr_lines) else {
+            *self.last_event_mission_notified.lock().unwrap() = None;
+            return;
+        };
+        let key = event_mission_dedup_key(&mission);
+        let mut last = self.last_event_mission_notified.lock().unwrap();
+        if last.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        *last = Some(key);
+        drop(last);
+        let mut parts = vec![mission];
+        if let Some(t) = frame.tier.or(live_tier_hint(ocr_lines)) {
+            parts.push(format!("Tier {t}"));
+        }
+        if let Some(coin) = frame.coin_per_minute {
+            parts.push(format_coin(coin));
+        }
+        let body = parts.join(" · ");
+        show(
+            app,
+            "Event mission complete",
             &body,
             ntfy_attach_capture(cfg),
             capture,
@@ -261,6 +355,7 @@ impl NotifyState {
     pub fn reset_run_tracking(&self) {
         *self.last_milestone_wave.lock().unwrap() = 0;
         *self.last_research_notified.lock().unwrap() = None;
+        *self.last_event_mission_notified.lock().unwrap() = None;
         *self.coin_unavailable_since.lock().unwrap() = None;
         self.coin_unavailable_notified
             .store(false, Ordering::SeqCst);
@@ -283,6 +378,72 @@ fn load_settings() -> Settings {
 
 fn ntfy_attach_capture(cfg: &Settings) -> bool {
     cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
+}
+
+/// Event mission description from in-run popup ("EVENT MISSION COMPLETED" + next line).
+pub fn parse_event_mission_complete(lines: &[String]) -> Option<String> {
+    for (i, line) in lines.iter().enumerate() {
+        let lower = line.to_lowercase();
+        if !looks_like_event_mission_complete(&lower) {
+            continue;
+        }
+        if let Some((_, rest)) = line.split_once(':') {
+            let name = rest.trim();
+            if looks_like_mission_description(name) {
+                return Some(name.to_string());
+            }
+        }
+        if let Some(next) = lines.get(i + 1) {
+            let name = next.trim();
+            if looks_like_mission_description(name) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_event_mission_complete(lower: &str) -> bool {
+    if !lower.contains("event") {
+        return false;
+    }
+    lower.contains("mission")
+        || lower.contains("complet")
+        || lower.contains("connplet")
+        || lower.contains("pleted")
+}
+
+fn looks_like_mission_description(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.len() < 6 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    const SKIP: &[&str] = &[
+        "claim",
+        "end round",
+        "tap to return to game",
+        "executed",
+        "utility upgrades",
+    ];
+    if SKIP.iter().any(|skip| lower == *skip) {
+        return false;
+    }
+    if trimmed.starts_with('@') {
+        return false;
+    }
+    true
+}
+
+/// Dedup key tolerant of minor OCR variance (e.g. "enernies" vs "enemies").
+fn event_mission_dedup_key(desc: &str) -> String {
+    let lower = desc.to_lowercase();
+    let digits: String = lower.chars().filter(|c| c.is_ascii_digit()).collect();
+    let first_word = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .find(|w| w.len() >= 3)
+        .unwrap_or("");
+    format!("{digits}:{first_word}")
 }
 
 /// Lab upgrade name from OCR banner ("Research Complete: Starting Cash Lv.33").
@@ -343,21 +504,24 @@ fn show(
     attach_ntfy_capture: bool,
     capture: Option<&RgbaImage>,
 ) {
-    if let Some(state) = app.try_state::<NotifyState>() {
-        state.ensure_permission(app);
+    let cfg = load_settings();
+    if cfg.notify_desktop_enabled {
+        if let Some(state) = app.try_state::<NotifyState>() {
+            state.ensure_permission(app);
+        }
+        let _ = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
     }
-    let _ = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show();
     let capture_owned = if attach_ntfy_capture {
         capture.cloned()
     } else {
         None
     };
-    publish_ntfy_async(title, body, capture_owned);
+    publish_ntfy_async(app, title, body, capture_owned);
 }
 
 fn format_wave_milestone_notification(
@@ -506,7 +670,7 @@ fn prepare_ntfy_capture(img: &RgbaImage) -> Result<NtfyAttachment, String> {
 }
 
 /// Fire-and-forget ntfy publish using saved settings (when enabled).
-fn publish_ntfy_async(title: &str, body: &str, capture: Option<RgbaImage>) {
+fn publish_ntfy_async(app: &AppHandle, title: &str, body: &str, capture: Option<RgbaImage>) {
     let cfg = load_settings();
     if !cfg.notify_ntfy_enabled {
         return;
@@ -514,36 +678,97 @@ fn publish_ntfy_async(title: &str, body: &str, capture: Option<RgbaImage>) {
     let title = title.to_string();
     let body = body.to_string();
     let topic = cfg.notify_ntfy_topic.clone();
+    let app = app.clone();
     std::thread::spawn(move || {
-        let result = if let Some(frame) = capture {
+        let result: Result<(), NtfyPublishError> = if let Some(frame) = capture {
             match prepare_ntfy_capture(&frame) {
                 Ok(att) => publish_ntfy_with_attachment(&topic, &title, &body, &att),
                 Err(e) => {
                     eprintln!("ntfy capture encode failed: {e}");
-                    publish_ntfy(&topic, &title, &body)
+                    publish_ntfy_inner(&topic, &title, &body, None)
                 }
             }
         } else {
-            publish_ntfy(&topic, &title, &body)
+            publish_ntfy_inner(&topic, &title, &body, None)
         };
         if let Err(e) = result {
             eprintln!("ntfy publish failed: {e}");
+            if e.is_rate_limited() {
+                if let Some(state) = app.try_state::<NotifyState>() {
+                    state.record_ntfy_rate_limit(&app);
+                }
+            }
         }
     });
 }
 
+#[derive(Debug)]
+struct NtfyPublishError {
+    status: Option<u16>,
+    detail: String,
+}
+
+impl NtfyPublishError {
+    fn is_rate_limited(&self) -> bool {
+        self.status == Some(429)
+    }
+}
+
+impl std::fmt::Display for NtfyPublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+fn ntfy_publish_error(status: u16) -> NtfyPublishError {
+    NtfyPublishError {
+        status: Some(status),
+        detail: if status == 429 {
+            format!("ntfy returned HTTP 429: {NTFY_RATE_LIMIT_HINT}")
+        } else {
+            format!("ntfy returned HTTP {status}")
+        },
+    }
+}
+
 /// Publish a text-only notification to an ntfy topic (sync).
 pub fn publish_ntfy(topic_or_url: &str, title: &str, body: &str) -> Result<(), String> {
-    let url = settings::resolve_ntfy_url(topic_or_url)?;
-    let response = ureq::post(&url)
-        .header("Title", title)
-        .header("Tags", "bell")
-        .header("Priority", "default")
-        .send(body)
-        .map_err(|e| format!("ntfy request failed: {e}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("ntfy returned HTTP {status}"));
+    publish_ntfy_inner(topic_or_url, title, body, None).map_err(|e| e.detail)
+}
+
+fn publish_ntfy_inner(
+    topic_or_url: &str,
+    title: &str,
+    body: &str,
+    attachment: Option<&NtfyAttachment>,
+) -> Result<(), NtfyPublishError> {
+    let url = settings::resolve_ntfy_url(topic_or_url).map_err(|e| NtfyPublishError {
+        status: None,
+        detail: e,
+    })?;
+    let response = if let Some(att) = attachment {
+        ureq::put(&url)
+            .header("Title", title)
+            .header("Message", body)
+            .header("Filename", att.filename)
+            .header("Content-Type", att.content_type)
+            .header("Tags", "bell")
+            .header("Priority", "default")
+            .send(&att.bytes)
+    } else {
+        ureq::post(&url)
+            .header("Title", title)
+            .header("Tags", "bell")
+            .header("Priority", "default")
+            .send(body)
+    }
+    .map_err(|e| NtfyPublishError {
+        status: None,
+        detail: format!("ntfy request failed: {e}"),
+    })?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(ntfy_publish_error(status));
     }
     Ok(())
 }
@@ -554,35 +779,32 @@ fn publish_ntfy_with_attachment(
     title: &str,
     body: &str,
     attachment: &NtfyAttachment,
-) -> Result<(), String> {
-    let url = settings::resolve_ntfy_url(topic_or_url)?;
-    let response = ureq::put(&url)
-        .header("Title", title)
-        .header("Message", body)
-        .header("Filename", attachment.filename)
-        .header("Content-Type", attachment.content_type)
-        .header("Tags", "bell")
-        .header("Priority", "default")
-        .send(&attachment.bytes)
-        .map_err(|e| format!("ntfy image upload failed: {e}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("ntfy returned HTTP {status}"));
-    }
-    Ok(())
+) -> Result<(), NtfyPublishError> {
+    publish_ntfy_inner(topic_or_url, title, body, Some(attachment))
 }
 
 /// Send a test notification using the currently saved ntfy settings.
-pub fn send_test_ntfy() -> Result<(), String> {
+pub fn send_test_ntfy(app: &AppHandle) -> Result<(), String> {
     let cfg = load_settings();
     if cfg.notify_ntfy_topic.trim().is_empty() {
         return Err("Set an ntfy topic first".into());
     }
-    publish_ntfy(
+    match publish_ntfy_inner(
         &cfg.notify_ntfy_topic,
         "WaveTrace",
         "Test notification — phone alerts are working.",
-    )
+        None,
+    ) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if e.is_rate_limited() {
+                if let Some(state) = app.try_state::<NotifyState>() {
+                    state.record_ntfy_rate_limit(app);
+                }
+            }
+            Err(e.detail)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -657,6 +879,62 @@ mod tests {
     }
 
     #[test]
+    fn parse_event_mission_complete_from_banner() {
+        let lines = vec![
+            "3760 / 3780".into(),
+            "EVENT MISSION COMPLETED".into(),
+            "Stun 50000 enemies using land mine stun card".into(),
+            "END ROUND".into(),
+        ];
+        assert_eq!(
+            parse_event_mission_complete(&lines).as_deref(),
+            Some("Stun 50000 enemies using land mine stun card")
+        );
+    }
+
+    #[test]
+    fn parse_event_mission_complete_garbled_header() {
+        let lines = vec![
+            "EVENT nmss10N connPLETED".into(),
+            "Stun 50000 enernies using Land rnine stun card".into(),
+        ];
+        assert_eq!(
+            parse_event_mission_complete(&lines).as_deref(),
+            Some("Stun 50000 enernies using Land rnine stun card")
+        );
+    }
+
+    #[test]
+    fn parse_event_mission_complete_buy_cards() {
+        let lines = vec![
+            "EVENT MISSION COMPLETED".into(),
+            "Buy 20 cards".into(),
+        ];
+        assert_eq!(
+            parse_event_mission_complete(&lines).as_deref(),
+            Some("Buy 20 cards")
+        );
+    }
+
+    #[test]
+    fn parse_event_mission_complete_ignores_missions_screen() {
+        let lines = vec![
+            "Stun 50000 enemies using land mine stun card".into(),
+            "CLAIM".into(),
+            "COMPLETED".into(),
+        ];
+        assert_eq!(parse_event_mission_complete(&lines), None);
+    }
+
+    #[test]
+    fn event_mission_dedup_key_ocr_variance() {
+        assert_eq!(
+            event_mission_dedup_key("Stun 50000 enernies using Land rnine stun card"),
+            event_mission_dedup_key("Stun 50000 enemies using land mine stun card")
+        );
+    }
+
+    #[test]
     fn crossed_wave_milestones_below_first() {
         assert_eq!(crossed_wave_milestones(999, 1000, 0), Vec::<u32>::new());
     }
@@ -677,6 +955,13 @@ mod tests {
         assert!(body.contains("42.1T/min avg"));
         assert!(body.contains("127 snapshots"));
         assert!(body.contains("farming"));
+    }
+
+    #[test]
+    fn ntfy_publish_error_rate_limited() {
+        let err = ntfy_publish_error(429);
+        assert!(err.is_rate_limited());
+        assert!(err.to_string().contains("429"));
     }
 
     #[test]
