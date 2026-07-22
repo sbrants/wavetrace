@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.40] — 2026-07-22
+
+### Added
+
+- **PC shutdown/restart alerts** — best-effort phone/desktop notification when Windows is about to shut down or restart (e.g. updates). Toggle in Settings → Notifications → System (on by default).
+
+### Changed
+
+- **In-app error toasts** — replace blocking browser `alert()` with dismissible toasts (errors still logged to `wavetrace.log`).
+- **In-app confirm dialogs** — History delete/combine actions and Settings backup restore use styled modals instead of browser `confirm()`.
+
+---
+
 ## [0.2.39] — 2026-07-21
 
 ### Added
