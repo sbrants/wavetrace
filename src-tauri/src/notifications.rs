@@ -9,6 +9,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
+use crate::commands::AppState;
+
 use crate::parser::CoinReading;
 use crate::settings::{self, Settings};
 use crate::state_machine::{Action, LiveState, PollInput, RunType};
@@ -368,6 +370,81 @@ impl NotifyState {
         };
         *self.last_milestone_wave.lock().unwrap() = (wave / every) * every;
     }
+}
+
+/// Best-effort alert when the OS is shutting down or restarting (sync — must not spawn threads).
+pub fn on_system_shutdown(app: &AppHandle) {
+    let cfg = load_settings();
+    if !cfg.notify_system_shutdown {
+        return;
+    }
+    let (title, body) = format_system_shutdown_message(app);
+    if cfg.notify_desktop_enabled {
+        if let Some(state) = app.try_state::<NotifyState>() {
+            state.ensure_permission(app);
+        }
+        let _ = app
+            .notification()
+            .builder()
+            .title(&title)
+            .body(&body)
+            .show();
+    }
+    if cfg.notify_ntfy_enabled && !cfg.notify_ntfy_topic.trim().is_empty() {
+        if let Err(e) = publish_ntfy_shutdown(&cfg.notify_ntfy_topic, &title, &body) {
+            eprintln!("shutdown ntfy publish failed: {e}");
+        }
+    }
+}
+
+fn format_system_shutdown_message(app: &AppHandle) -> (String, String) {
+    let title = "PC shutting down".to_string();
+    let mut parts = vec!["Windows is shutting down or restarting (e.g. updates).".to_string()];
+    if let Some(state) = app.try_state::<AppState>() {
+        let live = state.scanner.cached_live_state();
+        if state.scanner.is_running() {
+            parts.push("WaveTrace scanner was active.".to_string());
+            if let Some(t) = live.tier {
+                parts.push(format!("Tier {t}"));
+            }
+            if let Some(w) = live.wave {
+                parts.push(format!("wave {}", format_wave(w)));
+            }
+        } else {
+            parts.push("WaveTrace was running in the tray.".to_string());
+        }
+    }
+    (title, parts.join(" · "))
+}
+
+fn publish_ntfy_shutdown(
+    topic_or_url: &str,
+    title: &str,
+    body: &str,
+) -> Result<(), NtfyPublishError> {
+    let url = settings::resolve_ntfy_url(topic_or_url).map_err(|e| NtfyPublishError {
+        status: None,
+        detail: e,
+    })?;
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(std::time::Duration::from_secs(4)))
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let response = agent
+        .post(&url)
+        .header("Title", title)
+        .header("Tags", "warning")
+        .header("Priority", "high")
+        .send(body)
+        .map_err(|e| NtfyPublishError {
+            status: None,
+            detail: format!("ntfy request failed: {e}"),
+        })?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(ntfy_publish_error(status));
+    }
+    Ok(())
 }
 
 fn load_settings() -> Settings {

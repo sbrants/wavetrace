@@ -48,6 +48,7 @@ export interface Settings {
   notify_desktop_enabled?: boolean;
   notify_research_complete?: boolean;
   notify_event_mission_complete?: boolean;
+  notify_system_shutdown?: boolean;
   notify_coin_unavailable_after_secs?: number | null;
   notify_wave_every: number | null;
   notify_ntfy_enabled?: boolean;

@@ -17,6 +17,7 @@ import NotificationOption from "./NotificationOption";
 import { installKindNote } from "../appDataInfo";
 import { ntfyWaveMilestoneWarning } from "../ntfySettings";
 import { reportUiError } from "../uiError";
+import { confirmDialog } from "../confirmDialog";
 import { captureDebugScreenshots } from "../debugPackage";
 
 const showDevTools = import.meta.env.DEV;
@@ -237,11 +238,14 @@ export default function SettingsPage() {
     e.target.value = "";
     if (!file) return;
 
-    const ok = window.confirm(
-      "Restore from this backup? Your current database will be replaced. " +
-        "A copy of the current database is saved in the app data backups folder first."
-    );
-    if (!ok) return;
+    const confirmed = await confirmDialog({
+      title: "Restore backup?",
+      message:
+        "Your current database will be replaced. A copy of the current database is saved in the app data backups folder first.",
+      confirmLabel: "Restore",
+      danger: true,
+    });
+    if (!confirmed) return;
 
     setBackupBusy(true);
     setBackupStatus(null);
@@ -545,6 +549,19 @@ export default function SettingsPage() {
                   });
                 }}
               />
+            }
+          />
+        </div>
+
+        <div className="notification-group">
+          <h4>System</h4>
+          <NotificationOption
+            id="notify-system-shutdown"
+            label="PC shutdown or restart"
+            description="Best-effort alert when Windows is about to shut down or restart (e.g. updates). Uses your Delivery settings; won't fire on hard power-off."
+            checked={settings.notify_system_shutdown ?? true}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_system_shutdown: checked })
             }
           />
         </div>

@@ -5,6 +5,8 @@ import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
 import AppUpdater from "./components/AppUpdater";
+import ToastStack from "./components/ToastStack";
+import ConfirmDialog from "./components/ConfirmDialog";
 
 type Tab = "dashboard" | "history" | "settings";
 
@@ -242,6 +244,8 @@ export default function App() {
           <SettingsPage />
         </div>
       </main>
+      <ToastStack />
+      <ConfirmDialog />
     </div>
   );
 }

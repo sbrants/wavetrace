@@ -16,6 +16,7 @@ import SortableTh from "./SortableTh";
 import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
 import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
 import { reportUiError } from "../uiError";
+import { confirmDialog } from "../confirmDialog";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -206,7 +207,13 @@ export default function History() {
   const deleteSelected = async () => {
     if (checked.size === 0) return;
     const n = checked.size;
-    if (!confirm(`Delete ${n} run${n === 1 ? "" : "s"} and their snapshots?`)) {
+    const confirmed = await confirmDialog({
+      title: n === 1 ? "Delete run?" : `Delete ${n} runs?`,
+      message: `This permanently removes the selected run${n === 1 ? "" : "s"} and all snapshots.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
@@ -320,11 +327,14 @@ export default function History() {
   const combineSelected = async () => {
     if (checked.size < 2) return;
     const n = checked.size;
-    if (
-      !confirm(
-        `Combine ${n} runs into one? Runs are ordered by start time. Waves must increase across the combined timeline. Source runs will be removed.`
-      )
-    ) {
+    const confirmed = await confirmDialog({
+      title: "Combine runs?",
+      message:
+        `Merge ${n} runs into one? Runs are ordered by start time. Waves must increase across the combined timeline. Source runs will be removed.`,
+      confirmLabel: "Combine",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
@@ -556,11 +566,13 @@ export default function History() {
   const deleteSelectedSnapshots = async () => {
     if (!selected || selectedSnapshotIds.size === 0) return;
     const n = selectedSnapshotIds.size;
-    if (
-      !confirm(
-        `Delete ${n} snapshot${n === 1 ? "" : "s"}?${ongoingRunNote()}`
-      )
-    ) {
+    const confirmed = await confirmDialog({
+      title: n === 1 ? "Delete snapshot?" : `Delete ${n} snapshots?`,
+      message: `This permanently removes the selected snapshot${n === 1 ? "" : "s"}.${ongoingRunNote()}`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
@@ -575,11 +587,13 @@ export default function History() {
   const deleteSelectedWaveSkips = async () => {
     if (!selected || selectedWaveSkipIds.size === 0) return;
     const n = selectedWaveSkipIds.size;
-    if (
-      !confirm(
-        `Delete ${n} wave skip record${n === 1 ? "" : "s"}? Coin/min snapshots are kept.${ongoingRunNote()}`
-      )
-    ) {
+    const confirmed = await confirmDialog({
+      title: n === 1 ? "Delete wave skip?" : `Delete ${n} wave skips?`,
+      message: `This removes the selected wave skip record${n === 1 ? "" : "s"}. Coin/min snapshots are kept.${ongoingRunNote()}`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
@@ -593,11 +607,13 @@ export default function History() {
 
   const deleteWaveSkip = async (skip: WaveSkipRow) => {
     if (!selected) return;
-    if (
-      !confirm(
-        `Delete wave skip at wave ${skip.at_wave} (${formatSkipDisplay(skipDisplayFromRow(skip))})?${ongoingRunNote()}`
-      )
-    ) {
+    const confirmed = await confirmDialog({
+      title: "Delete wave skip?",
+      message: `Delete wave skip at wave ${skip.at_wave} (${formatSkipDisplay(skipDisplayFromRow(skip))})?${ongoingRunNote()}`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
@@ -616,11 +632,13 @@ export default function History() {
 
   const deleteSnapshot = async (snap: SnapshotRow) => {
     if (!selected) return;
-    if (
-      !confirm(
-        `Delete snapshot for wave ${snap.wave} (${formatCoin(snap.coin_per_minute)})?${ongoingRunNote()}`
-      )
-    ) {
+    const confirmed = await confirmDialog({
+      title: "Delete snapshot?",
+      message: `Delete snapshot for wave ${snap.wave} (${formatCoin(snap.coin_per_minute)})?${ongoingRunNote()}`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {

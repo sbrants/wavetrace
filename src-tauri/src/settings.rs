@@ -49,6 +49,9 @@ pub struct Settings {
     /// Topic name (`my-secret-topic`) or full URL (`https://ntfy.sh/my-secret-topic`).
     #[serde(default)]
     pub notify_ntfy_topic: String,
+    /// Alert when the OS is shutting down or restarting (best-effort).
+    #[serde(default = "default_true")]
+    pub notify_system_shutdown: bool,
 }
 
 fn default_true() -> bool {
@@ -71,6 +74,7 @@ impl Default for Settings {
             notify_ntfy_enabled: false,
             notify_ntfy_attach_capture: true,
             notify_ntfy_topic: String::new(),
+            notify_system_shutdown: true,
         }
     }
 }
@@ -149,6 +153,11 @@ pub fn load(conn: &Connection) -> Settings {
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_ntfy_topic") {
         s.notify_ntfy_topic = v;
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_system_shutdown") {
+        if let Ok(on) = v.parse() {
+            s.notify_system_shutdown = on;
+        }
     }
     s
 }
@@ -266,6 +275,11 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         &s.notify_ntfy_attach_capture.to_string(),
     )?;
     db::set_setting(conn, "notify_ntfy_topic", &s.notify_ntfy_topic)?;
+    db::set_setting(
+        conn,
+        "notify_system_shutdown",
+        &s.notify_system_shutdown.to_string(),
+    )?;
     Ok(())
 }
 

@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { showToast } from "./toast";
+
 export function formatUiError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -15,7 +17,7 @@ export function logUiError(source: string, error: unknown): void {
     .catch(() => {});
 }
 
-/** Log to wavetrace.log, then show a browser alert (unless alert: false). */
+/** Log to wavetrace.log, then show an in-app toast (unless alert: false). */
 export function reportUiError(
   error: unknown,
   source: string,
@@ -24,7 +26,7 @@ export function reportUiError(
   const message = formatUiError(error);
   logUiError(source, message);
   if (options?.alert !== false) {
-    alert(message);
+    showToast(message);
   }
   return message;
 }

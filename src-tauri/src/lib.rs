@@ -16,6 +16,7 @@ pub mod ocr;
 pub mod parser;
 pub mod scanner;
 pub mod settings;
+pub mod shutdown_hook;
 pub mod state_machine;
 pub mod tray;
 
@@ -46,6 +47,7 @@ pub fn run() {
             // enumeration can read titles and capture can read pixels. No-op
             // on Windows/Linux, which don't gate this behind a permission.
             let _ = capture::request_screen_capture_access();
+            shutdown_hook::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
