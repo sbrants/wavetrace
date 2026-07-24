@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use image::RgbaImage;
+use image::{GenericImage, RgbaImage};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
@@ -40,6 +40,14 @@ pub const NTFY_RATE_LIMIT_HINT: &str = "ntfy rate-limited WaveTrace (HTTP 429). 
 pub struct NtfyStatusInfo {
     pub rate_limited: bool,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveMilestoneNtfyPayload {
+    pub title: String,
+    pub body: String,
+    pub prefer_compare: bool,
 }
 
 struct NtfyRateLimitState {
@@ -338,11 +346,11 @@ impl NotifyState {
                                     frame.tier.or(*tier),
                                     frame.coin_per_minute.or(*coin_per_minute),
                                 );
-                                show(
+                                show_wave_milestone(
                                     app,
                                     &title,
                                     &body,
-                                    ntfy_attach_capture(&cfg),
+                                    &cfg,
                                     capture,
                                 );
                             }
@@ -574,6 +582,85 @@ fn crossed_wave_milestones(wave: u32, every: u32, last_notified: u32) -> Vec<u32
     vec![highest]
 }
 
+fn show_wave_milestone(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    cfg: &Settings,
+    capture: Option<&RgbaImage>,
+) {
+    if cfg.notify_desktop_enabled {
+        if let Some(state) = app.try_state::<NotifyState>() {
+            state.ensure_permission(app);
+        }
+        let _ = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
+    }
+
+    if !cfg.notify_ntfy_enabled {
+        return;
+    }
+
+    if ntfy_attach_capture(cfg) {
+        if let Some(frame) = capture {
+            match crate::capture::encode_png_base64(frame) {
+                Ok(game_png_base64) => {
+                    let prefer_compare = cfg.compare_capture_active;
+                    if let Some(state) = app.try_state::<AppState>() {
+                        *state.pending_wave_milestone_ntfy.lock().unwrap() =
+                            Some(crate::commands::PendingWaveMilestoneNtfy {
+                                title: title.to_string(),
+                                body: body.to_string(),
+                                game_png_base64,
+                            });
+                    }
+                    let payload = WaveMilestoneNtfyPayload {
+                        title: title.to_string(),
+                        body: body.to_string(),
+                        prefer_compare,
+                    };
+                    crate::db::append_app_log(&format!(
+                        "wave milestone ntfy: queued (prefer_compare={prefer_compare})"
+                    ));
+                    if let Err(e) = app.emit("wave-milestone-ntfy", payload) {
+                        eprintln!("wave milestone ntfy emit failed: {e}");
+                        if let Some(state) = app.try_state::<AppState>() {
+                            if let Some(pending) =
+                                state.pending_wave_milestone_ntfy.lock().unwrap().take()
+                            {
+                                let _ = publish_ntfy_wave_milestone_blocking(
+                                    app,
+                                    pending.title,
+                                    pending.body,
+                                    pending.game_png_base64,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                    return;
+                }
+                Err(e) => eprintln!("wave milestone game capture encode failed: {e}"),
+            }
+        }
+    }
+
+    publish_ntfy_async(
+        app,
+        title,
+        body,
+        if ntfy_attach_capture(cfg) {
+            capture.cloned()
+        } else {
+            None
+        },
+    );
+}
+
 fn show(
     app: &AppHandle,
     title: &str,
@@ -744,6 +831,147 @@ fn prepare_ntfy_capture(img: &RgbaImage) -> Result<NtfyAttachment, String> {
         }
     }
     Err("game capture is too large for ntfy even after compression".into())
+}
+
+fn decode_png_rgba(base64_png: &str) -> Result<RgbaImage, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_png.trim())
+        .map_err(|e| format!("invalid png base64: {e}"))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("invalid png: {e}"))?;
+    Ok(img.to_rgba8())
+}
+
+fn scale_rgba_to_width(img: &RgbaImage, width: u32) -> RgbaImage {
+    if img.width() == width {
+        return img.clone();
+    }
+    let new_h =
+        ((img.height() as u64 * width as u64) / img.width().max(1) as u64).max(1) as u32;
+    image::imageops::resize(
+        img,
+        width,
+        new_h,
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+fn composite_vertical_rgba(top: &RgbaImage, bottom: &RgbaImage) -> RgbaImage {
+    let width = top.width().max(bottom.width());
+    let top_scaled = scale_rgba_to_width(top, width);
+    let bottom_scaled = scale_rgba_to_width(bottom, width);
+    let height = top_scaled.height() + bottom_scaled.height();
+    let mut out = RgbaImage::new(width, height);
+    out.copy_from(&top_scaled, 0, 0)
+        .expect("top image fits composite canvas");
+    out.copy_from(&bottom_scaled, 0, top_scaled.height())
+        .expect("bottom image fits composite canvas");
+    out
+}
+
+/// Composite game + dashboard/comparison screenshots and publish to ntfy (sync).
+pub fn publish_ntfy_wave_milestone_blocking(
+    app: &AppHandle,
+    title: String,
+    body: String,
+    game_png_base64: String,
+    ui_png_base64: Option<String>,
+) -> Result<(), String> {
+    let cfg = load_settings();
+    if !cfg.notify_ntfy_enabled {
+        return Ok(());
+    }
+    let topic = cfg.notify_ntfy_topic.clone();
+    let result: Result<(), NtfyPublishError> = (|| {
+        let game = decode_png_rgba(&game_png_base64).map_err(|detail| NtfyPublishError {
+            status: None,
+            detail,
+        })?;
+        let rgba = if let Some(ui_b64) = ui_png_base64.filter(|s| !s.trim().is_empty()) {
+            let ui = decode_png_rgba(&ui_b64).map_err(|detail| NtfyPublishError {
+                status: None,
+                detail,
+            })?;
+            crate::db::append_app_log(&format!(
+                "wave milestone ntfy: compositing game + ui ({}x{} + {}x{})",
+                game.width(),
+                game.height(),
+                ui.width(),
+                ui.height()
+            ));
+            composite_vertical_rgba(&game, &ui)
+        } else {
+            eprintln!(
+                "wave milestone ntfy: no dashboard/compare screenshot — sending game capture only"
+            );
+            game
+        };
+        let att = prepare_ntfy_capture(&rgba).map_err(|e| NtfyPublishError {
+            status: None,
+            detail: e,
+        })?;
+        publish_ntfy_with_attachment(&topic, &title, &body, &att)
+    })();
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if e.is_rate_limited() {
+                if let Some(state) = app.try_state::<NotifyState>() {
+                    state.record_ntfy_rate_limit(app);
+                }
+            }
+            Err(e.detail)
+        }
+    }
+}
+
+/// Composite game + dashboard/comparison screenshots and publish to ntfy (async).
+pub fn publish_ntfy_wave_milestone_async(
+    app: &AppHandle,
+    title: String,
+    body: String,
+    game_png_base64: String,
+    ui_png_base64: Option<String>,
+) {
+    let cfg = load_settings();
+    if !cfg.notify_ntfy_enabled {
+        return;
+    }
+    let topic = cfg.notify_ntfy_topic.clone();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result: Result<(), NtfyPublishError> = (|| {
+            let game = decode_png_rgba(&game_png_base64).map_err(|detail| NtfyPublishError {
+                status: None,
+                detail,
+            })?;
+            let rgba = if let Some(ui_b64) = ui_png_base64.filter(|s| !s.trim().is_empty()) {
+                let ui = decode_png_rgba(&ui_b64).map_err(|detail| NtfyPublishError {
+                    status: None,
+                    detail,
+                })?;
+                composite_vertical_rgba(&game, &ui)
+            } else {
+                eprintln!(
+                    "wave milestone ntfy: no dashboard/compare screenshot — sending game capture only"
+                );
+                game
+            };
+            let att = prepare_ntfy_capture(&rgba).map_err(|e| NtfyPublishError {
+                status: None,
+                detail: e,
+            })?;
+            publish_ntfy_with_attachment(&topic, &title, &body, &att)
+        })();
+        if let Err(e) = result {
+            eprintln!("ntfy wave milestone publish failed: {e}");
+            if e.is_rate_limited() {
+                if let Some(state) = app.try_state::<NotifyState>() {
+                    state.record_ntfy_rate_limit(&app);
+                }
+            }
+        }
+    });
 }
 
 /// Fire-and-forget ntfy publish using saved settings (when enabled).
@@ -1054,5 +1282,16 @@ mod tests {
         let att = prepare_ntfy_capture(&img).expect("jpeg");
         assert!(att.bytes.len() <= NTFY_ATTACH_MAX_BYTES);
         assert_eq!(att.content_type, "image/jpeg");
+    }
+
+    #[test]
+    fn composite_vertical_rgba_stacks_images() {
+        let top = RgbaImage::from_fn(100, 50, |_, _| image::Rgba([255, 0, 0, 255]));
+        let bottom = RgbaImage::from_fn(80, 40, |_, _| image::Rgba([0, 255, 0, 255]));
+        let out = composite_vertical_rgba(&top, &bottom);
+        assert_eq!(out.width(), 100);
+        assert_eq!(out.height(), 100);
+        assert_eq!(out.get_pixel(50, 25)[0], 255);
+        assert_eq!(out.get_pixel(50, 75)[1], 255);
     }
 }

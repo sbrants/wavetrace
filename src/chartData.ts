@@ -114,8 +114,6 @@ export function buildWaveJumpMarkers(
   return markers.sort((a, b) => a.wave - b.wave);
 }
 
-export type CompareXAxis = "wave" | "progress";
-
 export type CompareChartRow = {
   x: number;
   [key: string]: number | string | null | undefined;
@@ -144,24 +142,151 @@ export function buildCompareChartDataByWave(
   });
 }
 
-/** Overlay compare series by snapshot index (1 = first snapshot in each run). */
-export function buildCompareChartDataByProgress(
-  runIds: string[],
-  snapshots: Record<string, SnapshotRow[]>
-): CompareChartRow[] {
-  const series = runIds.map((id) =>
-    (snapshots[id] ?? [])
-      .filter((s) => s.coin_per_minute !== null)
-      .sort((a, b) => a.wave - b.wave)
-  );
-  const maxLen = Math.max(0, ...series.map((pts) => pts.length));
-  return Array.from({ length: maxLen }, (_, i) => {
-    const row: CompareChartRow = { x: i + 1 };
-    series.forEach((pts, ri) => {
-      const snap = pts[i];
-      row[`coin_${ri}`] = snap?.coin_per_minute ?? null;
-      row[`wave_${ri}`] = snap?.wave ?? null;
-    });
-    return row;
+/** Centered moving average; nulls are skipped and do not contribute to the window. */
+export function smoothNullableSeries(
+  values: (number | null)[],
+  window: number
+): (number | null)[] {
+  if (window <= 1) {
+    return values;
+  }
+  const half = Math.floor(window / 2);
+  return values.map((_, i) => {
+    let sum = 0;
+    let count = 0;
+    for (let j = i - half; j <= i + half; j += 1) {
+      if (j < 0 || j >= values.length) {
+        continue;
+      }
+      const v = values[j];
+      if (v != null && Number.isFinite(v)) {
+        sum += v;
+        count += 1;
+      }
+    }
+    if (count === 0) {
+      return null;
+    }
+    return sum / count;
   });
+}
+
+/** Adds `coin_N_raw` and replaces `coin_N` with smoothed values when window > 1. */
+export function applyCompareChartSmoothing(
+  rows: CompareChartRow[],
+  lineCount: number,
+  window: number
+): CompareChartRow[] {
+  if (window <= 1 || lineCount === 0) {
+    return rows;
+  }
+  const keys = Array.from({ length: lineCount }, (_, i) => `coin_${i}`);
+  const series = keys.map((key) =>
+    rows.map((row) => {
+      const v = row[key];
+      return typeof v === "number" && Number.isFinite(v) ? v : null;
+    })
+  );
+  const smoothed = series.map((s) => smoothNullableSeries(s, window));
+  return rows.map((row, rowIndex) => {
+    const next: CompareChartRow = { ...row };
+    keys.forEach((key, lineIndex) => {
+      const raw = row[key];
+      next[`${key}_raw`] =
+        typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+      next[key] = smoothed[lineIndex][rowIndex];
+    });
+    return next;
+  });
+}
+
+/** Index of the run with the later `started_at` (compare list order). */
+export function compareNewerRunIndex(
+  runs: { started_at: string }[]
+): number | null {
+  if (runs.length !== 2) {
+    return null;
+  }
+  const t0 = Date.parse(runs[0].started_at);
+  const t1 = Date.parse(runs[1].started_at);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) {
+    return null;
+  }
+  return t0 >= t1 ? 0 : 1;
+}
+
+export type LeadLagPolygon = {
+  tone: "ahead" | "behind";
+  ring: { x: number; newer: number; older: number }[];
+};
+
+type LeadLagPoint = { x: number; newer: number; older: number };
+
+function leadLagQuad(
+  p0: LeadLagPoint,
+  p1: LeadLagPoint,
+  tone: "ahead" | "behind"
+): LeadLagPolygon {
+  return {
+    tone,
+    ring: [
+      { x: p0.x, newer: p0.newer, older: p0.older },
+      { x: p1.x, newer: p1.newer, older: p1.older },
+      { x: p1.x, newer: p1.older, older: p1.older },
+      { x: p0.x, newer: p0.older, older: p0.older },
+    ],
+  };
+}
+
+/** Polygons between newer and older coin/min series (linear between chart knots). */
+export function buildLeadLagPolygons(
+  rows: CompareChartRow[],
+  newerIndex: number,
+  olderIndex: number
+): LeadLagPolygon[] {
+  const nKey = `coin_${newerIndex}`;
+  const oKey = `coin_${olderIndex}`;
+  const knots: LeadLagPoint[] = [];
+  for (const row of rows) {
+    const newer = row[nKey];
+    const older = row[oKey];
+    if (
+      typeof newer !== "number" ||
+      typeof older !== "number" ||
+      !Number.isFinite(newer) ||
+      !Number.isFinite(older)
+    ) {
+      continue;
+    }
+    knots.push({ x: row.x, newer, older });
+  }
+  const out: LeadLagPolygon[] = [];
+  for (let i = 0; i < knots.length - 1; i += 1) {
+    const p0 = knots[i];
+    const p1 = knots[i + 1];
+    const d0 = p0.newer - p0.older;
+    const d1 = p1.newer - p1.older;
+    if (d0 === 0 && d1 === 0) {
+      continue;
+    }
+    if (d0 * d1 < 0) {
+      const t = d0 / (d0 - d1);
+      const cross: LeadLagPoint = {
+        x: p0.x + t * (p1.x - p0.x),
+        newer: p0.newer + t * (p1.newer - p0.newer),
+        older: p0.older + t * (p1.older - p0.older),
+      };
+      if (d0 > 0) {
+        out.push(leadLagQuad(p0, cross, "ahead"));
+        out.push(leadLagQuad(cross, p1, "behind"));
+      } else {
+        out.push(leadLagQuad(p0, cross, "behind"));
+        out.push(leadLagQuad(cross, p1, "ahead"));
+      }
+      continue;
+    }
+    const tone: "ahead" | "behind" = d0 > 0 || d1 > 0 ? "ahead" : "behind";
+    out.push(leadLagQuad(p0, p1, tone));
+  }
+  return out;
 }

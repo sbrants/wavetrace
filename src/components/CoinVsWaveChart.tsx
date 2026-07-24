@@ -13,7 +13,8 @@ import {
   Customized,
 } from "recharts";
 import { formatCoin } from "../api";
-import type { CoinChartPoint, CompareChartRow, WaveSkipMarker } from "../chartData";
+import type { CoinChartPoint, CompareChartRow, LeadLagPolygon, WaveSkipMarker } from "../chartData";
+import { buildLeadLagPolygons } from "../chartData";
 
 export type ChartLineConfig = {
   dataKey: string;
@@ -178,14 +179,114 @@ type CompareProps = {
   data: CompareChartRow[];
   lines: ChartLineConfig[];
   waveSkipsByLine?: WaveSkipMarker[][];
-  xAxis: "wave" | "progress";
   height?: number;
+  smoothWindow?: number;
+  leadLagBand?: { newerIndex: number; olderIndex: number } | null;
 };
 
 export type CoinVsWaveChartProps = SingleProps | CompareProps;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+const LEAD_LAG_AHEAD = "rgba(61, 186, 110, 0.22)";
+const LEAD_LAG_BEHIND = "rgba(232, 93, 93, 0.22)";
+
+type AxisScale = {
+  scale?: (value: number) => number;
+  bandwidth?: () => number;
+};
+
+function leadLagPolygonsToPixels(
+  polygons: LeadLagPolygon[],
+  xScale: AxisScale["scale"],
+  yScale: AxisScale["scale"]
+): { fill: string; d: string }[] {
+  if (!xScale || !yScale) {
+    return [];
+  }
+  return polygons.map((poly) => {
+    const [p0, p1] = poly.ring;
+    const x0 = xScale(p0.x);
+    const x1 = xScale(p1.x);
+    const d = [
+      `M ${x0} ${yScale(p0.newer)}`,
+      `L ${x1} ${yScale(p1.newer)}`,
+      `L ${x1} ${yScale(p1.older)}`,
+      `L ${x0} ${yScale(p0.older)}`,
+      "Z",
+    ].join(" ");
+    return {
+      fill: poly.tone === "ahead" ? LEAD_LAG_AHEAD : LEAD_LAG_BEHIND,
+      d,
+    };
+  });
+}
+
+function CompareLeadLagLayer({
+  polygons,
+  xAxisMap,
+  yAxisMap,
+}: {
+  polygons: LeadLagPolygon[];
+  xAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
+  yAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
+}) {
+  const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
+  const yAxis = yAxisMap?.coin;
+  const paths = leadLagPolygonsToPixels(
+    polygons,
+    xAxis?.scale,
+    yAxis?.scale
+  );
+  if (paths.length === 0) {
+    return null;
+  }
+  return (
+    <g className="compare-lead-lag-band" aria-hidden>
+      {paths.map((path, i) => (
+        <path key={i} d={path.d} fill={path.fill} stroke="none" />
+      ))}
+    </g>
+  );
+}
+
+function compareCoinValue(
+  row: CompareChartRow | undefined,
+  lineIndex: number
+): number | null {
+  if (!row) {
+    return null;
+  }
+  const v = row[`coin_${lineIndex}`];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function compareCoinRaw(
+  row: CompareChartRow | undefined,
+  lineIndex: number
+): number | null {
+  if (!row) {
+    return null;
+  }
+  const raw = row[`coin_${lineIndex}_raw`];
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw;
+  }
+  return compareCoinValue(row, lineIndex);
+}
+
+function formatCompareDelta(
+  newer: number,
+  older: number
+): string {
+  if (older === 0) {
+    return "";
+  }
+  const pct = ((newer - older) / Math.abs(older)) * 100;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}% newer vs older`;
 }
 
 function SingleRunChart({
@@ -518,9 +619,19 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
     return null;
   }
 
-  const progress = props.xAxis === "progress";
+  const smoothWindow = props.smoothWindow ?? 0;
+  const leadLag = props.leadLagBand ?? null;
+  const leadLagPolygons =
+    leadLag != null
+      ? buildLeadLagPolygons(
+          props.data,
+          leadLag.newerIndex,
+          leadLag.olderIndex
+        )
+      : [];
+
   const flatSkips = props.waveSkipsByLine?.flat() ?? [];
-  const hasSkips = !progress && flatSkips.length > 0;
+  const hasSkips = flatSkips.length > 0;
   const chartData = hasSkips
     ? mergeCompareWithSkips(props.data, props.waveSkipsByLine ?? [])
     : props.data;
@@ -548,11 +659,6 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           type="number"
           domain={xDomain}
           allowDataOverflow
-          label={
-            progress
-              ? { value: "Snapshot #", position: "insideBottom", offset: -4 }
-              : undefined
-          }
         />
         <YAxis
           yAxisId="coin"
@@ -593,29 +699,59 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               const value = tip.trim() || String(v ?? "");
               return [value, name];
             }
+            const dataKey = String((item as { dataKey?: string })?.dataKey ?? "");
+            const coinMatch = /^coin_(\d+)$/.exec(dataKey);
+            if (coinMatch) {
+              const idx = Number(coinMatch[1]);
+              const row = (item as { payload?: CompareChartRow })?.payload;
+              const display =
+                typeof v === "number" && Number.isFinite(v)
+                  ? (v as number)
+                  : compareCoinValue(row, idx);
+              if (display == null) {
+                return ["—", name];
+              }
+              let text = formatCoin(display);
+              if (smoothWindow > 1) {
+                const raw = compareCoinRaw(row, idx);
+                if (raw != null && Math.abs(raw - display) > display * 0.0001) {
+                  text += ` (raw ${formatCoin(raw)})`;
+                }
+              }
+              return [text, name];
+            }
             return [formatCoin(v as number), name];
           }}
           labelFormatter={(label, payload) => {
-            if (!progress) {
-              return `Wave ${label}`;
+            const base = `Wave ${label}`;
+            if (leadLag && payload?.length) {
+              const row = payload[0]?.payload as CompareChartRow | undefined;
+              const newer = compareCoinValue(row, leadLag.newerIndex);
+              const older = compareCoinValue(row, leadLag.olderIndex);
+              if (newer != null && older != null) {
+                const delta = formatCompareDelta(newer, older);
+                return delta ? `${base} · ${delta}` : base;
+              }
             }
-            const items = payload ?? [];
-            const waves = items
-              .map((item) => {
-                const key = String(item.dataKey ?? "").replace("coin_", "wave_");
-                const row = item.payload as CompareChartRow;
-                const wave = row[key];
-                const name = item.name ?? "Run";
-                return wave != null ? `${name}: wave ${wave}` : null;
-              })
-              .filter(Boolean);
-            return waves.length > 0
-              ? `Snapshot ${label} (${waves.join(", ")})`
-              : `Snapshot ${label}`;
+            return base;
           }}
           contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
         />
         {props.lines.length > 1 && <Legend />}
+        {leadLagPolygons.length > 0 && (
+          <Customized
+            component={(customProps: {
+              xAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
+              yAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
+            }) => (
+              <CompareLeadLagLayer
+                polygons={leadLagPolygons}
+                xAxisMap={customProps.xAxisMap}
+                yAxisMap={customProps.yAxisMap}
+              />
+            )}
+          />
+        )}
         {hasSkips &&
           props.waveSkipsByLine?.map((skips, i) => {
             if (skips.length === 0) return null;

@@ -57,6 +57,31 @@ function prepareSvgForExport(source: SVGSVGElement): SVGSVGElement {
   return cloned;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** Wait until a Recharts SVG inside the card has non-zero dimensions (e.g. after tab switch). */
+export async function waitForChartReady(
+  element: HTMLElement,
+  maxMs = 4000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    try {
+      const svg = findChartSvg(element);
+      const rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return;
+      }
+    } catch {
+      /* chart not mounted yet */
+    }
+    await sleep(100);
+  }
+  throw new Error("Chart is not visible");
+}
+
 export async function captureChartCard(element: HTMLElement): Promise<Blob> {
   const svg = findChartSvg(element);
 
@@ -129,7 +154,7 @@ export function chartScreenshotFilename(title: string): string {
   return `${slug}-${stamp}.png`;
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
+export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

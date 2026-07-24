@@ -123,6 +123,15 @@ mod tests {
                     ocr.all_lines
                 );
             }
+            if fx.file == "expected_state_full_game.png" {
+                assert_eq!(
+                    input.dissonance,
+                    None,
+                    "farming baseline must not detect dissonance in {} lines={:?}",
+                    fx.file,
+                    ocr.all_lines
+                );
+            }
         }
     }
 

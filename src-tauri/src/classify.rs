@@ -98,7 +98,11 @@ fn detect_dissonance(lines: &[String]) -> Option<DissonanceKind> {
 
     if frame_marker {
         for line in lines {
-            if let Some(kind) = dissonance_kind_in_line(&line.trim().to_lowercase()) {
+            let lower = line.trim().to_lowercase();
+            if line_blocks_dissonance_kind(&lower) {
+                continue;
+            }
+            if let Some(kind) = dissonance_kind_in_line(&lower) {
                 return Some(kind);
             }
         }
@@ -133,8 +137,22 @@ fn is_dissonance_run_context(lower: &str) -> bool {
                 || lower.contains("ultimate")))
 }
 
+fn line_blocks_dissonance_kind(lower: &str) -> bool {
+    lower.contains("upgrades")
+        || lower.contains("enemy health")
+        || lower.contains("enemy attack")
+        || lower.contains("health level")
+        || lower.contains("attack level")
+        || lower.contains("exit battle")
+        || lower.contains("executed ")
+}
+
 fn dissonance_kind_in_line(lower: &str) -> Option<DissonanceKind> {
-    if lower.contains("upgrade") || lower.contains("disabled") || lower.contains("workshop") {
+    if line_blocks_dissonance_kind(lower)
+        || lower.contains("upgrade")
+        || lower.contains("disabled")
+        || lower.contains("workshop")
+    {
         return None;
     }
     if lower.contains("ultimate") && (lower.contains("weapon") || lower.contains("weapons")) {
@@ -353,6 +371,30 @@ mod tests {
     fn dissonant_run_marker_with_category_line() {
         let input = classify(&s(&["Dissonant Run", "Defense", "Tier 12", "Wave 1"]));
         assert_eq!(input.dissonance, Some(DissonanceKind::Defense));
+    }
+
+    fn farming_utility_upgrades_screen_is_not_dissonance() {
+        let input = classify(&s(&[
+            "$ 1.76M/min",
+            "@ 112T/min",
+            "UTILITY UPGRADES",
+            "Tier 16",
+            "Wave 2133",
+            "Enemy Health Level",
+            "Enemy Attack Level",
+        ]));
+        assert_eq!(input.dissonance, None);
+    }
+
+    #[test]
+    fn dissonance_marker_with_enemy_attack_line_ignored() {
+        let input = classify(&s(&[
+            "Dissonant Run",
+            "Enemy Attack Level Skip",
+            "Tier 16",
+            "Wave 100",
+        ]));
+        assert_eq!(input.dissonance, None);
     }
 
     #[test]

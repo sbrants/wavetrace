@@ -52,6 +52,9 @@ pub struct Settings {
     /// Alert when the OS is shutting down or restarting (best-effort).
     #[serde(default = "default_true")]
     pub notify_system_shutdown: bool,
+    /// History run comparison is active (2+ runs) — wave-milestone ntfy attaches that view.
+    #[serde(default)]
+    pub compare_capture_active: bool,
 }
 
 fn default_true() -> bool {
@@ -75,6 +78,7 @@ impl Default for Settings {
             notify_ntfy_attach_capture: true,
             notify_ntfy_topic: String::new(),
             notify_system_shutdown: true,
+            compare_capture_active: false,
         }
     }
 }
@@ -157,6 +161,11 @@ pub fn load(conn: &Connection) -> Settings {
     if let Ok(Some(v)) = db::get_setting(conn, "notify_system_shutdown") {
         if let Ok(on) = v.parse() {
             s.notify_system_shutdown = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "compare_capture_active") {
+        if let Ok(on) = v.parse() {
+            s.compare_capture_active = on;
         }
     }
     s
@@ -279,6 +288,11 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         conn,
         "notify_system_shutdown",
         &s.notify_system_shutdown.to_string(),
+    )?;
+    db::set_setting(
+        conn,
+        "compare_capture_active",
+        &s.compare_capture_active.to_string(),
     )?;
     Ok(())
 }

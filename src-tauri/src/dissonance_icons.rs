@@ -55,7 +55,7 @@ fn load_templates() -> Vec<IconTemplate> {
     templates
 }
 
-/// Best-effort icon match in the tier/wave HUD region.
+/// Best-effort icon match in the tier/wave HUD region (purple circle beside Tier/Wave).
 pub fn detect(frame: &RgbaImage) -> Option<DissonanceKind> {
     let templates = templates();
     if templates.is_empty() {
@@ -64,20 +64,14 @@ pub fn detect(frame: &RgbaImage) -> Option<DissonanceKind> {
 
     if frame.height() < 200 {
         if let Some(crop) = find_hud_icon_crop(frame) {
-            if let Some(kind) = detect_in_image(&crop, templates, true) {
-                return Some(kind);
-            }
+            return detect_in_image(&crop, templates, true);
         }
-        return detect_in_image(frame, templates, false);
+        return None;
     }
 
     let region = crop_norm(frame, SEARCH_X, SEARCH_Y, SEARCH_W, SEARCH_H);
-    if let Some(crop) = find_hud_icon_crop(&region) {
-        if let Some(kind) = detect_in_image(&crop, templates, true) {
-            return Some(kind);
-        }
-    }
-    detect_in_image(&region, templates, false)
+    let crop = find_hud_icon_crop(&region)?;
+    detect_in_image(&crop, templates, true)
 }
 
 /// Match against a pre-cropped region (used by tests and diagnostics).

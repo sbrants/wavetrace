@@ -36,12 +36,20 @@ pub fn run() {
         .manage(NotifyState::default())
         .manage(AppState {
             scanner: scanner::Scanner::default(),
+            compare_capture_active: std::sync::Mutex::new(false),
+            pending_wave_milestone_ntfy: std::sync::Mutex::new(None),
         })
         .setup(|app| {
             tray::setup(app)?;
             app_icon::apply_branding(app)?;
             if let Some(notify) = app.try_state::<NotifyState>() {
                 notify.ensure_permission(app.handle());
+            }
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(conn) = db::open() {
+                    let active = settings::load(&conn).compare_capture_active;
+                    *state.compare_capture_active.lock().unwrap() = active;
+                }
             }
             // On macOS, prompt for Screen Recording on first launch so window
             // enumeration can read titles and capture can read pixels. No-op
@@ -66,6 +74,9 @@ pub fn run() {
             commands::send_test_ntfy,
             commands::get_ntfy_status,
             commands::clear_ntfy_rate_limit,
+            commands::set_compare_capture_active,
+            commands::focus_main_window,
+            commands::complete_wave_milestone_ntfy,
             commands::has_resumable_run,
             commands::start_scanner,
             commands::stop_scanner,

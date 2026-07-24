@@ -54,6 +54,8 @@ export interface Settings {
   notify_ntfy_enabled?: boolean;
   notify_ntfy_attach_capture?: boolean;
   notify_ntfy_topic?: string;
+  /** Set when History run comparison is active (read-only from UI). */
+  compare_capture_active?: boolean;
 }
 
 export interface NtfyStatusInfo {
@@ -207,6 +209,11 @@ export const api = {
   sendTestNtfy: () => invoke<void>("send_test_ntfy"),
   getNtfyStatus: () => invoke<NtfyStatusInfo>("get_ntfy_status"),
   clearNtfyRateLimit: () => invoke<void>("clear_ntfy_rate_limit"),
+  setCompareCaptureActive: (active: boolean) =>
+    invoke<void>("set_compare_capture_active", { active }),
+  focusMainWindow: () => invoke<void>("focus_main_window"),
+  completeWaveMilestoneNtfy: (uiPngBase64: string | null) =>
+    invoke<void>("complete_wave_milestone_ntfy", { uiPngBase64 }),
   hasResumableRun: () => invoke<boolean>("has_resumable_run"),
   startScanner: (mode: ScanStartMode) =>
     invoke<void>("start_scanner", { mode }),

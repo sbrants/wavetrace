@@ -210,8 +210,44 @@ fn capture_window_via_monitor(w: &xcap::Window) -> Option<RgbaImage> {
     Some(crop_region(&mon_img, rel_x, rel_y, w, h))
 }
 
+/// Capture the WaveTrace application window (for debug/support bundles).
+pub fn capture_own_app_window() -> Result<RgbaImage, String> {
+    capture_own_app_window_inner(false)
+}
+
+/// Like [`capture_own_app_window`] but retries and accepts monitor fallback when the
+/// window is minimized/hidden (e.g. after showing from the tray for milestone ntfy).
+pub fn capture_own_app_window_relaxed() -> Result<RgbaImage, String> {
+    capture_own_app_window_inner(true)
+}
+
+fn capture_own_app_window_inner(relaxed: bool) -> Result<RgbaImage, String> {
+    let windows = xcap::Window::all().map_err(|e| e.to_string())?;
+    let mut monitor_fallback: Option<RgbaImage> = None;
+    for w in &windows {
+        let title = w.title().unwrap_or_default();
+        let app = w.app_name().unwrap_or_default();
+        if !is_our_app_window(&title, &app) {
+            continue;
+        }
+        if let Some(img) = try_capture_window_relaxed(w, relaxed) {
+            return Ok(img);
+        }
+        if monitor_fallback.is_none() {
+            monitor_fallback = capture_window_via_monitor(w);
+        }
+    }
+    monitor_fallback.ok_or_else(|| {
+        "Could not capture the WaveTrace window. Make sure the app window is visible.".into()
+    })
+}
+
 fn try_capture_window(w: &xcap::Window) -> Option<RgbaImage> {
-    if w.is_minimized().unwrap_or(true) {
+    try_capture_window_relaxed(w, false)
+}
+
+fn try_capture_window_relaxed(w: &xcap::Window, relaxed: bool) -> Option<RgbaImage> {
+    if !relaxed && w.is_minimized().unwrap_or(true) {
         return None;
     }
     capture_window_image(w).map(|(img, _)| img)
@@ -429,28 +465,6 @@ pub fn crop_region(img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> RgbaImage
     let w = w.min(img.width() - x).max(1);
     let h = h.min(img.height() - y).max(1);
     image::imageops::crop_imm(img, x, y, w, h).to_image()
-}
-
-/// Capture the WaveTrace application window (for debug/support bundles).
-pub fn capture_own_app_window() -> Result<RgbaImage, String> {
-    let windows = xcap::Window::all().map_err(|e| e.to_string())?;
-    let mut monitor_fallback: Option<RgbaImage> = None;
-    for w in &windows {
-        let title = w.title().unwrap_or_default();
-        let app = w.app_name().unwrap_or_default();
-        if !is_our_app_window(&title, &app) {
-            continue;
-        }
-        if let Some(img) = try_capture_window(w) {
-            return Ok(img);
-        }
-        if monitor_fallback.is_none() {
-            monitor_fallback = capture_window_via_monitor(w);
-        }
-    }
-    monitor_fallback.ok_or_else(|| {
-        "Could not capture the WaveTrace window. Make sure the app window is visible.".into()
-    })
 }
 
 pub fn encode_png_base64(img: &RgbaImage) -> Result<String, String> {

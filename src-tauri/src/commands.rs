@@ -16,6 +16,16 @@ use serde::Serialize;
 
 pub struct AppState {
     pub scanner: Scanner,
+    /// History run comparison is active (2+ runs) — wave-milestone ntfy should attach that view.
+    pub compare_capture_active: std::sync::Mutex<bool>,
+    pub pending_wave_milestone_ntfy: std::sync::Mutex<Option<PendingWaveMilestoneNtfy>>,
+}
+
+#[derive(Clone)]
+pub struct PendingWaveMilestoneNtfy {
+    pub title: String,
+    pub body: String,
+    pub game_png_base64: String,
 }
 
 fn conn() -> Result<rusqlite::Connection, String> {
@@ -160,7 +170,11 @@ pub fn get_settings() -> Result<Settings, String> {
 #[tauri::command]
 pub fn save_settings(new_settings: Settings) -> Result<(), String> {
     capture::clear_window_cache();
-    settings::save(&conn()?, &new_settings).map_err(|e| e.to_string())
+    let conn = conn()?;
+    let mut merged = new_settings;
+    // Managed only via set_compare_capture_active; don't clear when saving other settings.
+    merged.compare_capture_active = settings::load(&conn).compare_capture_active;
+    settings::save(&conn, &merged).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -176,6 +190,77 @@ pub fn get_ntfy_status(state: State<crate::notifications::NotifyState>) -> crate
 #[tauri::command]
 pub fn clear_ntfy_rate_limit(state: State<crate::notifications::NotifyState>) {
     state.clear_ntfy_rate_limit();
+}
+
+#[tauri::command]
+pub fn set_compare_capture_active(
+    state: State<AppState>,
+    active: bool,
+) -> Result<(), String> {
+    *state.compare_capture_active.lock().unwrap() = active;
+    let conn = conn()?;
+    let mut settings = settings::load(&conn);
+    settings.compare_capture_active = active;
+    settings::save(&conn, &settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn focus_main_window(app: AppHandle) {
+    crate::tray::show_main_window(&app);
+}
+
+#[tauri::command]
+pub fn complete_wave_milestone_ntfy(
+    app: AppHandle,
+    ui_png_base64: Option<String>,
+) -> Result<(), String> {
+    let pending = app
+        .state::<AppState>()
+        .pending_wave_milestone_ntfy
+        .lock()
+        .unwrap()
+        .take();
+    let Some(pending) = pending else {
+        return Err("no pending wave milestone notification".into());
+    };
+
+    let ui_png_base64 = if ui_png_base64
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        let len = ui_png_base64.as_ref().map(|s| s.len()).unwrap_or(0);
+        db::append_app_log(&format!("wave milestone ui capture: from webview ({len} b64 chars)"));
+        ui_png_base64
+    } else {
+        crate::tray::show_main_window(&app);
+        let captured = (0..5).find_map(|attempt| {
+            let delay_ms = 400 + attempt * 400;
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            capture::capture_own_app_window_relaxed()
+                .ok()
+                .and_then(|img| {
+                    db::append_app_log(&format!(
+                        "wave milestone ui capture: xcap {}x{} (attempt {})",
+                        img.width(),
+                        img.height(),
+                        attempt + 1
+                    ));
+                    capture::encode_png_base64(&img).ok()
+                })
+        });
+        if captured.is_none() {
+            db::append_app_log("wave milestone ui capture: FAILED (webview + xcap)");
+        }
+        captured
+    };
+
+    crate::notifications::publish_ntfy_wave_milestone_blocking(
+        &app,
+        pending.title,
+        pending.body,
+        pending.game_png_base64,
+        ui_png_base64,
+    )
 }
 
 #[tauri::command]

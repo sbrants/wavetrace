@@ -708,6 +708,7 @@ impl RunStateMachine {
             // before the game actually shows wave 1 again.
             self.wave = Debounced::default();
             self.tournament_seen = false;
+            self.dissonance_seen = None;
             return actions;
         }
 

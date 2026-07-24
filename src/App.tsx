@@ -7,6 +7,7 @@ import SettingsPage from "./components/SettingsPage";
 import AppUpdater from "./components/AppUpdater";
 import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
+import { registerTabControl, type AppTab } from "./tabCapture";
 
 type Tab = "dashboard" | "history" | "settings";
 
@@ -46,6 +47,10 @@ export default function App() {
   }, [tab]);
 
   useEffect(() => {
+    registerTabControl(setTab, () => tabRef.current);
+  }, []);
+
+  useEffect(() => {
     if (!debugAwaitingTabRenderRef.current) {
       return;
     }
@@ -69,7 +74,7 @@ export default function App() {
     const onDebugCapture = (event: Event) => {
       const detail = (event as CustomEvent<{
         phase: "start" | "switch" | "end";
-        tab?: Tab;
+        tab?: AppTab;
       }>).detail;
 
       if (detail.phase === "start") {

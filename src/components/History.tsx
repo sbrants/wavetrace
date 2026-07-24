@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
 import {
-  buildCompareChartDataByProgress,
   buildCompareChartDataByWave,
+  applyCompareChartSmoothing,
+  compareNewerRunIndex,
   buildChartWaveJumpMarkers,
   buildWaveJumpMarkers,
-  CompareXAxis,
   snapshotsToChartData,
 } from "../chartData";
 import { downloadBase64File, downloadTextFile } from "../exportDownload";
@@ -17,6 +17,7 @@ import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
 import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
 import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
+import { setCompareChartEl, setCompareRunCount, setCompareSessionActive } from "../notificationCapture";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -61,8 +62,11 @@ export default function History() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
-  const [compareXAxis, setCompareXAxis] = useState<CompareXAxis>("wave");
   const [compareShowSkips, setCompareShowSkips] = useState(false);
+  const [compareSmoothWindow, setCompareSmoothWindow] = useState<0 | 3 | 5 | 10>(
+    0
+  );
+  const [compareLeadLagBand, setCompareLeadLagBand] = useState(false);
   const [chartSelectMode, setChartSelectMode] = useState(false);
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
@@ -74,6 +78,21 @@ export default function History() {
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
   const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+
+  useEffect(() => {
+    const active = compareRuns.length >= 2;
+    setCompareRunCount(compareRuns.length);
+    setCompareSessionActive(active);
+    void api.setCompareCaptureActive(active);
+    if (!active) {
+      setCompareChartEl(null);
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      setCompareChartEl(compareChartRef.current);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [compareRuns]);
 
   const listFilter = useCallback((): RunFilter => {
     const next: RunFilter = { ...filter };
@@ -95,6 +114,14 @@ export default function History() {
   }, [listFilter]);
 
   useEffect(reload, [reload]);
+
+  useEffect(() => {
+    void api.getSettings().then((s) => {
+      if (s.compare_capture_active) {
+        setCompareSessionActive(true);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -668,10 +695,32 @@ export default function History() {
     ? buildChartWaveJumpMarkers(liveChartWaveSkips, liveChartNormalJumps)
     : buildWaveJumpMarkers(chartSnapshotsForDisplay, chartSkipsForDisplay);
 
-  const compareChartData =
-    compareXAxis === "wave"
-      ? buildCompareChartDataByWave(compareRunIds, compareSnapshots)
-      : buildCompareChartDataByProgress(compareRunIds, compareSnapshots);
+  const compareChartData = buildCompareChartDataByWave(
+    compareRunIds,
+    compareSnapshots
+  );
+
+  const compareChartDisplayData = useMemo(() => {
+    if (compareSmoothWindow <= 1) {
+      return compareChartData;
+    }
+    return applyCompareChartSmoothing(
+      compareChartData,
+      compareRuns.length,
+      compareSmoothWindow
+    );
+  }, [compareChartData, compareRuns.length, compareSmoothWindow]);
+
+  const compareLeadLag = useMemo(() => {
+    if (!compareLeadLagBand || compareRuns.length !== 2) {
+      return null;
+    }
+    const newerIndex = compareNewerRunIndex(compareRuns);
+    if (newerIndex == null) {
+      return null;
+    }
+    return { newerIndex, olderIndex: 1 - newerIndex };
+  }, [compareLeadLagBand, compareRuns]);
 
   const compareSkipMarkers = compareRunIds.map((id) =>
     buildChartWaveJumpMarkers(
@@ -970,36 +1019,61 @@ export default function History() {
         <div className="chart-card compare-card" ref={compareChartRef}>
           <div className="chart-card-header">
             <h3>
-              Compare {compareRuns.length} runs — coin/min vs{" "}
-              {compareXAxis === "wave" ? "wave" : "snapshot #"}
+              Compare {compareRuns.length} runs — coin/min vs wave
               {hasOngoingCompareRun && (
                 <span className="muted compare-live"> · live</span>
               )}
             </h3>
             <div className="chart-card-actions">
-              <select
-                className="compare-axis-select"
-                value={compareXAxis}
-                onChange={(e) =>
-                  setCompareXAxis(e.target.value as CompareXAxis)
-                }
-                aria-label="Compare chart X axis"
-              >
-                <option value="wave">Absolute wave</option>
-                <option value="progress">Snapshot progress</option>
-              </select>
               {hasCompareSkips && (
-                <label className="checkbox-inline">
+                <label
+                  className="checkbox-inline"
+                  title="Show skip/jump markers on the chart"
+                >
                   <input
                     type="checkbox"
                     checked={compareShowSkips}
                     onChange={(e) => setCompareShowSkips(e.target.checked)}
-                    disabled={compareXAxis === "progress"}
                     aria-label="Show wave jumps on compare chart"
                   />
                   Wave jumps
                 </label>
               )}
+              <label className="compare-smooth-label">
+                Smooth
+                <select
+                  className="compare-axis-select"
+                  value={compareSmoothWindow}
+                  onChange={(e) =>
+                    setCompareSmoothWindow(
+                      Number(e.target.value) as 0 | 3 | 5 | 10
+                    )
+                  }
+                  aria-label="Compare chart smoothing"
+                >
+                  <option value={0}>Off</option>
+                  <option value={3}>3 pts</option>
+                  <option value={5}>5 pts</option>
+                  <option value={10}>10 pts</option>
+                </select>
+              </label>
+              <label
+                className="checkbox-inline"
+                title={
+                  compareRuns.length !== 2
+                    ? "Lead/lag band is available when comparing exactly 2 runs"
+                    : "Green when the newer run is higher; red when lower"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={compareLeadLagBand}
+                  onChange={(e) => setCompareLeadLagBand(e.target.checked)}
+                  disabled={compareRuns.length !== 2}
+                  aria-label="Show lead/lag band between two runs"
+                />
+                Lead/lag band
+              </label>
               <button onClick={clearCompare}>Clear comparison</button>
               <ChartScreenshotActions
                 targetRef={compareChartRef}
@@ -1047,16 +1121,28 @@ export default function History() {
           </table>
           <CoinVsWaveChart
             mode="compare"
-            data={compareChartData}
+            data={compareChartDisplayData}
             lines={compareLines}
             waveSkipsByLine={
-              compareShowSkips && compareXAxis === "wave"
-                ? compareSkipMarkers
-                : undefined
+              compareShowSkips ? compareSkipMarkers : undefined
             }
-            xAxis={compareXAxis}
             height={320}
+            smoothWindow={compareSmoothWindow}
+            leadLagBand={compareLeadLag}
           />
+          {compareSmoothWindow > 1 && (
+            <p className="compare-chart-hint muted">
+              Smoothing is visual only; summary stats use raw snapshot values.
+              {compareLeadLag != null &&
+                " Green: newer run ahead · red: newer run behind."}
+            </p>
+          )}
+          {compareSmoothWindow <= 1 && compareLeadLag != null && (
+            <p className="compare-chart-hint muted">
+              Lead/lag band: green when the newer run (by start time) is higher,
+              red when lower.
+            </p>
+          )}
         </div>
       )}
 

@@ -46,27 +46,37 @@ const DEBUG_TABS: { tab: DebugTab; label: string }[] = [
   { tab: "settings", label: "settings" },
 ];
 
-/** Switch tabs, capture the app window on each, then restore the prior tab. */
-export async function captureDebugScreenshots(): Promise<DebugScreenshot[]> {
+/** Show a tab briefly, run `fn`, then restore the tab the user had open. */
+export async function withTabVisible<T>(
+  tab: DebugTab,
+  fn: () => Promise<T>,
+  renderDelayMs = 400,
+): Promise<T> {
   dispatchDebugCapture({ phase: "start" });
   await waitForDebugReady();
-
-  const shots: DebugScreenshot[] = [];
   try {
-    for (const { tab, label } of DEBUG_TABS) {
-      dispatchDebugCapture({ phase: "switch", tab });
-      await waitForDebugReady();
-      await sleep(400);
-      try {
-        const png_base64 = await invoke<string>("capture_app_window");
-        shots.push({ label, png_base64 });
-      } catch (e) {
-        logUiError(`debugPackage.screenshot.${label}`, e);
-      }
-    }
+    dispatchDebugCapture({ phase: "switch", tab });
+    await waitForDebugReady();
+    await sleep(renderDelayMs);
+    return await fn();
   } finally {
     dispatchDebugCapture({ phase: "end" });
     await waitForDebugReady();
+  }
+}
+
+/** Switch tabs, capture the app window on each, then restore the prior tab. */
+export async function captureDebugScreenshots(): Promise<DebugScreenshot[]> {
+  const shots: DebugScreenshot[] = [];
+  for (const { tab, label } of DEBUG_TABS) {
+    try {
+      await withTabVisible(tab, async () => {
+        const png_base64 = await invoke<string>("capture_app_window");
+        shots.push({ label, png_base64 });
+      });
+    } catch (e) {
+      logUiError(`debugPackage.screenshot.${label}`, e);
+    }
   }
   return shots;
 }

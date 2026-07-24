@@ -644,7 +644,7 @@ export default function SettingsPage() {
           <NotificationOption
             id="notify-ntfy-attach"
             label="Attach game screenshot to phone alerts"
-            description="JPEG capture on phone alerts: wave milestones, run ended, lab research, and event missions."
+            description="JPEG capture on phone alerts. Wave milestones include the game window plus the dashboard chart (or run comparison when enabled in History)."
             checked={settings.notify_ntfy_attach_capture ?? true}
             disabled={!(settings.notify_ntfy_enabled ?? false)}
             onChange={(checked) =>
