@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.41] — 2026-07-24
+
+### Added
+
+- **Chart screenshots on wave milestone ntfy** — when Attach game capture is on, phone alerts include the game frame plus the Dashboard (or History compare) coin/min chart, captured after briefly focusing the app window.
+- **Compare lead/lag shading** — two-run History compare fills the gap between newer and older coin/min series (green ahead / red behind).
+
+### Fixed
+
+- **Dissonance false positives** — utility upgrades and enemy health/attack workshop lines no longer tag a farming run as dissonance.
+
+---
+
 ## [0.2.40] — 2026-07-22
 
 ### Added
