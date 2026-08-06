@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.42] — 2026-08-06
+
+### Fixed
+
+- **Coin/min unavailable alerts** — the optional N-second phone/desktop warning now also covers sustained unreadable OCR (crash, black screen, game minimized inside the emulator) and a missing game window during an active run, not only the total-coins HUD.
+
+---
+
 ## [0.2.41] — 2026-07-24
 
 ### Added
