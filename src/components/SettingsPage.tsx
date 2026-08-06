@@ -531,7 +531,7 @@ export default function SettingsPage() {
           <NotificationOption
             id="notify-coin-unavailable"
             label="Coin/min unavailable"
-            description="After N seconds on the total-coins screen (same as the dashboard warning). Leave empty to disable."
+            description="After N seconds without a readable coin/min (total-coins screen, crash/black screen, or lost game window). Leave empty to disable."
             control={
               <input
                 id="notify-coin-unavailable"

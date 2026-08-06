@@ -131,24 +131,30 @@ impl NotifyState {
         }
     }
 
-    pub fn on_scanner_status(&self, app: &AppHandle, status: &str) {
+    pub fn on_scanner_status(&self, app: &AppHandle, status: &str, live: &LiveState) {
         let cfg = load_settings();
-        if !cfg.notify_window_lost {
-            return;
-        }
 
         let prev = self.last_status.lock().unwrap().clone();
-        if prev == status {
-            return;
-        }
-        *self.last_status.lock().unwrap() = status.to_string();
-
-        if status == "window_not_found" && prev != "window_not_found" {
-            if !self.window_lost_notified.swap(true, Ordering::SeqCst) {
-                show(app, "Game window not found", "WaveTrace can't see the target window. Check Settings or bring the emulator to the foreground.", false, None);
+        if prev != status {
+            *self.last_status.lock().unwrap() = status.to_string();
+            if cfg.notify_window_lost {
+                if status == "window_not_found" {
+                    if !self.window_lost_notified.swap(true, Ordering::SeqCst) {
+                        show(app, "Game window not found", "WaveTrace can't see the target window. Check Settings or bring the emulator to the foreground.", false, None);
+                    }
+                } else if status == "scanning" && prev == "window_not_found" {
+                    self.window_lost_notified.store(false, Ordering::SeqCst);
+                }
             }
-        } else if status == "scanning" && prev == "window_not_found" {
-            self.window_lost_notified.store(false, Ordering::SeqCst);
+        }
+
+        // window_not_found never reaches on_poll — keep the coin/min timer
+        // running across repeated missing-window emits. Scanning ticks live in
+        // on_poll (so ntfy can attach the capture). Stopped/starting clears.
+        if status == "window_not_found" {
+            self.check_coin_unavailable(app, live, &cfg, None, true, true);
+        } else if status != "scanning" {
+            self.check_coin_unavailable(app, live, &cfg, None, false, false);
         }
     }
 
@@ -167,7 +173,7 @@ impl NotifyState {
         if cfg.notify_event_mission_complete {
             self.check_event_mission_complete(app, ocr_lines, &cfg, capture, frame);
         }
-        self.check_coin_unavailable(app, live, &cfg, capture);
+        self.check_coin_unavailable(app, live, &cfg, capture, true, false);
     }
 
     fn check_research_complete(
@@ -247,6 +253,8 @@ impl NotifyState {
         live: &LiveState,
         cfg: &Settings,
         capture: Option<&RgbaImage>,
+        scanner_active: bool,
+        window_missing: bool,
     ) {
         let Some(threshold_secs) = cfg.notify_coin_unavailable_after_secs.filter(|&n| n > 0) else {
             *self.coin_unavailable_since.lock().unwrap() = None;
@@ -255,7 +263,8 @@ impl NotifyState {
             return;
         };
 
-        if live.run_active && live.total_coin_warning {
+        if coin_unavailable_active(scanner_active, live.run_active, live.total_coin_warning, window_missing)
+        {
             let mut since = self.coin_unavailable_since.lock().unwrap();
             if since.is_none() {
                 *since = Some(Instant::now());
@@ -267,16 +276,7 @@ impl NotifyState {
                     .coin_unavailable_notified
                     .swap(true, Ordering::SeqCst)
             {
-                let mins = elapsed.as_secs() / 60;
-                let body = if mins >= 1 {
-                    format!(
-                        "Game is showing total coins, not coins/min, for {mins}+ min. Snapshots won't update coin/min until the rate returns."
-                    )
-                } else {
-                    format!(
-                        "Game is showing total coins, not coins/min, for {threshold_secs}+ seconds. Snapshots won't update coin/min until the rate returns."
-                    )
-                };
+                let body = format_coin_unavailable_body(elapsed.as_secs(), threshold_secs);
                 show(
                     app,
                     "Coin/min unavailable",
@@ -765,6 +765,29 @@ fn format_coin(value: f64) -> String {
     format!("{trimmed}{}/min", SUFFIXES[idx])
 }
 
+/// Whether the coin/min-unavailable timer should be running.
+fn coin_unavailable_active(
+    scanner_active: bool,
+    run_active: bool,
+    total_coin_warning: bool,
+    window_missing: bool,
+) -> bool {
+    scanner_active && run_active && (total_coin_warning || window_missing)
+}
+
+fn format_coin_unavailable_body(elapsed_secs: u64, threshold_secs: u32) -> String {
+    let mins = elapsed_secs / 60;
+    if mins >= 1 {
+        format!(
+            "Coin/min has been unavailable for {mins}+ min (total coins, unreadable OCR, or lost game window). Snapshots won't update coin/min until the rate returns."
+        )
+    } else {
+        format!(
+            "Coin/min has been unavailable for {threshold_secs}+ seconds (total coins, unreadable OCR, or lost game window). Snapshots won't update coin/min until the rate returns."
+        )
+    }
+}
+
 fn trim_trailing_zeros(num: &str) -> String {
     if !num.contains('.') {
         return num.to_string();
@@ -1120,6 +1143,24 @@ mod tests {
     fn format_coin_uses_game_suffixes() {
         assert_eq!(format_coin(44.2e12), "44.2T/min");
         assert_eq!(format_coin(2.65e6), "2.65M/min");
+    }
+
+    #[test]
+    fn coin_unavailable_active_requires_run_and_signal() {
+        assert!(!coin_unavailable_active(true, false, true, false));
+        assert!(!coin_unavailable_active(true, true, false, false));
+        assert!(!coin_unavailable_active(false, true, true, true));
+        assert!(coin_unavailable_active(true, true, true, false));
+        assert!(coin_unavailable_active(true, true, false, true));
+    }
+
+    #[test]
+    fn format_coin_unavailable_body_uses_minutes_when_long() {
+        let body = format_coin_unavailable_body(300, 300);
+        assert!(body.contains("5+ min"));
+        assert!(body.contains("unreadable OCR"));
+        let short = format_coin_unavailable_body(45, 60);
+        assert!(short.contains("60+ seconds"));
     }
 
     #[test]

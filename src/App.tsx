@@ -166,7 +166,7 @@ export default function App() {
             className="header-coin-warning"
             role="status"
             aria-live="polite"
-            title="The game is showing total coins, not coins/min. Snapshots keep the last known rate until /min returns."
+            title="Coin/min is unavailable (total coins, unreadable OCR, or similar). Snapshots keep the last known rate until /min returns."
           >
             Coin rate unavailable
           </span>

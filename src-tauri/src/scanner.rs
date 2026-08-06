@@ -334,7 +334,7 @@ fn emit(
     let live = machine.lock().unwrap().live_state();
     *cached_live.lock().unwrap() = live.clone();
     if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
-        notify.on_scanner_status(app, status);
+        notify.on_scanner_status(app, status, &live);
     }
     crate::tray::update_scanner_ui(app, status, &live);
     let event = ScannerEvent {

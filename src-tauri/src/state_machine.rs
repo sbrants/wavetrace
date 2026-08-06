@@ -500,7 +500,8 @@ pub struct RunStateMachine {
     last_mode: GameMode,
     tournament_seen: bool,
     dissonance_seen: Option<DissonanceKind>,
-    /// Consecutive polls where coin reads as a balance (no /min).
+    /// Consecutive polls without a readable coin/min rate
+    /// (total-coin balance, or unreadable OCR e.g. crash/black screen).
     consecutive_total_coin_polls: u32,
     /// Last skip banner ×N (dashboard), when OCR parsed it.
     last_skip_multiplier: Option<u32>,
@@ -555,6 +556,7 @@ impl RunStateMachine {
             run_active: self.run.is_some(),
             run_type: self.run.as_ref().map(|r| r.run_type),
             // Debounced: one missed /min frame must not flash the banner.
+            // Covers total-coins HUD and sustained unreadable OCR (crash/freeze).
             total_coin_warning: self.consecutive_total_coin_polls >= 2,
             last_skip_multiplier: self
                 .run
@@ -686,8 +688,12 @@ impl RunStateMachine {
             {
                 self.consecutive_total_coin_polls += 1;
             }
+            CoinReading::Unreadable => {
+                // Crash / black screen / OCR failure — same "no /min" path as total coins.
+                self.consecutive_total_coin_polls += 1;
+            }
             _ => {
-                // Unreadable coin line — hold warning state, don't reset streak.
+                // Total balance outside total-coin/tournament modes — hold streak.
             }
         }
 
@@ -1283,6 +1289,36 @@ mod tests {
         // Rate returns on the next frame — streak clears.
         sm.poll(p(GameMode::Normal, 14, 2, CoinReading::Rate(100.0)));
         assert!(!sm.live_state().total_coin_warning);
+    }
+
+    #[test]
+    fn sustained_unreadable_coin_sets_warning() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)),
+        );
+        // Single OCR miss must not flash the banner.
+        sm.poll(p(GameMode::Normal, 14, 1, CoinReading::Unreadable));
+        assert!(!sm.live_state().total_coin_warning);
+        // Sustained unreadable (crash / black screen) raises the warning.
+        sm.poll(p(GameMode::Normal, 14, 1, CoinReading::Unreadable));
+        assert!(sm.live_state().total_coin_warning);
+        // Rate returning clears it.
+        sm.poll(p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)));
+        assert!(!sm.live_state().total_coin_warning);
+    }
+
+    #[test]
+    fn unreadable_holds_existing_total_coin_warning() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::TotalCoin, 14, 1, CoinReading::Total(1e15)),
+        );
+        assert!(sm.live_state().total_coin_warning);
+        sm.poll(p(GameMode::Normal, 14, 1, CoinReading::Unreadable));
+        assert!(sm.live_state().total_coin_warning);
     }
 
     #[test]
