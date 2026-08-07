@@ -12,7 +12,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Game save options** — choose overwrite vs timestamped `playerInfo.dat`, custom save folder, and auto-pull on an interval (writes only when content hash changes; hides the header button while auto-pull is on).
-- **Apps Script sample** — Sheets sidebar that pulls via local tracker-bridge (`samples/google-sheets-tracker-bridge`).
 
 ### Fixed
 
