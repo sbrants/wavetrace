@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.43] — 2026-08-07
+
+### Added
+
+- **Download game save** — header button (when an emulator is reachable via ADB) pulls `playerInfo.dat` to Downloads. WaveTrace auto-manages Android platform-tools; Settings → Game save toggles the feature and optional ADB port.
+
+---
+
 ## [0.2.42] — 2026-08-06
 
 ### Fixed
