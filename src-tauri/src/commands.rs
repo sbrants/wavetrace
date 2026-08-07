@@ -548,6 +548,23 @@ pub fn get_app_data_info() -> AppDataInfo {
     }
 }
 
+#[tauri::command]
+pub fn game_save_status() -> crate::adb_save::GameSaveStatus {
+    let custom_port = conn()
+        .ok()
+        .map(|c| settings::load(&c).save_pull_adb_port)
+        .flatten();
+    crate::adb_save::probe_game_save(custom_port, true)
+}
+
+#[tauri::command]
+pub fn pull_game_save() -> Result<crate::adb_save::GameSavePullResult, String> {
+    let custom_port = settings::load(&conn()?).save_pull_adb_port;
+    let result = crate::adb_save::pull_game_save(custom_port)?;
+    reveal_in_file_manager(std::path::Path::new(&result.path))?;
+    Ok(result)
+}
+
 #[derive(Serialize)]
 pub struct ScannerLogView {
     pub path: String,

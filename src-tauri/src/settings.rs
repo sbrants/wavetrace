@@ -55,6 +55,12 @@ pub struct Settings {
     /// History run comparison is active (2+ runs) — wave-milestone ntfy attaches that view.
     #[serde(default)]
     pub compare_capture_active: bool,
+    /// Show the header Download save control when an emulator is reachable via ADB.
+    #[serde(default = "default_true")]
+    pub save_pull_enabled: bool,
+    /// Optional extra emulator ADB port (e.g. 62001 for MuMu), tried before the known-host list.
+    #[serde(default)]
+    pub save_pull_adb_port: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -79,6 +85,8 @@ impl Default for Settings {
             notify_ntfy_topic: String::new(),
             notify_system_shutdown: true,
             compare_capture_active: false,
+            save_pull_enabled: true,
+            save_pull_adb_port: None,
         }
     }
 }
@@ -167,6 +175,14 @@ pub fn load(conn: &Connection) -> Settings {
         if let Ok(on) = v.parse() {
             s.compare_capture_active = on;
         }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_enabled") {
+        if let Ok(on) = v.parse() {
+            s.save_pull_enabled = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_adb_port") {
+        s.save_pull_adb_port = v.parse().ok().filter(|&n| (1_000..65_536).contains(&n));
     }
     s
 }
@@ -294,6 +310,16 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         "compare_capture_active",
         &s.compare_capture_active.to_string(),
     )?;
+    db::set_setting(
+        conn,
+        "save_pull_enabled",
+        &s.save_pull_enabled.to_string(),
+    )?;
+    if let Some(port) = s.save_pull_adb_port {
+        db::set_setting(conn, "save_pull_adb_port", &port.to_string())?;
+    } else {
+        db::set_setting(conn, "save_pull_adb_port", "")?;
+    }
     Ok(())
 }
 
@@ -403,5 +429,19 @@ mod tests {
         assert!(loaded.notify_ntfy_enabled);
         assert!(!loaded.notify_ntfy_attach_capture);
         assert_eq!(loaded.notify_ntfy_topic, "wavetrace-test");
+    }
+
+    #[test]
+    fn save_and_load_game_save_pull_settings() {
+        let conn = db::open_in_memory().expect("db");
+        let s = Settings {
+            save_pull_enabled: false,
+            save_pull_adb_port: Some(62001),
+            ..Settings::default()
+        };
+        save(&conn, &s).expect("save");
+        let loaded = load(&conn);
+        assert!(!loaded.save_pull_enabled);
+        assert_eq!(loaded.save_pull_adb_port, Some(62001));
     }
 }

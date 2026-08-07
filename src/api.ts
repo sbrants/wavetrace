@@ -56,6 +56,24 @@ export interface Settings {
   notify_ntfy_topic?: string;
   /** Set when History run comparison is active (read-only from UI). */
   compare_capture_active?: boolean;
+  /** Show header Download save when an emulator is reachable via ADB. */
+  save_pull_enabled?: boolean;
+  /** Optional extra emulator ADB port (e.g. 62001). */
+  save_pull_adb_port?: number | null;
+}
+
+export interface GameSaveStatus {
+  ready: boolean;
+  adbPath: string | null;
+  deviceSerial: string | null;
+  detail: string;
+}
+
+export interface GameSavePullResult {
+  path: string;
+  bytes: number;
+  remotePath: string;
+  deviceSerial: string;
 }
 
 export interface NtfyStatusInfo {
@@ -206,6 +224,8 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
+  gameSaveStatus: () => invoke<GameSaveStatus>("game_save_status"),
+  pullGameSave: () => invoke<GameSavePullResult>("pull_game_save"),
   sendTestNtfy: () => invoke<void>("send_test_ntfy"),
   getNtfyStatus: () => invoke<NtfyStatusInfo>("get_ntfy_status"),
   clearNtfyRateLimit: () => invoke<void>("clear_ntfy_rate_limit"),

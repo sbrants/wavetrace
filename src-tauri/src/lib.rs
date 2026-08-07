@@ -1,3 +1,4 @@
+pub mod adb_save;
 pub mod app_icon;
 pub mod backup;
 pub mod capture;
@@ -111,6 +112,8 @@ pub fn run() {
             commands::copy_image_to_clipboard,
             commands::read_scanner_log,
             commands::get_app_data_info,
+            commands::game_save_status,
+            commands::pull_game_save,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ScanStartMode, ScannerEvent } from "./api";
+import { api, GameSaveStatus, ScanStartMode, ScannerEvent } from "./api";
 import { reportUiError } from "./uiError";
+import { showToast } from "./toast";
 import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
@@ -38,6 +39,11 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [canResume, setCanResume] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
+  const [savePullEnabled, setSavePullEnabled] = useState(true);
+  const [gameSaveStatus, setGameSaveStatus] = useState<GameSaveStatus | null>(
+    null
+  );
+  const [savePullBusy, setSavePullBusy] = useState(false);
   const tabRef = useRef<Tab>(tab);
   const debugReturnTabRef = useRef<Tab | null>(null);
   const debugAwaitingTabRenderRef = useRef(false);
@@ -125,9 +131,69 @@ export default function App() {
   useEffect(() => {
     api
       .getSettings()
-      .then((s) => setMinimizeToTray(s.minimize_to_tray ?? true))
-      .catch(() => setMinimizeToTray(true));
+      .then((s) => {
+        setMinimizeToTray(s.minimize_to_tray ?? true);
+        setSavePullEnabled(s.save_pull_enabled ?? true);
+      })
+      .catch(() => {
+        setMinimizeToTray(true);
+        setSavePullEnabled(true);
+      });
   }, [tab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      api
+        .getSettings()
+        .then((s) => {
+          if (cancelled) return;
+          const enabled = s.save_pull_enabled ?? true;
+          setSavePullEnabled(enabled);
+          if (!enabled) {
+            setGameSaveStatus(null);
+            return;
+          }
+          return api.gameSaveStatus().then((status) => {
+            if (!cancelled) setGameSaveStatus(status);
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setGameSaveStatus({
+              ready: false,
+              adbPath: null,
+              deviceSerial: null,
+              detail: "Could not check ADB status",
+            });
+          }
+        });
+    };
+    refresh();
+    const id = window.setInterval(refresh, 12_000);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
+  const downloadGameSave = () => {
+    if (savePullBusy) return;
+    setSavePullBusy(true);
+    api
+      .pullGameSave()
+      .then((result) => {
+        showToast(
+          `Saved playerInfo.dat (${result.bytes.toLocaleString()} bytes) to Downloads`
+        );
+        api.gameSaveStatus().then(setGameSaveStatus).catch(() => {});
+      })
+      .catch((e) => reportUiError(e, "App.pullGameSave"))
+      .finally(() => setSavePullBusy(false));
+  };
 
   const startScanning = (mode: ScanStartMode) => {
     api
@@ -144,6 +210,8 @@ export default function App() {
   };
 
   const warning = scannerEvent?.live?.total_coin_warning ?? false;
+  const showDownloadSave =
+    savePullEnabled && (savePullBusy || (gameSaveStatus?.ready ?? false));
 
   return (
     <div className="app">
@@ -160,6 +228,21 @@ export default function App() {
               {t[0].toUpperCase() + t.slice(1)}
             </button>
           ))}
+          {showDownloadSave && (
+            <button
+              type="button"
+              className="header-download-save"
+              disabled={savePullBusy}
+              title={
+                gameSaveStatus?.deviceSerial
+                  ? `Pull playerInfo.dat from ${gameSaveStatus.deviceSerial}`
+                  : "Pull playerInfo.dat from the emulator"
+              }
+              onClick={downloadGameSave}
+            >
+              {savePullBusy ? "Downloading…" : "Download save"}
+            </button>
+          )}
         </nav>
         {warning && (
           <span

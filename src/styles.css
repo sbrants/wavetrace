@@ -89,6 +89,15 @@ header h1 {
 nav {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+button.header-download-save {
+  margin-left: 8px;
+}
+
+button.header-download-save:not(:disabled):hover {
+  border-color: var(--accent);
 }
 
 button {

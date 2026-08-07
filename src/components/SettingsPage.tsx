@@ -4,6 +4,7 @@ import {
   api,
   AppDataInfo,
   formatCoin,
+  GameSaveStatus,
   NtfyStatusInfo,
   ScreenCaptureAccess,
   Settings,
@@ -89,6 +90,9 @@ export default function SettingsPage() {
   const [debugBusy, setDebugBusy] = useState(false);
   const [debugStatus, setDebugStatus] = useState<string | null>(null);
   const [appData, setAppData] = useState<AppDataInfo | null>(null);
+  const [gameSaveStatus, setGameSaveStatus] = useState<GameSaveStatus | null>(
+    null
+  );
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -112,6 +116,33 @@ export default function SettingsPage() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      api
+        .gameSaveStatus()
+        .then((status) => {
+          if (!cancelled) setGameSaveStatus(status);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setGameSaveStatus({
+              ready: false,
+              adbPath: null,
+              deviceSerial: null,
+              detail: "Could not check ADB status",
+            });
+          }
+        });
+    };
+    refresh();
+    const id = window.setInterval(refresh, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
   const refreshNtfyStatus = async () => {
@@ -480,6 +511,67 @@ export default function SettingsPage() {
           />
           Minimize to tray when the window is closed
         </label>
+      </section>
+
+      <section>
+        <h3>Game save</h3>
+        <p className="muted">
+          Pull <code>playerInfo.dat</code> from a running Android emulator via
+          ADB and save it to your Downloads folder. WaveTrace manages ADB tools
+          automatically. The header <strong>Download save</strong> button appears
+          only when this is enabled and an emulator is reachable.
+        </p>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.save_pull_enabled ?? true}
+            onChange={(e) =>
+              setSettings({ ...settings, save_pull_enabled: e.target.checked })
+            }
+          />
+          Show Download save in the header when an emulator is ready
+        </label>
+        <div className="row">
+          <label htmlFor="save-pull-adb-port">
+            Emulator ADB port
+            <input
+              id="save-pull-adb-port"
+              type="number"
+              min={1000}
+              max={65535}
+              step={1}
+              placeholder="auto"
+              value={settings.save_pull_adb_port ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                setSettings({
+                  ...settings,
+                  save_pull_adb_port:
+                    raw === ""
+                      ? null
+                      : Math.min(
+                          65535,
+                          Math.max(1000, Number.parseInt(raw, 10) || 0)
+                        ),
+                });
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() =>
+              api
+                .gameSaveStatus()
+                .then(setGameSaveStatus)
+                .catch((e) => reportUiError(e, "Settings.gameSaveStatus"))
+            }
+          >
+            Recheck
+          </button>
+        </div>
+        <p className="muted" role="status" aria-live="polite">
+          {gameSaveStatus?.detail ?? "Checking emulator…"}
+        </p>
       </section>
 
       <section>
