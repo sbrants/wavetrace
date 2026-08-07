@@ -189,6 +189,7 @@ export default function SettingsPage() {
     await api.saveSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    window.dispatchEvent(new Event("wavetrace-settings-saved"));
   };
 
   const generateDebugPackage = async () => {
@@ -517,9 +518,9 @@ export default function SettingsPage() {
         <h3>Game save</h3>
         <p className="muted">
           Pull <code>playerInfo.dat</code> from a running Android emulator via
-          ADB and save it to your Downloads folder. WaveTrace manages ADB tools
-          automatically. The header <strong>Download save</strong> button appears
-          only when this is enabled and an emulator is reachable.
+          ADB. WaveTrace manages ADB tools automatically. By default the file is
+          overwritten as <code>playerInfo.dat</code>; enable timestamps to keep
+          dated copies. Auto-pull writes only when the save content changes.
         </p>
         <label className="checkbox-inline">
           <input
@@ -529,9 +530,92 @@ export default function SettingsPage() {
               setSettings({ ...settings, save_pull_enabled: e.target.checked })
             }
           />
-          Show Download save in the header when an emulator is ready
+          Enable game save pull
+        </label>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Click <strong>Save</strong> at the bottom for header/auto-pull changes
+          to apply.
+        </p>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.save_pull_auto ?? false}
+            onChange={(e) =>
+              setSettings({ ...settings, save_pull_auto: e.target.checked })
+            }
+          />
+          Auto-pull when emulator is online (hides header button; skips unchanged
+          files)
+        </label>
+        <label className="checkbox-inline">
+          <input
+            type="checkbox"
+            checked={settings.save_pull_timestamp_filename ?? false}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                save_pull_timestamp_filename: e.target.checked,
+              })
+            }
+          />
+          Append date and time to the filename (otherwise overwrite{" "}
+          <code>playerInfo.dat</code>)
         </label>
         <div className="row">
+          <label htmlFor="save-pull-dir">
+            Save folder
+            <input
+              id="save-pull-dir"
+              type="text"
+              placeholder="Downloads (default)"
+              value={settings.save_pull_dir ?? ""}
+              onChange={(e) =>
+                setSettings({ ...settings, save_pull_dir: e.target.value })
+              }
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() =>
+              api
+                .pickSavePullDir()
+                .then((dir) => {
+                  if (dir) {
+                    setSettings({ ...settings, save_pull_dir: dir });
+                  }
+                })
+                .catch((e) => reportUiError(e, "Settings.pickSavePullDir"))
+            }
+          >
+            Browse…
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings({ ...settings, save_pull_dir: "" })
+            }
+          >
+            Use Downloads
+          </button>
+        </div>
+        <div className="row">
+          <label htmlFor="save-pull-auto-interval">
+            Auto-pull interval (seconds)
+            <input
+              id="save-pull-auto-interval"
+              type="number"
+              min={15}
+              step={15}
+              value={settings.save_pull_auto_interval_secs ?? 60}
+              onChange={(e) => {
+                const n = Number.parseInt(e.target.value, 10) || 60;
+                setSettings({
+                  ...settings,
+                  save_pull_auto_interval_secs: Math.max(15, n),
+                });
+              }}
+            />
+          </label>
           <label htmlFor="save-pull-adb-port">
             Emulator ADB port
             <input
@@ -571,6 +655,9 @@ export default function SettingsPage() {
         </div>
         <p className="muted" role="status" aria-live="polite">
           {gameSaveStatus?.detail ?? "Checking emulator…"}
+          {settings.save_pull_auto
+            ? " · Header button hidden while auto-pull is on."
+            : " · Header Download save appears when an emulator is ready."}
         </p>
       </section>
 

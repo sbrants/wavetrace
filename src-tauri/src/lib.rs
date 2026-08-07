@@ -57,6 +57,7 @@ pub fn run() {
             // on Windows/Linux, which don't gate this behind a permission.
             let _ = capture::request_screen_capture_access();
             shutdown_hook::install(app.handle());
+            crate::adb_save::ensure_auto_pull_loop();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -114,6 +115,7 @@ pub fn run() {
             commands::get_app_data_info,
             commands::game_save_status,
             commands::pull_game_save,
+            commands::pick_save_pull_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

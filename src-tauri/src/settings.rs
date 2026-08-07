@@ -55,16 +55,33 @@ pub struct Settings {
     /// History run comparison is active (2+ runs) — wave-milestone ntfy attaches that view.
     #[serde(default)]
     pub compare_capture_active: bool,
-    /// Show the header Download save control when an emulator is reachable via ADB.
+    /// Show the header Download save control when an emulator is reachable via ADB
+    /// (hidden while auto-pull is on).
     #[serde(default = "default_true")]
     pub save_pull_enabled: bool,
     /// Optional extra emulator ADB port (e.g. 62001 for MuMu), tried before the known-host list.
     #[serde(default)]
     pub save_pull_adb_port: Option<u32>,
+    /// When true, write `playerInfo-YYYYMMDD-HHMMSS.dat`; when false, overwrite `playerInfo.dat`.
+    #[serde(default)]
+    pub save_pull_timestamp_filename: bool,
+    /// Output directory for pulled saves. Empty = system Downloads folder.
+    #[serde(default)]
+    pub save_pull_dir: String,
+    /// Periodically pull the save when an emulator is online; only write if content hash changed.
+    #[serde(default)]
+    pub save_pull_auto: bool,
+    /// Auto-pull interval in seconds (minimum 15).
+    #[serde(default = "default_save_pull_auto_interval")]
+    pub save_pull_auto_interval_secs: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_save_pull_auto_interval() -> u32 {
+    60
 }
 
 impl Default for Settings {
@@ -87,6 +104,10 @@ impl Default for Settings {
             compare_capture_active: false,
             save_pull_enabled: true,
             save_pull_adb_port: None,
+            save_pull_timestamp_filename: false,
+            save_pull_dir: String::new(),
+            save_pull_auto: false,
+            save_pull_auto_interval_secs: default_save_pull_auto_interval(),
         }
     }
 }
@@ -183,6 +204,24 @@ pub fn load(conn: &Connection) -> Settings {
     }
     if let Ok(Some(v)) = db::get_setting(conn, "save_pull_adb_port") {
         s.save_pull_adb_port = v.parse().ok().filter(|&n| (1_000..65_536).contains(&n));
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_timestamp_filename") {
+        if let Ok(on) = v.parse() {
+            s.save_pull_timestamp_filename = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_dir") {
+        s.save_pull_dir = v;
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_auto") {
+        if let Ok(on) = v.parse() {
+            s.save_pull_auto = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_auto_interval_secs") {
+        if let Ok(n) = v.parse::<u32>() {
+            s.save_pull_auto_interval_secs = n.max(15);
+        }
     }
     s
 }
@@ -320,6 +359,18 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     } else {
         db::set_setting(conn, "save_pull_adb_port", "")?;
     }
+    db::set_setting(
+        conn,
+        "save_pull_timestamp_filename",
+        &s.save_pull_timestamp_filename.to_string(),
+    )?;
+    db::set_setting(conn, "save_pull_dir", &s.save_pull_dir)?;
+    db::set_setting(conn, "save_pull_auto", &s.save_pull_auto.to_string())?;
+    db::set_setting(
+        conn,
+        "save_pull_auto_interval_secs",
+        &s.save_pull_auto_interval_secs.max(15).to_string(),
+    )?;
     Ok(())
 }
 
@@ -437,11 +488,19 @@ mod tests {
         let s = Settings {
             save_pull_enabled: false,
             save_pull_adb_port: Some(62001),
+            save_pull_timestamp_filename: true,
+            save_pull_dir: r"D:\TowerSaves".into(),
+            save_pull_auto: true,
+            save_pull_auto_interval_secs: 30,
             ..Settings::default()
         };
         save(&conn, &s).expect("save");
         let loaded = load(&conn);
         assert!(!loaded.save_pull_enabled);
         assert_eq!(loaded.save_pull_adb_port, Some(62001));
+        assert!(loaded.save_pull_timestamp_filename);
+        assert_eq!(loaded.save_pull_dir, r"D:\TowerSaves");
+        assert!(loaded.save_pull_auto);
+        assert_eq!(loaded.save_pull_auto_interval_secs, 30);
     }
 }

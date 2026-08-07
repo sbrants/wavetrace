@@ -1,9 +1,12 @@
 //! Pull The Tower `playerInfo.dat` from an Android emulator via host ADB.
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::{copy, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -12,6 +15,7 @@ use serde::Serialize;
 use zip::ZipArchive;
 
 use crate::db;
+use crate::settings::{self, Settings};
 
 const TOWER_ANDROID_PACKAGE: &str = "com.TechTreeGames.TheTower";
 const TOWER_LEGACY_ANDROID_PACKAGE: &str = "com.thetowergame";
@@ -34,6 +38,8 @@ const ADB_PATH_PROBE_TIMEOUT_MS: u64 = 5_000;
 const ADB_FIND_SAVE_TIMEOUT_MS: u64 = 12_000;
 
 static DOWNLOAD_LOCK: Mutex<()> = Mutex::new(());
+static AUTO_PULL_STARTED: AtomicBool = AtomicBool::new(false);
+static LAST_WRITTEN_HASH: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +57,28 @@ pub struct GameSavePullResult {
     pub bytes: u64,
     pub remote_path: String,
     pub device_serial: String,
+    /// False when content matched the last pulled hash and nothing was written.
+    pub written: bool,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PullWriteOptions {
+    pub custom_port: Option<u32>,
+    pub output_dir: PathBuf,
+    pub timestamp_filename: bool,
+    pub skip_if_same_hash: bool,
+}
+
+impl PullWriteOptions {
+    pub fn from_settings(s: &Settings) -> Self {
+        Self {
+            custom_port: s.save_pull_adb_port,
+            output_dir: resolve_output_dir(&s.save_pull_dir),
+            timestamp_filename: s.save_pull_timestamp_filename,
+            skip_if_same_hash: true,
+        }
+    }
 }
 
 fn adb_binary_name() -> &'static str {
@@ -637,21 +665,67 @@ fn downloads_dir() -> PathBuf {
     dirs::download_dir().unwrap_or_else(|| db::app_data_dir().join("exports"))
 }
 
-fn unique_download_path() -> PathBuf {
-    let dir = downloads_dir();
-    let _ = fs::create_dir_all(&dir);
-    let primary = dir.join(TOWER_SAVE_FILENAME);
-    if !primary.exists() {
-        return primary;
+/// Empty/whitespace `save_pull_dir` → Downloads; otherwise the configured folder.
+pub fn resolve_output_dir(configured: &str) -> PathBuf {
+    let trimmed = configured.trim();
+    if trimmed.is_empty() {
+        downloads_dir()
+    } else {
+        PathBuf::from(trimmed)
     }
-    let stamp = Local::now().format("%Y%m%d-%H%M%S");
-    dir.join(format!("playerInfo-{stamp}.dat"))
 }
 
-/// Pull playerInfo.dat from the first reachable emulator and save under Downloads.
-pub fn pull_game_save(custom_port: Option<u32>) -> Result<GameSavePullResult, String> {
+pub fn content_hash(bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn load_persisted_hash() -> Option<String> {
+    if let Ok(guard) = LAST_WRITTEN_HASH.lock() {
+        if guard.is_some() {
+            return guard.clone();
+        }
+    }
+    let conn = db::open().ok()?;
+    let v = db::get_setting(&conn, "save_pull_last_hash").ok()??;
+    let trimmed = v.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(mut guard) = LAST_WRITTEN_HASH.lock() {
+        *guard = Some(trimmed.clone());
+    }
+    Some(trimmed)
+}
+
+fn persist_hash(hash: &str) {
+    if let Ok(mut guard) = LAST_WRITTEN_HASH.lock() {
+        *guard = Some(hash.to_string());
+    }
+    if let Ok(conn) = db::open() {
+        let _ = db::set_setting(&conn, "save_pull_last_hash", hash);
+    }
+}
+
+/// Destination path for a pull. Always overwrites if the path already exists.
+pub fn output_file_path(dir: &Path, timestamp_filename: bool) -> PathBuf {
+    let _ = fs::create_dir_all(dir);
+    if timestamp_filename {
+        let stamp = Local::now().format("%Y%m%d-%H%M%S");
+        dir.join(format!("playerInfo-{stamp}.dat"))
+    } else {
+        dir.join(TOWER_SAVE_FILENAME)
+    }
+}
+
+/// Pull playerInfo.dat and write according to options. Skips write when hash unchanged
+/// and `skip_if_same_hash` is set.
+pub fn pull_game_save_with_options(
+    opts: &PullWriteOptions,
+) -> Result<GameSavePullResult, String> {
     let adb = ensure_adb(true)?;
-    let (serials, _) = connect_and_list(&adb, custom_port)?;
+    let (serials, _) = connect_and_list(&adb, opts.custom_port)?;
     if serials.is_empty() {
         return Err(
             "No supported emulator detected. Start your emulator with ADB debugging, then try again."
@@ -662,22 +736,97 @@ pub fn pull_game_save(custom_port: Option<u32>) -> Result<GameSavePullResult, St
     for serial in &serials {
         last_serial = serial.clone();
         if let Some((remote_path, bytes)) = discover_and_pull_on_serial(&adb, serial) {
-            let path = unique_download_path();
+            let hash = content_hash(&bytes);
+            if opts.skip_if_same_hash {
+                if let Some(prev) = load_persisted_hash() {
+                    if prev == hash {
+                        let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
+                        return Ok(GameSavePullResult {
+                            path: path.display().to_string(),
+                            bytes: bytes.len() as u64,
+                            remote_path,
+                            device_serial: serial.clone(),
+                            written: false,
+                            content_hash: hash,
+                        });
+                    }
+                }
+            }
+            let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
             {
                 let mut file = File::create(&path).map_err(|e| e.to_string())?;
                 file.write_all(&bytes).map_err(|e| e.to_string())?;
             }
+            persist_hash(&hash);
             return Ok(GameSavePullResult {
                 path: path.display().to_string(),
                 bytes: bytes.len() as u64,
                 remote_path,
                 device_serial: serial.clone(),
+                written: true,
+                content_hash: hash,
             });
         }
     }
     Err(format!(
         "Save file '{TOWER_SAVE_FILENAME}' not found via ADB on {last_serial}. Open The Tower, save your progress, then try again."
     ))
+}
+
+/// Manual / command pull using current settings (hash skip so repeat clicks don't rewrite identical files).
+pub fn pull_game_save_from_settings() -> Result<GameSavePullResult, String> {
+    let s = settings::load(&db::open().map_err(|e| e.to_string())?);
+    let mut opts = PullWriteOptions::from_settings(&s);
+    opts.skip_if_same_hash = true;
+    pull_game_save_with_options(&opts)
+}
+
+/// Native folder picker for the save output directory.
+pub fn pick_output_dir() -> Result<Option<String>, String> {
+    let picked = rfd::FileDialog::new()
+        .set_title("Choose folder for playerInfo.dat")
+        .pick_folder();
+    Ok(picked.map(|p| p.display().to_string()))
+}
+
+/// Spawn a background loop that auto-pulls when enabled in settings.
+pub fn ensure_auto_pull_loop() {
+    if AUTO_PULL_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("wavetrace-save-auto-pull".into())
+        .spawn(|| {
+            let mut last_attempt = Instant::now()
+                .checked_sub(Duration::from_secs(3600))
+                .unwrap_or_else(Instant::now);
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                let Ok(conn) = db::open() else {
+                    continue;
+                };
+                let s = settings::load(&conn);
+                if !s.save_pull_enabled || !s.save_pull_auto {
+                    continue;
+                }
+                let interval = Duration::from_secs(u64::from(s.save_pull_auto_interval_secs.max(15)));
+                if last_attempt.elapsed() < interval {
+                    continue;
+                }
+                last_attempt = Instant::now();
+                let opts = PullWriteOptions::from_settings(&s);
+                match pull_game_save_with_options(&opts) {
+                    Ok(result) if result.written => {
+                        db::append_app_log(&format!(
+                            "Auto-pulled game save ({} bytes) → {}",
+                            result.bytes, result.path
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .ok();
 }
 
 #[cfg(test)]
@@ -744,5 +893,31 @@ R58M123\tunauthorized
     #[test]
     fn find_existing_adb_does_not_panic() {
         let _ = find_existing_adb();
+    }
+
+    #[test]
+    fn resolve_output_dir_defaults_to_downloads_when_empty() {
+        let p = resolve_output_dir("  ");
+        assert_eq!(p, downloads_dir());
+        let custom = resolve_output_dir(r"C:\Saves\Tower");
+        assert_eq!(custom, PathBuf::from(r"C:\Saves\Tower"));
+    }
+
+    #[test]
+    fn content_hash_stable_for_same_bytes() {
+        assert_eq!(content_hash(b"abc"), content_hash(b"abc"));
+        assert_ne!(content_hash(b"abc"), content_hash(b"abd"));
+    }
+
+    #[test]
+    fn output_file_path_overwrite_vs_timestamp() {
+        let dir = std::env::temp_dir().join("wavetrace-save-path-test");
+        let plain = output_file_path(&dir, false);
+        assert!(plain.ends_with(TOWER_SAVE_FILENAME));
+        let stamped = output_file_path(&dir, true);
+        let name = stamped.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("playerInfo-"));
+        assert!(name.ends_with(".dat"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

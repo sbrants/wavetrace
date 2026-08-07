@@ -40,6 +40,7 @@ export default function App() {
   const [canResume, setCanResume] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [savePullEnabled, setSavePullEnabled] = useState(true);
+  const [savePullAuto, setSavePullAuto] = useState(false);
   const [gameSaveStatus, setGameSaveStatus] = useState<GameSaveStatus | null>(
     null
   );
@@ -134,6 +135,7 @@ export default function App() {
       .then((s) => {
         setMinimizeToTray(s.minimize_to_tray ?? true);
         setSavePullEnabled(s.save_pull_enabled ?? true);
+        setSavePullAuto(s.save_pull_auto ?? false);
       })
       .catch(() => {
         setMinimizeToTray(true);
@@ -149,7 +151,10 @@ export default function App() {
         .then((s) => {
           if (cancelled) return;
           const enabled = s.save_pull_enabled ?? true;
+          const auto = s.save_pull_auto ?? false;
           setSavePullEnabled(enabled);
+          setSavePullAuto(auto);
+          setMinimizeToTray(s.minimize_to_tray ?? true);
           if (!enabled) {
             setGameSaveStatus(null);
             return;
@@ -172,11 +177,14 @@ export default function App() {
     refresh();
     const id = window.setInterval(refresh, 12_000);
     const onFocus = () => refresh();
+    const onSettingsSaved = () => refresh();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("wavetrace-settings-saved", onSettingsSaved);
     return () => {
       cancelled = true;
       window.clearInterval(id);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("wavetrace-settings-saved", onSettingsSaved);
     };
   }, []);
 
@@ -186,9 +194,13 @@ export default function App() {
     api
       .pullGameSave()
       .then((result) => {
-        showToast(
-          `Saved playerInfo.dat (${result.bytes.toLocaleString()} bytes) to Downloads`
-        );
+        if (result.written) {
+          showToast(
+            `Saved playerInfo.dat (${result.bytes.toLocaleString()} bytes)`
+          );
+        } else {
+          showToast("Save unchanged — file not overwritten");
+        }
         api.gameSaveStatus().then(setGameSaveStatus).catch(() => {});
       })
       .catch((e) => reportUiError(e, "App.pullGameSave"))
@@ -211,7 +223,9 @@ export default function App() {
 
   const warning = scannerEvent?.live?.total_coin_warning ?? false;
   const showDownloadSave =
-    savePullEnabled && (savePullBusy || (gameSaveStatus?.ready ?? false));
+    savePullEnabled &&
+    !savePullAuto &&
+    (savePullBusy || (gameSaveStatus?.ready ?? false));
 
   return (
     <div className="app">

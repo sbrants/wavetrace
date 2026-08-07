@@ -559,10 +559,16 @@ pub fn game_save_status() -> crate::adb_save::GameSaveStatus {
 
 #[tauri::command]
 pub fn pull_game_save() -> Result<crate::adb_save::GameSavePullResult, String> {
-    let custom_port = settings::load(&conn()?).save_pull_adb_port;
-    let result = crate::adb_save::pull_game_save(custom_port)?;
-    reveal_in_file_manager(std::path::Path::new(&result.path))?;
+    let result = crate::adb_save::pull_game_save_from_settings()?;
+    if result.written {
+        reveal_in_file_manager(std::path::Path::new(&result.path))?;
+    }
     Ok(result)
+}
+
+#[tauri::command]
+pub fn pick_save_pull_dir() -> Result<Option<String>, String> {
+    crate::adb_save::pick_output_dir()
 }
 
 #[derive(Serialize)]
