@@ -758,7 +758,7 @@ impl GoldenComboReading {
         Self {
             seen: true,
             chance_percent: self.chance_percent.or(newer.chance_percent),
-            // Activations only grow during a run; never let a flicker like `301`→`1` win.
+            // Last successful caret read wins (with OCR demangle); reject tiny crumbs.
             caret_count: merge_caret_count(self.caret_count, newer.caret_count),
             // Prefer a newly parsed multiplier so a bad early latch (e.g. `@x2S…`)
             // can be corrected when OCR later yields `xo.08`.
@@ -767,33 +767,33 @@ impl GoldenComboReading {
     }
 }
 
-/// Latch GC activations across polls.
-/// - Prefer growth over shrink (guards `A301`→`A1` flicker).
-/// - Reject OCR digit-swap inflation (`303`→`803`, `227`→`827`) even for small jumps.
-/// - When a swollen read is a confused twin of a nearby real stack, keep/recover that stack
-///   (`302` + OCR `803` → `303`).
-/// - Cold-start leading `8` on a 3-digit caret demangles to `3` (`816`→`316`) — dominant
-///   yellow-toast error while stacks are still in the 3xx band.
+/// Latch GC activations across polls — **last successful read wins**.
+/// - Prefer the newer caret (dashboard/DB should track the latest toast, not a max).
+/// - Still demangle leading `8`→`3` OCR swell (`816`→`316`, `302`+`803`→`303`).
+/// - Ignore crumb flicker (`A301`→`A1`).
 fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
     match (prev, newer) {
         (None, n) => n.map(demangle_leading_eight_cold),
         (p, None) => p,
         (Some(p), Some(n)) if p == n => Some(p),
-        (Some(p), Some(n)) if n > p => {
+        (Some(p), Some(n)) => {
+            // Crumb flicker — keep prior.
+            if n < 10 {
+                return Some(p);
+            }
+            // Swollen 8xx OCR of a nearby real stack → demangled value.
             if let Some(fixed) = caret_ocr_inflation_correction(p, n) {
                 return Some(fixed);
             }
-            Some(n)
-        }
-        (Some(p), Some(n)) => {
-            // n < p: allow correcting a corrupted high latch (`827`→`227`, `803`→`303`).
-            if caret_digit_confusion(p, n) {
+            // High latch correcting down via digit twin (`827`→`227`).
+            if n < p && caret_digit_confusion(p, n) {
                 return Some(n);
             }
-            if let Some(fixed) = caret_ocr_inflation_correction(n, p) {
-                return Some(fixed);
+            // Last read wins (including a lower toast than a prior OCR miss).
+            if n >= 800 && n < 900 && p < 700 {
+                return Some(demangle_leading_eight_cold(n));
             }
-            Some(p)
+            Some(n)
         }
     }
 }
@@ -2617,7 +2617,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_combo_merge_keeps_higher_caret_against_flicker() {
+    fn golden_combo_merge_rejects_crumb_flicker_but_keeps_last_read() {
         let good = GoldenComboReading {
             seen: true,
             chance_percent: Some(0.03),
@@ -2630,8 +2630,22 @@ mod tests {
             caret_count: Some(1),
             multiplier: None,
         };
-        let merged = good.merge_with(flicker);
-        assert_eq!(merged.caret_count, Some(301));
+        assert_eq!(good.merge_with(flicker).caret_count, Some(301));
+
+        let prior = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(387),
+            multiplier: Some(0.1),
+        };
+        let lower = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(324),
+            multiplier: Some(0.1),
+        };
+        // Last toast wins — not a grow-only max latch.
+        assert_eq!(prior.merge_with(lower).caret_count, Some(324));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::parser::GoldenComboReading;
 use crate::notifications::NotifyFrameContext;
 use crate::state_machine::{Action, LiveState, RunStateMachine, RunType};
 use crate::{capture, db, fields, settings};
@@ -229,11 +230,20 @@ impl Scanner {
         let (last_wave, peak_tier) = db::snapshot_stats(conn, &id).map_err(|e| e.to_string())?;
         let last_wave = last_wave.unwrap_or(0) as u32;
         let run_type = RunType::from_db_str(&run_type);
+        let last_gc = db::latest_golden_combo(conn, &id)
+            .map_err(|e| e.to_string())?
+            .map(|(chance, caret, mult)| GoldenComboReading {
+                seen: true,
+                chance_percent: chance,
+                caret_count: Some(caret as u32),
+                multiplier: mult,
+            });
         // Always re-sync from DB: the game may have advanced while the scanner was stopped.
         self.machine.lock().unwrap().resume_from_db(
             run_type,
             last_wave,
             peak_tier.map(|t| t as u32),
+            last_gc,
         );
         *self.current_run_id.lock().unwrap() = Some(id);
         Ok(Some(last_wave))

@@ -860,6 +860,25 @@ pub fn avg_golden_combo_caret(
     )
 }
 
+/// Most recent snapshot that has a Golden Combo caret (highest wave, then latest row).
+pub fn latest_golden_combo(
+    conn: &Connection,
+    run_id: &str,
+) -> rusqlite::Result<Option<(Option<f64>, i64, Option<f64>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT golden_combo_chance, golden_combo_caret, golden_combo_multiplier
+         FROM snapshots
+         WHERE run_id = ?1 AND golden_combo_caret IS NOT NULL
+         ORDER BY wave DESC, recorded_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![run_id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
+        None => Ok(None),
+    }
+}
+
 pub fn wave_skip_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM wave_skips WHERE run_id = ?1",

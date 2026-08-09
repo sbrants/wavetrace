@@ -650,10 +650,16 @@ impl RunStateMachine {
         run_type: RunType,
         last_saved_wave: u32,
         peak_tier: Option<u32>,
+        last_golden_combo: Option<GoldenComboReading>,
     ) {
         let mut run = new_active_run(run_type);
         run.last_saved_wave = last_saved_wave;
         run.peak_tier = peak_tier;
+        if let Some(gc) = last_golden_combo {
+            // Demangle via merge (e.g. stored `816` → live `316`) so the dashboard
+            // matches corrected History values after resume.
+            run.last_golden_combo = GoldenComboReading::default().merge_with(gc);
+        }
         self.run = Some(run);
         if last_saved_wave > 0 {
             self.wave.candidate = Some(last_saved_wave);
@@ -851,9 +857,14 @@ impl RunStateMachine {
         }
 
         if let Some(run) = self.run.as_mut() {
-            // After any wave flush / run start so this poll's toast belongs to the
-            // current confirmed wave (live latch + per-wave snapshot fields).
-            apply_golden_combo_reading(run, input.golden_combo);
+            // Live latch tracks the latest successful OCR read. Per-wave snapshot
+            // fields only update when this poll's wave matches the confirmed wave,
+            // so an early (unconfirmed) next-wave toast cannot overwrite the prior
+            // wave's caret before flush.
+            let update_wave_snapshot = self.wave.confirmed.is_some()
+                && input.wave.is_some()
+                && input.wave == self.wave.confirmed;
+            apply_golden_combo_reading(run, input.golden_combo, update_wave_snapshot);
             accumulate_coin_sample(run, self.wave.confirmed, self.last_coin_rate);
         }
 
@@ -1019,7 +1030,11 @@ fn vote_gc_chance(run: &mut ActiveRun, chance: f64) {
     *run.gc_chance_votes.entry(key).or_insert(0) += 1;
 }
 
-fn apply_golden_combo_reading(run: &mut ActiveRun, raw: GoldenComboReading) {
+fn apply_golden_combo_reading(
+    run: &mut ActiveRun,
+    raw: GoldenComboReading,
+    update_wave_snapshot: bool,
+) {
     if !raw.seen {
         return;
     }
@@ -1067,14 +1082,14 @@ fn apply_golden_combo_reading(run: &mut ActiveRun, raw: GoldenComboReading) {
         return;
     }
 
-    // Live latch keeps chance/caret/mult for the dashboard.
+    // Live latch keeps chance/caret/mult for the dashboard (last successful read).
     run.last_golden_combo = run.last_golden_combo.merge_with(gc);
     if let Some((cons, _)) = leading_gc_chance(run) {
         run.last_golden_combo.chance_percent = Some(cons);
     }
 
     // Per-wave snapshot accumulator: need caret or multiplier — chance-only is not stored.
-    if gc.caret_count.is_some() || gc.multiplier.is_some() {
+    if update_wave_snapshot && (gc.caret_count.is_some() || gc.multiplier.is_some()) {
         run.wave_golden_combo = run.wave_golden_combo.merge_with(gc);
         if let Some((cons, _)) = leading_gc_chance(run) {
             run.wave_golden_combo.chance_percent = Some(cons);
@@ -1169,7 +1184,7 @@ mod tests {
     #[test]
     fn resume_from_db_continues_snapshotting_after_last_saved_wave() {
         let mut sm = RunStateMachine::new();
-        sm.resume_from_db(RunType::Farming, 42, Some(17));
+        sm.resume_from_db(RunType::Farming, 42, Some(17), None);
         let coin = CoinReading::Rate(100.0);
         feed2(&mut sm, p(GameMode::Normal, 17, 43, coin));
         let actions = feed2(
@@ -1182,11 +1197,30 @@ mod tests {
     }
 
     #[test]
+    fn resume_from_db_seeds_golden_combo_latch_and_demangles_8xx() {
+        let mut sm = RunStateMachine::new();
+        sm.resume_from_db(
+            RunType::Farming,
+            100,
+            Some(14),
+            Some(GoldenComboReading {
+                seen: true,
+                chance_percent: Some(0.03),
+                caret_count: Some(816),
+                multiplier: Some(0.1),
+            }),
+        );
+        assert_eq!(sm.live_state().golden_combo_caret, Some(316));
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.1));
+    }
+
+    #[test]
     fn resume_catchup_suppresses_false_multi_skip_without_banner() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
         feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let actions = feed2(
             &mut sm,
             p(GameMode::Normal, 14, 105, CoinReading::Rate(1e12)),
@@ -1199,7 +1233,7 @@ mod tests {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
         feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let overlay = WaveSkipOverlay {
             seen: true,
             multiplier: Some(5),
@@ -1223,7 +1257,7 @@ mod tests {
     #[test]
     fn resume_catchup_allows_single_skip_after_sync() {
         let mut sm = RunStateMachine::new();
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let overlay = WaveSkipOverlay {
             seen: true,
             multiplier: None,
@@ -2180,15 +2214,15 @@ mod tests {
         assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
         assert_eq!(sm.live_state().golden_combo_caret, Some(167));
         assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.05));
-        // Debounce: first poll at wave 2 still has confirmed wave 1, so 167 is stored
-        // on the wave-1 snapshot; live latch also shows 167.
+        // Unconfirmed wave-2 OCR must not overwrite wave 1's snapshot; caret 166
+        // flushes for wave 1. Live latch already shows the newer 167 read.
         assert!(actions.iter().any(|a| {
             matches!(
                 a,
                 Action::Snapshot {
                     wave: 1,
                     golden_combo_chance: Some(0.03),
-                    golden_combo_caret: Some(167),
+                    golden_combo_caret: Some(166),
                     golden_combo_multiplier: Some(0.05),
                     ..
                 }
@@ -2253,6 +2287,62 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn live_golden_combo_follows_last_read_while_wave_snapshots_stay_per_wave() {
+        let mut sm = RunStateMachine::new();
+        // High OCR latch first.
+        let mut high = p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12));
+        high.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(387),
+            multiplier: Some(0.1),
+        };
+        feed2(&mut sm, high);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(387));
+
+        // Next wave sees a lower caret — live updates immediately; wave 1 still flushes 387.
+        let mut low = p(GameMode::Normal, 14, 2, CoinReading::Rate(1e12));
+        low.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(324),
+            multiplier: Some(0.1),
+        };
+        let actions = feed2(&mut sm, low);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(324));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_caret: Some(387),
+                    ..
+                }
+            )
+        }));
+        // Advance again so wave 2 flushes with 324; live stays at last read.
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 3, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_caret: Some(324),
+                    ..
+                }
+            )
+        }));
+        assert_eq!(
+            sm.live_state().golden_combo_caret,
+            Some(324),
+            "live latch should keep the last OCR read"
+        );
     }
 
     #[test]

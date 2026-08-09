@@ -117,7 +117,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
         />
         <StatCard
           label="GC bonus"
-          value={formatGoldenComboMultiplier(live?.golden_combo_multiplier)}
+          value={formatGoldenComboMultiplier(
+            live?.golden_combo_multiplier ?? null
+          )}
           hintReserved
         />
         <StatCard

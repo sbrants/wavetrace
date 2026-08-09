@@ -26,6 +26,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **GC OCR cost** — stricter saturated-yellow mask; ink gate skips empty (`ink`, &lt;800) and FX-soup (`busy`, &gt;7k); one dilated yellow pass; color backup only when yellow OCR is blank **and** ink is in the toast band (3.5k–6.5k). 2× CatmullRom upscale. Poll logs: `full_ms` / `gc_y` / `gc_c` / `gc_ink` / `gc_skip`.
+- **Dashboard GC cards** — show the live latch as soon as OCR reads it (no DB round-trip); latch is last-read (not grow-only) and seeded from DB on resume.
+- **GC caret latch** — last successful OCR value wins (no grow-only max); still demangles `8xx`→`3xx` and ignores `^1` crumbs. Per-wave snapshots only accept GC while the poll’s wave matches the confirmed wave (avoids overwriting the prior wave during debounce).
 - **GC caret 3↔8** — leading `8` on 3-digit stacks demangles to `3` (e.g. `816`→`316`) unless the run is already in the 700+ regime; within-line caret picks no longer prefer the higher confused twin.
 - **History compare** — wave jumps and GC activations overlays are off by default; **10 pts** smoothing and **lead/lag band** are on by default (when comparing exactly two runs).
 - **GC full-frame salvage** — when the toast band is empty/junk but full-frame OCR already has a GC-like line, that line is fed into the GC parser (and shown in `gc_band=` logs).
