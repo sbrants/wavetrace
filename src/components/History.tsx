@@ -39,6 +39,23 @@ const COMPARE_COLORS = [
 ];
 
 const PAGE_SIZES = [5, 10, 25, 50, 100] as const;
+/** Min gap between live History table refreshes on scanner-update (avoids DB thrash). */
+const LIVE_REFRESH_MIN_MS = 2500;
+
+function pruneSelectedIds(
+  prev: Set<string>,
+  validIds: Iterable<string>
+): Set<string> {
+  if (prev.size === 0) return prev;
+  const valid = new Set(validIds);
+  let changed = false;
+  const next = new Set<string>();
+  for (const id of prev) {
+    if (valid.has(id)) next.add(id);
+    else changed = true;
+  }
+  return changed ? next : prev;
+}
 
 export default function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
@@ -100,6 +117,7 @@ export default function History() {
   const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const liveRefreshAtRef = useRef(0);
 
   useEffect(() => {
     const active = compareRuns.length >= 2;
@@ -708,53 +726,60 @@ export default function History() {
         setLiveChartSnapshots([]);
         setLiveChartWaveSkips([]);
         setLiveChartNormalJumps([]);
-        setSelectedSnapshotIds((prev) => {
-          if (prev.size === 0) return prev;
-          const valid = new Set(snaps.map((s) => s.id));
-          let changed = false;
-          const next = new Set<string>();
-          for (const id of prev) {
-            if (valid.has(id)) next.add(id);
-            else changed = true;
-          }
-          return changed ? next : prev;
-        });
-        setSelectedWaveSkipIds((prev) => {
-          if (prev.size === 0) return prev;
-          const valid = new Set(skips.map((s) => s.id));
-          let changed = false;
-          const next = new Set<string>();
-          for (const id of prev) {
-            if (valid.has(id)) next.add(id);
-            else changed = true;
-          }
-          return changed ? next : prev;
-        });
-        setSelectedGcIds((prev) => {
-          if (prev.size === 0) return prev;
-          const valid = new Set(
+        setSelectedSnapshotIds((prev) =>
+          pruneSelectedIds(
+            prev,
+            snaps.map((s) => s.id)
+          )
+        );
+        setSelectedWaveSkipIds((prev) =>
+          pruneSelectedIds(
+            prev,
+            skips.map((s) => s.id)
+          )
+        );
+        setSelectedGcIds((prev) =>
+          pruneSelectedIds(
+            prev,
             snaps.filter(snapshotHasGoldenCombo).map((s) => s.id)
-          );
-          let changed = false;
-          const next = new Set<string>();
-          for (const id of prev) {
-            if (valid.has(id)) next.add(id);
-            else changed = true;
-          }
-          return changed ? next : prev;
-        });
+          )
+        );
         setRuns(updatedRuns);
         setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
         return;
       }
 
-      const [view, updatedRuns] = await Promise.all([
+      // Ongoing run: keep chart on sampled dashboard payload; refresh full tables
+      // so coin/min, GC, and jump rows appear as the scanner writes them.
+      const [view, snaps, skips, updatedRuns] = await Promise.all([
         api.runDashboardData(selectedRunId),
+        api.runSnapshots(selectedRunId),
+        api.runWaveSkips(selectedRunId),
         api.listRuns(activeFilter),
       ]);
       setLiveChartSnapshots(view.chart_snapshots);
       setLiveChartWaveSkips(view.chart_wave_skips);
       setLiveChartNormalJumps(view.chart_normal_jumps);
+      setSnapshots(snaps);
+      setWaveSkips(skips);
+      setSelectedSnapshotIds((prev) =>
+        pruneSelectedIds(
+          prev,
+          snaps.map((s) => s.id)
+        )
+      );
+      setSelectedWaveSkipIds((prev) =>
+        pruneSelectedIds(
+          prev,
+          skips.map((s) => s.id)
+        )
+      );
+      setSelectedGcIds((prev) =>
+        pruneSelectedIds(
+          prev,
+          snaps.filter(snapshotHasGoldenCombo).map((s) => s.id)
+        )
+      );
       setRuns(updatedRuns);
       setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
     } catch {
@@ -764,6 +789,7 @@ export default function History() {
 
   useEffect(() => {
     if (!selectedRunId || !hasOngoingSelectedRun) return;
+    liveRefreshAtRef.current = 0;
     void refreshSelectedRun();
     const id = window.setInterval(() => void refreshSelectedRun(), 15_000);
     return () => window.clearInterval(id);
@@ -774,9 +800,11 @@ export default function History() {
     let unlisten: (() => void) | undefined;
     void api
       .onScannerUpdate((e) => {
-        if (e.current_run_id === selectedRunId) {
-          void refreshSelectedRun();
-        }
+        if (e.current_run_id !== selectedRunId) return;
+        const now = Date.now();
+        if (now - liveRefreshAtRef.current < LIVE_REFRESH_MIN_MS) return;
+        liveRefreshAtRef.current = now;
+        void refreshSelectedRun();
       })
       .then((fn) => {
         unlisten = fn;
