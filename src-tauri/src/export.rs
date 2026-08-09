@@ -45,7 +45,7 @@ pub fn export_snapshots_csv(
 ) -> rusqlite::Result<(String, usize, usize)> {
     let runs = db::list_runs(conn, filter)?;
     let mut out = String::from(
-        "run_id,started_at,ended_at,run_type,peak_tier,final_wave,run_comment,wave,tier,coin_per_minute,recorded_at\n",
+        "run_id,started_at,ended_at,run_type,peak_tier,final_wave,run_comment,wave,tier,coin_per_minute,golden_combo_chance,golden_combo_caret,golden_combo_multiplier,recorded_at\n",
     );
     let mut snapshot_count = 0usize;
     for run in &runs {
@@ -99,7 +99,7 @@ fn build_workbook(
 
 fn format_snapshot_csv_row(run: &RunRow, snap: &SnapshotRow) -> String {
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{}\n",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
         csv_escape(&run.id),
         csv_escape(&run.started_at),
         csv_escape(run.ended_at.as_deref().unwrap_or("")),
@@ -110,6 +110,15 @@ fn format_snapshot_csv_row(run: &RunRow, snap: &SnapshotRow) -> String {
         snap.wave,
         snap.tier.map(|v| v.to_string()).unwrap_or_default(),
         snap.coin_per_minute
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        snap.golden_combo_chance
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        snap.golden_combo_caret
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        snap.golden_combo_multiplier
             .map(|v| v.to_string())
             .unwrap_or_default(),
         csv_escape(&snap.recorded_at),
@@ -133,6 +142,7 @@ fn write_runs_summary_header(sheet: &mut Sheet) {
         "peak_tier",
         "final_wave",
         "avg_coin_per_minute",
+        "avg_golden_combo_caret",
         "snapshot_count",
         "comment",
     ];
@@ -155,8 +165,11 @@ fn write_runs_summary_row(sheet: &mut Sheet, row: u32, run: &RunRow) {
     if let Some(c) = run.avg_coin_per_minute {
         sheet.set_value(row, 6, c);
     }
-    sheet.set_value(row, 7, run.snapshot_count as f64);
-    sheet.set_value(row, 8, run.comment.as_deref().unwrap_or(""));
+    if let Some(c) = run.avg_golden_combo_caret {
+        sheet.set_value(row, 7, c);
+    }
+    sheet.set_value(row, 8, run.snapshot_count as f64);
+    sheet.set_value(row, 9, run.comment.as_deref().unwrap_or(""));
 }
 
 fn write_run_detail_sheet(sheet: &mut Sheet, run: &RunRow, snaps: &[SnapshotRow]) {
@@ -172,7 +185,10 @@ fn write_run_detail_sheet(sheet: &mut Sheet, run: &RunRow, snaps: &[SnapshotRow]
     sheet.set_value(5, 0, "wave");
     sheet.set_value(5, 1, "tier");
     sheet.set_value(5, 2, "coin_per_minute");
-    sheet.set_value(5, 3, "recorded_at");
+    sheet.set_value(5, 3, "golden_combo_chance");
+    sheet.set_value(5, 4, "golden_combo_caret");
+    sheet.set_value(5, 5, "golden_combo_multiplier");
+    sheet.set_value(5, 6, "recorded_at");
 
     for (i, snap) in snaps.iter().enumerate() {
         let row = 6 + i as u32;
@@ -183,7 +199,16 @@ fn write_run_detail_sheet(sheet: &mut Sheet, run: &RunRow, snaps: &[SnapshotRow]
         if let Some(c) = snap.coin_per_minute {
             sheet.set_value(row, 2, c);
         }
-        sheet.set_value(row, 3, snap.recorded_at.as_str());
+        if let Some(c) = snap.golden_combo_chance {
+            sheet.set_value(row, 3, c);
+        }
+        if let Some(c) = snap.golden_combo_caret {
+            sheet.set_value(row, 4, c as f64);
+        }
+        if let Some(m) = snap.golden_combo_multiplier {
+            sheet.set_value(row, 5, m);
+        }
+        sheet.set_value(row, 6, snap.recorded_at.as_str());
     }
 }
 
@@ -240,8 +265,8 @@ mod tests {
     fn export_snapshots_csv_includes_every_capture() {
         let conn = db::open_in_memory().unwrap();
         let id = db::start_run(&conn, "farming").unwrap();
-        db::insert_snapshot(&conn, &id, 1, Some(10), Some(100.0)).unwrap();
-        db::insert_snapshot(&conn, &id, 2, Some(11), Some(200.0)).unwrap();
+        db::insert_snapshot(&conn, &id, 1, Some(10), Some(100.0), None, None, None).unwrap();
+        db::insert_snapshot(&conn, &id, 2, Some(11), Some(200.0), None, None, None).unwrap();
         db::end_run(&conn, &id, Some(2), Some(11)).unwrap();
 
         let (csv, runs, snaps) = export_snapshots_csv(&conn, &db::RunFilter::default()).unwrap();
@@ -256,7 +281,7 @@ mod tests {
     fn export_workbook_ods_bytes_contains_data() {
         let conn = db::open_in_memory().unwrap();
         let id = db::start_run(&conn, "farming").unwrap();
-        db::insert_snapshot(&conn, &id, 3, Some(12), Some(300.0)).unwrap();
+        db::insert_snapshot(&conn, &id, 3, Some(12), Some(300.0), None, None, None).unwrap();
         db::end_run(&conn, &id, Some(3), Some(12)).unwrap();
 
         let (bytes, run_count, snapshot_count) =

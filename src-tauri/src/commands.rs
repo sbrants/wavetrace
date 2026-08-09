@@ -10,7 +10,7 @@ use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
 use crate::{capture, settings};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub struct AppState {
     pub scanner: Scanner,
@@ -357,6 +357,40 @@ pub fn delete_snapshot(snapshot_id: String) -> Result<(), String> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GoldenComboUpdate {
+    pub chance: Option<f64>,
+    pub caret: Option<i64>,
+    pub multiplier: Option<f64>,
+}
+
+#[tauri::command]
+pub fn update_snapshot_golden_combo(
+    snapshot_id: String,
+    update: GoldenComboUpdate,
+) -> Result<(), String> {
+    let conn = conn()?;
+    if db::update_snapshot_golden_combo(
+        &conn,
+        &snapshot_id,
+        update.chance,
+        update.caret,
+        update.multiplier,
+    )
+    .map_err(|e| e.to_string())?
+    {
+        Ok(())
+    } else {
+        Err("Snapshot not found".into())
+    }
+}
+
+#[tauri::command]
+pub fn clear_snapshot_golden_combo(snapshot_ids: Vec<String>) -> Result<usize, String> {
+    let conn = conn()?;
+    db::clear_snapshot_golden_combo(&conn, &snapshot_ids).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
     db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
@@ -369,6 +403,7 @@ pub struct DashboardRunView {
     pub skip_total: usize,
     pub chart_wave_skips: Vec<WaveSkipRow>,
     pub chart_normal_jumps: Vec<i64>,
+    pub avg_golden_combo_caret: Option<f64>,
 }
 
 fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
@@ -382,12 +417,15 @@ fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
     let chart_normal_jumps =
         db::chart_normal_jump_waves(&conn, run_id, db::CHART_SKIP_LIMIT)
             .map_err(|e| e.to_string())?;
+    let avg_golden_combo_caret =
+        db::avg_golden_combo_caret(&conn, run_id).map_err(|e| e.to_string())?;
     Ok(DashboardRunView {
         snapshot_total,
         chart_snapshots,
         skip_total,
         chart_wave_skips,
         chart_normal_jumps,
+        avg_golden_combo_caret,
     })
 }
 
@@ -401,6 +439,7 @@ pub fn current_run_dashboard(state: State<AppState>) -> Result<DashboardRunView,
             skip_total: 0,
             chart_wave_skips: Vec::new(),
             chart_normal_jumps: Vec::new(),
+            avg_golden_combo_caret: None,
         }),
     }
 }

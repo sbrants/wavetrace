@@ -24,6 +24,9 @@ export type ChartLineConfig = {
 
 const SKIP_AXIS_MAX = 20;
 const SKIP_DOT_R = 3;
+const COIN_LINE_COLOR = "#4cc2ff";
+const GC_LINE_COLOR = "#6ec6a0";
+const SKIP_LINE_COLOR = "#e8b339";
 
 function createSkipDot(
   color: string,
@@ -43,21 +46,74 @@ function createSkipDot(
     const clickable = !!skipId && !!onSkipClick;
     const selected = skipId ? selectedIds.has(skipId) : false;
     return (
-      <g>
-        {clickable && (
-          <circle
-            cx={cx}
-            cy={cy}
-            r={12}
-            fill="transparent"
-            style={{ cursor: "pointer" }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSkipClick?.(skipId!, payload.wave);
-            }}
-          />
-        )}
+      <g
+        style={{ cursor: clickable ? "pointer" : undefined }}
+        onMouseDown={(e) => {
+          if (!clickable) return;
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onClick={(e) => {
+          if (!clickable || !skipId) return;
+          e.stopPropagation();
+          e.nativeEvent.stopImmediatePropagation();
+          onSkipClick?.(skipId, payload.wave);
+        }}
+      >
+        {/* Hit target above the coin line; keep large for easy select-mode clicks. */}
+        <circle cx={cx} cy={cy} r={14} fill="transparent" />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={selected ? SKIP_DOT_R + 2 : SKIP_DOT_R}
+          fill={selected ? "#fff" : color}
+          stroke={selected ? color : "#fff"}
+          strokeWidth={selected ? 2 : 1}
+          style={{ pointerEvents: "none" }}
+        />
+      </g>
+    );
+  };
+}
+
+function createGcDot(
+  color: string,
+  selectedWaves: Set<number>,
+  onGcClick?: (wave: number) => void
+) {
+  return (dotProps: {
+    cx?: number;
+    cy?: number;
+    payload?: SingleChartRow;
+  }) => {
+    const { cx, cy, payload } = dotProps;
+    if (
+      cx == null ||
+      cy == null ||
+      !payload ||
+      payload.golden_combo_caret == null
+    ) {
+      return <g />;
+    }
+    const wave = payload.wave;
+    const clickable = !!onGcClick;
+    const selected = selectedWaves.has(wave);
+    return (
+      <g
+        style={{ cursor: clickable ? "pointer" : undefined }}
+        onMouseDown={(e) => {
+          if (!clickable) return;
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onClick={(e) => {
+          if (!clickable) return;
+          e.stopPropagation();
+          e.nativeEvent.stopImmediatePropagation();
+          onGcClick?.(wave);
+        }}
+      >
+        <circle cx={cx} cy={cy} r={14} fill="transparent" />
         <circle
           cx={cx}
           cy={cy}
@@ -75,6 +131,7 @@ function createSkipDot(
 type SingleChartRow = {
   wave: number;
   coin: number | null;
+  golden_combo_caret: number | null;
   skip_count: number;
   skip_id: string | null;
   skip_tooltip: string;
@@ -84,19 +141,32 @@ function mergeSingleChartData(
   data: CoinChartPoint[],
   waveSkips: WaveSkipMarker[]
 ): SingleChartRow[] {
-  const coinByWave = new Map(data.map((d) => [d.wave, d.coin]));
+  const pointByWave = new Map(data.map((d) => [d.wave, d]));
   const skipByWave = new Map(waveSkips.map((s) => [s.wave, s]));
-  const waves = new Set([...coinByWave.keys(), ...skipByWave.keys()]);
+  const waves = new Set([...pointByWave.keys(), ...skipByWave.keys()]);
   return [...waves].sort((a, b) => a - b).map((wave) => {
+    const point = pointByWave.get(wave);
     const skip = skipByWave.get(wave);
     return {
       wave,
-      coin: coinByWave.get(wave) ?? null,
+      coin: point?.coin ?? null,
+      golden_combo_caret: point?.golden_combo_caret ?? null,
       skip_count: skip?.skip_count ?? 0,
       skip_id: skip?.id ?? null,
       skip_tooltip: skip?.skip_tooltip ?? "",
     };
   });
+}
+
+function toSingleChartRows(data: CoinChartPoint[]): SingleChartRow[] {
+  return data.map((d) => ({
+    wave: d.wave,
+    coin: d.coin,
+    golden_combo_caret: d.golden_combo_caret,
+    skip_count: 0,
+    skip_id: null,
+    skip_tooltip: "",
+  }));
 }
 
 function mergeCompareWithSkips(
@@ -166,12 +236,18 @@ type SingleProps = {
   data: CoinChartPoint[];
   waveSkips?: WaveSkipMarker[];
   waveSkipColor?: string;
+  /** When false, hide wave-jump markers (default true). */
+  showWaveJumps?: boolean;
+  /** When false, hide Golden Combo activation series (default true). */
+  showGoldenComboActivations?: boolean;
   height?: number;
   onPointClick?: (wave: number) => void;
   onSelectWaves?: (waves: number[], additive: boolean) => void;
   selectedWaves?: number[];
   onSkipClick?: (id: string, wave: number) => void;
   selectedSkipIds?: string[];
+  onGcClick?: (wave: number) => void;
+  selectedGcWaves?: number[];
 };
 
 type CompareProps = {
@@ -179,6 +255,8 @@ type CompareProps = {
   data: CompareChartRow[];
   lines: ChartLineConfig[];
   waveSkipsByLine?: WaveSkipMarker[][];
+  /** When true, plot `gc_N` activation series on a right axis. */
+  showGoldenComboActivations?: boolean;
   height?: number;
   smoothWindow?: number;
   leadLagBand?: { newerIndex: number; olderIndex: number } | null;
@@ -292,13 +370,17 @@ function formatCompareDelta(
 function SingleRunChart({
   data,
   waveSkips = [],
-  waveSkipColor = "#e8b339",
+  waveSkipColor = SKIP_LINE_COLOR,
+  showWaveJumps = true,
+  showGoldenComboActivations = true,
   height,
   onPointClick,
   onSelectWaves,
   selectedWaves = [],
   onSkipClick,
   selectedSkipIds = [],
+  onGcClick,
+  selectedGcWaves = [],
 }: SingleProps) {
   const layoutRef = useRef<PlotOffset | null>(null);
   const dragRef = useRef<{ wave: number; coin: number } | null>(null);
@@ -307,16 +389,19 @@ function SingleRunChart({
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const selectedSet = new Set(selectedWaves);
   const selectedSkipSet = new Set(selectedSkipIds);
+  const selectedGcSet = new Set(selectedGcWaves);
   const selectable = !!onSelectWaves;
 
   const bounds = useMemo(() => {
     const waves = data.map((d) => d.wave);
-    const coins = data.map((d) => d.coin);
+    const coins = data
+      .map((d) => d.coin)
+      .filter((c): c is number => c != null && Number.isFinite(c));
     return {
       waveMin: Math.min(...waves),
       waveMax: Math.max(...waves),
-      coinMin: Math.min(...coins),
-      coinMax: Math.max(...coins),
+      coinMin: coins.length ? Math.min(...coins) : 0,
+      coinMax: coins.length ? Math.max(...coins) : 1,
     };
   }, [data]);
 
@@ -354,13 +439,15 @@ function SingleRunChart({
   const wavesInBox = useCallback(
     (box: SelectionBox): number[] =>
       data
-        .filter(
-          (point) =>
+        .filter((point) => {
+          if (point.coin == null) return false;
+          return (
             point.wave >= box.waveMin &&
             point.wave <= box.waveMax &&
             point.coin >= box.coinMin &&
             point.coin <= box.coinMax
-        )
+          );
+        })
         .map((point) => point.wave),
     [data]
   );
@@ -412,38 +499,44 @@ function SingleRunChart({
     finishDrag(false);
   };
 
-  const handleChartClick = (state: ChartMouseState) => {
+  const handleChartClick = () => {
+    // Selection is handled only by per-series dots. Chart-level clicks used to
+    // always pick coin/min and stole GC / jump clicks in select mode.
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
-      return;
-    }
-    const payloads = state.activePayload;
-    if (payloads?.length) {
-      for (const item of payloads) {
-        const row = item.payload;
-        if (row && row.coin != null && onPointClick) {
-          onPointClick(row.wave);
-          return;
-        }
-      }
-    }
-    if (onPointClick && state?.activeLabel != null) {
-      onPointClick(Number(state.activeLabel));
     }
   };
 
-  const hasSkips = waveSkips.length > 0;
+  const visibleSkips = showWaveJumps ? waveSkips : [];
+  const hasSkips = visibleSkips.length > 0;
+  const hasGc =
+    showGoldenComboActivations &&
+    data.some((d) => d.golden_combo_caret != null);
   const chartData = useMemo(
-    () => (hasSkips ? mergeSingleChartData(data, waveSkips) : data),
-    [data, waveSkips, hasSkips]
+    () =>
+      hasSkips
+        ? mergeSingleChartData(data, visibleSkips)
+        : toSingleChartRows(data),
+    [data, visibleSkips, hasSkips]
   );
+  const gcDomain = useMemo((): [number, number] | undefined => {
+    if (!hasGc) return undefined;
+    const values = data
+      .map((d) => d.golden_combo_caret)
+      .filter((v): v is number => v != null && Number.isFinite(v));
+    if (values.length === 0) return undefined;
+    const max = Math.max(...values);
+    return [0, Math.max(1, Math.ceil(max * 1.05))];
+  }, [data, hasGc]);
 
   if (data.length === 0) {
     return null;
   }
 
-  const Chart = hasSkips ? ComposedChart : LineChart;
-  const xDomain = waveDomain(data, waveSkips);
+  const Chart = hasSkips || hasGc ? ComposedChart : LineChart;
+  const xDomain = waveDomain(data, visibleSkips);
+  const rightAxes = (hasSkips ? 1 : 0) + (hasGc ? 1 : 0);
+  const rightMargin = rightAxes === 0 ? 12 : rightAxes === 1 ? 44 : 80;
 
   return (
     <ResponsiveContainer
@@ -453,7 +546,7 @@ function SingleRunChart({
     >
       <Chart
         data={chartData}
-        margin={{ top: 8, right: hasSkips ? 44 : 12, bottom: 8, left: 4 }}
+        margin={{ top: 8, right: rightMargin, bottom: 8, left: 4 }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -478,7 +571,7 @@ function SingleRunChart({
         />
         <YAxis
           yAxisId="coin"
-          stroke="#8da2c0"
+          stroke={COIN_LINE_COLOR}
           tickFormatter={(v: number) => formatCoin(v)}
           width={70}
         />
@@ -486,7 +579,7 @@ function SingleRunChart({
           <YAxis
             yAxisId="skip"
             orientation="right"
-            stroke="#8da2c0"
+            stroke={waveSkipColor}
             width={36}
             allowDecimals={false}
             domain={[0, SKIP_AXIS_MAX]}
@@ -495,24 +588,49 @@ function SingleRunChart({
               value: "Wave jump",
               angle: 90,
               position: "insideRight",
-              fill: "#8da2c0",
+              fill: waveSkipColor,
+              fontSize: 11,
+            }}
+          />
+        )}
+        {hasGc && (
+          <YAxis
+            yAxisId="gc"
+            orientation="right"
+            stroke={GC_LINE_COLOR}
+            width={40}
+            allowDecimals={false}
+            domain={gcDomain}
+            label={{
+              value: "GC ^",
+              angle: 90,
+              position: "insideRight",
+              fill: GC_LINE_COLOR,
               fontSize: 11,
             }}
           />
         )}
         <Tooltip
+          cursor={
+            onPointClick || onSkipClick || onGcClick || selectable
+              ? false
+              : undefined
+          }
           formatter={(v, name, item) => {
             if (String(name).toLowerCase().includes("jump")) {
               const row = (item as { payload?: SingleChartRow })?.payload;
               const value = row?.skip_tooltip?.trim() || String(v ?? "");
               return [value, "Jump"];
             }
+            if (String(name).toLowerCase().includes("activation")) {
+              return [v == null ? "—" : String(v), "GC activations"];
+            }
             return [formatCoin(v as number), name];
           }}
           labelFormatter={(l) => `Wave ${l}`}
           contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
         />
-        {hasSkips && <Legend />}
+        {(hasSkips || hasGc) && <Legend />}
         {selectionBox && (
           <ReferenceArea
             x1={selectionBox.waveMin}
@@ -525,34 +643,15 @@ function SingleRunChart({
             ifOverflow="extendDomain"
           />
         )}
-        {hasSkips && (
-          <Line
-            yAxisId="skip"
-            type="monotone"
-            dataKey="skip_count"
-            name="Jump"
-            stroke={waveSkipColor}
-            strokeWidth={1.5}
-            isAnimationActive={false}
-            dot={
-              onSkipClick
-                ? createSkipDot(waveSkipColor, selectedSkipSet, onSkipClick)
-                : false
-            }
-            activeDot={
-              onSkipClick
-                ? { r: SKIP_DOT_R + 1, fill: waveSkipColor, stroke: "#fff" }
-                : false
-            }
-          />
-        )}
+        {/* Coin under GC/skip so their select-mode hit targets stay on top. */}
         <Line
           yAxisId="coin"
           type="monotone"
           dataKey="coin"
           name="Coin/min"
-          stroke="#4cc2ff"
+          stroke={COIN_LINE_COLOR}
           strokeWidth={2}
+          connectNulls
           isAnimationActive={false}
           dot={(dotProps) => {
             const { cx, cy, payload } = dotProps;
@@ -562,30 +661,34 @@ function SingleRunChart({
             }
             const wave = row.wave;
             const selected = selectedSet.has(wave);
-            const visible = selected || !!onPointClick || selectable;
+            const showDots = !!onPointClick || selectable;
+            if (!showDots && !selected) {
+              return <g key={wave} />;
+            }
             return (
-              <g key={wave}>
+              <g
+                key={wave}
+                style={{ cursor: showDots ? "pointer" : undefined }}
+                onMouseDown={(e) => {
+                  if (!showDots) return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                }}
+                onClick={(e) => {
+                  if (!showDots) return;
+                  e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
+                  onPointClick?.(wave);
+                }}
+              >
+                <circle cx={cx} cy={cy} r={14} fill="transparent" />
                 <circle
                   cx={cx}
                   cy={cy}
-                  r={12}
-                  fill="transparent"
-                  style={{
-                    cursor: onPointClick || selectable ? "pointer" : undefined,
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPointClick?.(wave);
-                  }}
-                />
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={selected ? 7 : visible ? 4 : 0}
+                  r={selected ? 7 : 4}
                   fill={selected ? "#e8b339" : "#16203a"}
-                  stroke={selected ? "#fff" : "#4cc2ff"}
-                  strokeWidth={visible ? 2 : 0}
+                  stroke={selected ? "#fff" : COIN_LINE_COLOR}
+                  strokeWidth={2}
                   style={{ pointerEvents: "none" }}
                 />
               </g>
@@ -603,6 +706,41 @@ function SingleRunChart({
               : false
           }
         />
+        {hasSkips && (
+          <Line
+            yAxisId="skip"
+            type="monotone"
+            dataKey="skip_count"
+            name="Jump"
+            stroke={waveSkipColor}
+            strokeWidth={1.5}
+            isAnimationActive={false}
+            dot={
+              onSkipClick
+                ? createSkipDot(waveSkipColor, selectedSkipSet, onSkipClick)
+                : false
+            }
+            activeDot={false}
+          />
+        )}
+        {hasGc && (
+          <Line
+            yAxisId="gc"
+            type="monotone"
+            dataKey="golden_combo_caret"
+            name="GC activations"
+            stroke={GC_LINE_COLOR}
+            strokeWidth={2}
+            connectNulls
+            isAnimationActive={false}
+            dot={
+              onGcClick
+                ? createGcDot(GC_LINE_COLOR, selectedGcSet, onGcClick)
+                : false
+            }
+            activeDot={false}
+          />
+        )}
       </Chart>
     </ResponsiveContainer>
   );
@@ -632,10 +770,34 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
 
   const flatSkips = props.waveSkipsByLine?.flat() ?? [];
   const hasSkips = flatSkips.length > 0;
+  const showGc = props.showGoldenComboActivations === true;
+  const hasGc =
+    showGc &&
+    props.lines.some((_, i) =>
+      props.data.some((row) => {
+        const v = row[`gc_${i}`];
+        return typeof v === "number" && Number.isFinite(v);
+      })
+    );
+  const gcDomain: [number, number] | undefined = (() => {
+    if (!hasGc) return undefined;
+    let max = 0;
+    for (const row of props.data) {
+      for (let i = 0; i < props.lines.length; i++) {
+        const v = row[`gc_${i}`];
+        if (typeof v === "number" && Number.isFinite(v) && v > max) {
+          max = v;
+        }
+      }
+    }
+    return [0, Math.max(1, Math.ceil(max * 1.05))];
+  })();
   const chartData = hasSkips
     ? mergeCompareWithSkips(props.data, props.waveSkipsByLine ?? [])
     : props.data;
-  const Chart = hasSkips ? ComposedChart : LineChart;
+  const Chart = hasSkips || hasGc ? ComposedChart : LineChart;
+  const rightAxes = (hasSkips ? 1 : 0) + (hasGc ? 1 : 0);
+  const rightMargin = rightAxes === 0 ? 12 : rightAxes === 1 ? 44 : 80;
   const xDomain: [number, number] | undefined = hasSkips
     ? [
         Math.min(
@@ -651,7 +813,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <Chart data={chartData} margin={{ top: 8, right: hasSkips ? 44 : 12, bottom: 8, left: 4 }}>
+      <Chart data={chartData} margin={{ top: 8, right: rightMargin, bottom: 8, left: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
         <XAxis
           dataKey="x"
@@ -662,7 +824,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
         />
         <YAxis
           yAxisId="coin"
-          stroke="#8da2c0"
+          stroke={COIN_LINE_COLOR}
           tickFormatter={(v: number) => formatCoin(v)}
           width={70}
         />
@@ -670,7 +832,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           <YAxis
             yAxisId="skip"
             orientation="right"
-            stroke="#8da2c0"
+            stroke={SKIP_LINE_COLOR}
             width={36}
             allowDecimals={false}
             domain={[0, SKIP_AXIS_MAX]}
@@ -679,7 +841,24 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               value: "Wave jump",
               angle: 90,
               position: "insideRight",
-              fill: "#8da2c0",
+              fill: SKIP_LINE_COLOR,
+              fontSize: 11,
+            }}
+          />
+        )}
+        {hasGc && (
+          <YAxis
+            yAxisId="gc"
+            orientation="right"
+            stroke={GC_LINE_COLOR}
+            width={40}
+            allowDecimals={false}
+            domain={gcDomain}
+            label={{
+              value: "GC ^",
+              angle: 90,
+              position: "insideRight",
+              fill: GC_LINE_COLOR,
               fontSize: 11,
             }}
           />
@@ -698,6 +877,9 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
                   : "";
               const value = tip.trim() || String(v ?? "");
               return [value, name];
+            }
+            if (String(name).toLowerCase().includes("gc ^")) {
+              return [v == null ? "—" : String(v), name];
             }
             const dataKey = String((item as { dataKey?: string })?.dataKey ?? "");
             const coinMatch = /^coin_(\d+)$/.exec(dataKey);
@@ -737,7 +919,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           }}
           contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
         />
-        {props.lines.length > 1 && <Legend />}
+        {(props.lines.length > 1 || hasSkips || hasGc) && <Legend />}
         {leadLagPolygons.length > 0 && (
           <Customized
             component={(customProps: {
@@ -755,7 +937,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
         {hasSkips &&
           props.waveSkipsByLine?.map((skips, i) => {
             if (skips.length === 0) return null;
-            const color = props.lines[i]?.stroke ?? "#e8b339";
+            const color = props.lines[i]?.stroke ?? SKIP_LINE_COLOR;
             return (
               <Line
                 key={`skip-${props.lines[i]?.dataKey ?? i}`}
@@ -770,6 +952,22 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               />
             );
           })}
+        {hasGc &&
+          props.lines.map((line, i) => (
+            <Line
+              key={`gc-${line.dataKey}`}
+              yAxisId="gc"
+              type="monotone"
+              dataKey={`gc_${i}`}
+              name={`${line.name ?? `Run ${i + 1}`} GC ^`}
+              stroke={line.stroke}
+              strokeWidth={2}
+              strokeDasharray="4 3"
+              connectNulls
+              dot={false}
+              isAnimationActive={false}
+            />
+          ))}
         {props.lines.map((line) => (
           <Line
             key={line.dataKey}

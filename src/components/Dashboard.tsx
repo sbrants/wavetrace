@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, formatCoin, ScannerEvent, SnapshotRow, WaveSkipRow } from "../api";
-import { snapshotsToChartData, buildChartWaveJumpMarkers } from "../chartData";
+import {
+  api,
+  formatCoin,
+  formatGoldenComboMultiplier,
+  ScannerEvent,
+  SnapshotRow,
+  WaveSkipRow,
+} from "../api";
+import {
+  snapshotsToChartData,
+  buildChartWaveJumpMarkers,
+} from "../chartData";
 import {
   formatSkipLiveStat,
 } from "../skipDisplay";
@@ -16,6 +26,8 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [skipTotal, setSkipTotal] = useState(0);
   const [chartWaveSkips, setChartWaveSkips] = useState<WaveSkipRow[]>([]);
   const [chartNormalJumps, setChartNormalJumps] = useState<number[]>([]);
+  const [showWaveJumps, setShowWaveJumps] = useState(true);
+  const [showGcActivations, setShowGcActivations] = useState(true);
   const chartRef = useRef<HTMLDivElement>(null);
   const lastFetchAtRef = useRef(0);
   const lastWaveRef = useRef<number | null>(null);
@@ -68,9 +80,12 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const lastSkipDisplay =
     live?.last_wave_delta != null
       ? live.last_skip_multiplier != null
-        ? ({ kind: "multiplier", value: live.last_skip_multiplier } as const)
+        ? ({ kind: "multiplier", value: live.last_wave_delta } as const)
         : ({ kind: "delta", value: live.last_wave_delta } as const)
       : null;
+
+  const hasGcOnChart = chartData.some((d) => d.golden_combo_caret != null);
+  const hasJumpsOnChart = skipMarkers.length > 0;
 
   return (
     <div className="dashboard">
@@ -92,6 +107,22 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           hintReserved
         />
         <StatCard
+          label="GC activations"
+          value={
+            live?.golden_combo_caret != null
+              ? `^${live.golden_combo_caret}`
+              : "—"
+          }
+          hintReserved
+        />
+        <StatCard
+          label="GC bonus"
+          value={formatGoldenComboMultiplier(
+            live?.golden_combo_multiplier ?? null
+          )}
+          hintReserved
+        />
+        <StatCard
           label="Run"
           value={
             live?.run_active ? formatRunType(live.run_type) : "None"
@@ -103,21 +134,49 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
       <div className="chart-card" ref={chartRef}>
         <div className="chart-card-header">
           <div>
-            <h3>Avg coin/min vs Wave (current run)</h3>
+            <h3>Coin/min vs Wave (current run)</h3>
             <span className="muted">
               {snapshotTotal} snapshot{snapshotTotal === 1 ? "" : "s"} this run
               {snapshotTotal > chartSnapshots.length &&
                 ` · chart shows ${chartSnapshots.length} sampled snapshot points`}
               {skipTotal > chartWaveSkips.length &&
                 ` · ${chartWaveSkips.length} of ${skipTotal} skips sampled for chart`}
-              {skipMarkers.length > 0 &&
-                ` · ${skipMarkers.length} wave skip${skipMarkers.length === 1 ? "" : "s"} on chart`}
             </span>
           </div>
-          <ChartScreenshotActions
-            targetRef={chartRef}
-            disabled={chartData.length === 0}
-          />
+          <div className="chart-card-actions">
+            {hasJumpsOnChart && (
+              <label
+                className="checkbox-inline"
+                title="Show wave jump markers on the chart"
+              >
+                <input
+                  type="checkbox"
+                  checked={showWaveJumps}
+                  onChange={(e) => setShowWaveJumps(e.target.checked)}
+                  aria-label="Show wave jumps on dashboard chart"
+                />
+                Wave jumps
+              </label>
+            )}
+            {hasGcOnChart && (
+              <label
+                className="checkbox-inline"
+                title="Show Golden Combo activation (^) series on the chart"
+              >
+                <input
+                  type="checkbox"
+                  checked={showGcActivations}
+                  onChange={(e) => setShowGcActivations(e.target.checked)}
+                  aria-label="Show GC activations on dashboard chart"
+                />
+                GC activations
+              </label>
+            )}
+            <ChartScreenshotActions
+              targetRef={chartRef}
+              disabled={chartData.length === 0}
+            />
+          </div>
         </div>
         {chartData.length === 0 ? (
           <p className="muted">
@@ -128,6 +187,8 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             mode="single"
             data={chartData}
             waveSkips={skipMarkers}
+            showWaveJumps={showWaveJumps}
+            showGoldenComboActivations={showGcActivations}
             height={320}
           />
         )}

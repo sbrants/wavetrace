@@ -89,6 +89,8 @@ pub fn run() {
             commands::delete_runs,
             commands::delete_snapshot,
             commands::delete_snapshots,
+            commands::update_snapshot_golden_combo,
+            commands::clear_snapshot_golden_combo,
             commands::delete_wave_skips,
             commands::delete_wave_skip,
             commands::combine_runs,

@@ -19,6 +19,7 @@ pub struct RunRow {
     pub peak_tier: Option<i64>,
     pub final_wave: Option<i64>,
     pub avg_coin_per_minute: Option<f64>,
+    pub avg_golden_combo_caret: Option<f64>,
     pub snapshot_count: i64,
     pub comment: Option<String>,
 }
@@ -29,6 +30,9 @@ pub struct SnapshotRow {
     pub wave: i64,
     pub tier: Option<i64>,
     pub coin_per_minute: Option<f64>,
+    pub golden_combo_chance: Option<f64>,
+    pub golden_combo_caret: Option<i64>,
+    pub golden_combo_multiplier: Option<f64>,
     pub recorded_at: String,
 }
 
@@ -247,6 +251,18 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "ALTER TABLE wave_skips ADD COLUMN skip_multiplier INTEGER",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE snapshots ADD COLUMN golden_combo_chance REAL",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE snapshots ADD COLUMN golden_combo_caret INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE snapshots ADD COLUMN golden_combo_multiplier REAL",
+        [],
+    );
     conn.execute(
         "UPDATE runs SET run_type = 'farming' WHERE run_type = 'normal'",
         [],
@@ -322,16 +338,23 @@ pub fn insert_snapshot(
     wave: i64,
     tier: Option<i64>,
     coin_per_minute: Option<f64>,
+    golden_combo_chance: Option<f64>,
+    golden_combo_caret: Option<i64>,
+    golden_combo_multiplier: Option<f64>,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute,
+            golden_combo_chance, golden_combo_caret, golden_combo_multiplier, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             Uuid::new_v4().to_string(),
             run_id,
             wave,
             tier,
             coin_per_minute,
+            golden_combo_chance,
+            golden_combo_caret,
+            golden_combo_multiplier,
             Utc::now().to_rfc3339()
         ],
     )?;
@@ -366,6 +389,7 @@ pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<
     let mut sql = String::from(
         "SELECT r.id, r.started_at, r.ended_at, r.run_type, r.peak_tier, r.final_wave,
                 (SELECT AVG(coin_per_minute) FROM snapshots s WHERE s.run_id = r.id),
+                (SELECT AVG(golden_combo_caret) FROM snapshots s WHERE s.run_id = r.id AND golden_combo_caret IS NOT NULL),
                 (SELECT COUNT(*) FROM snapshots s WHERE s.run_id = r.id),
                 r.comment
          FROM runs r WHERE 1=1",
@@ -405,8 +429,9 @@ pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<
                 peak_tier: row.get(4)?,
                 final_wave: row.get(5)?,
                 avg_coin_per_minute: row.get(6)?,
-                snapshot_count: row.get(7)?,
-                comment: row.get(8)?,
+                avg_golden_combo_caret: row.get(7)?,
+                snapshot_count: row.get(8)?,
+                comment: row.get(9)?,
             })
         },
     )?;
@@ -620,14 +645,18 @@ pub fn combine_runs(conn: &Connection, run_ids: &[String]) -> Result<String, Com
 
     for snap in &combined_snapshots {
         tx.execute(
-            "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO snapshots (id, run_id, wave, tier, coin_per_minute,
+                golden_combo_chance, golden_combo_caret, golden_combo_multiplier, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 Uuid::new_v4().to_string(),
                 new_id,
                 snap.wave,
                 snap.tier,
                 snap.coin_per_minute,
+                snap.golden_combo_chance,
+                snap.golden_combo_caret,
+                snap.golden_combo_multiplier,
                 snap.recorded_at,
             ],
         )
@@ -727,6 +756,50 @@ pub fn delete_snapshot(conn: &Connection, snapshot_id: &str) -> rusqlite::Result
     }
 }
 
+/// Update Golden Combo fields on a snapshot (coin/min row is kept).
+pub fn update_snapshot_golden_combo(
+    conn: &Connection,
+    snapshot_id: &str,
+    chance: Option<f64>,
+    caret: Option<i64>,
+    multiplier: Option<f64>,
+) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE snapshots SET
+            golden_combo_chance = ?2,
+            golden_combo_caret = ?3,
+            golden_combo_multiplier = ?4
+         WHERE id = ?1",
+        params![snapshot_id, chance, caret, multiplier],
+    )?;
+    Ok(n > 0)
+}
+
+/// Clear Golden Combo fields on snapshots without deleting coin/min rows.
+pub fn clear_snapshot_golden_combo(
+    conn: &Connection,
+    snapshot_ids: &[String],
+) -> rusqlite::Result<usize> {
+    if snapshot_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut deleted = 0usize;
+    for id in snapshot_ids {
+        deleted += conn.execute(
+            "UPDATE snapshots SET
+                golden_combo_chance = NULL,
+                golden_combo_caret = NULL,
+                golden_combo_multiplier = NULL
+             WHERE id = ?1
+               AND (golden_combo_chance IS NOT NULL
+                    OR golden_combo_caret IS NOT NULL
+                    OR golden_combo_multiplier IS NOT NULL)",
+            params![id],
+        )?;
+    }
+    Ok(deleted)
+}
+
 fn sync_run_snapshot_stats(conn: &Connection, run_id: &str) -> rusqlite::Result<()> {
     let (final_wave, peak_tier) = snapshot_stats(conn, run_id)?;
     conn.execute(
@@ -738,7 +811,8 @@ fn sync_run_snapshot_stats(conn: &Connection, run_id: &str) -> rusqlite::Result<
 
 pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<SnapshotRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, wave, tier, coin_per_minute, recorded_at
+        "SELECT id, wave, tier, coin_per_minute,
+                golden_combo_chance, golden_combo_caret, golden_combo_multiplier, recorded_at
          FROM snapshots WHERE run_id = ?1 ORDER BY wave ASC",
     )?;
     let rows = stmt.query_map(params![run_id], |row| {
@@ -747,7 +821,10 @@ pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<Sn
             wave: row.get(1)?,
             tier: row.get(2)?,
             coin_per_minute: row.get(3)?,
-            recorded_at: row.get(4)?,
+            golden_combo_chance: row.get(4)?,
+            golden_combo_caret: row.get(5)?,
+            golden_combo_multiplier: row.get(6)?,
+            recorded_at: row.get(7)?,
         })
     })?;
     rows.collect()
@@ -768,6 +845,38 @@ pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize
         |row| row.get(0),
     )?;
     Ok(count.max(0) as usize)
+}
+
+/// Mean Golden Combo activation count (^N) over snapshots that recorded it.
+pub fn avg_golden_combo_caret(
+    conn: &Connection,
+    run_id: &str,
+) -> rusqlite::Result<Option<f64>> {
+    conn.query_row(
+        "SELECT AVG(golden_combo_caret) FROM snapshots
+         WHERE run_id = ?1 AND golden_combo_caret IS NOT NULL",
+        params![run_id],
+        |row| row.get(0),
+    )
+}
+
+/// Most recent snapshot that has a Golden Combo caret (highest wave, then latest row).
+pub fn latest_golden_combo(
+    conn: &Connection,
+    run_id: &str,
+) -> rusqlite::Result<Option<(Option<f64>, i64, Option<f64>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT golden_combo_chance, golden_combo_caret, golden_combo_multiplier
+         FROM snapshots
+         WHERE run_id = ?1 AND golden_combo_caret IS NOT NULL
+         ORDER BY wave DESC, recorded_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![run_id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
+        None => Ok(None),
+    }
 }
 
 pub fn wave_skip_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
@@ -913,6 +1022,9 @@ mod tests {
                 wave: i,
                 tier: Some(1),
                 coin_per_minute: Some(i as f64),
+                golden_combo_chance: None,
+                golden_combo_caret: None,
+                golden_combo_multiplier: None,
                 recorded_at: "t".into(),
             })
             .collect();
@@ -959,9 +1071,9 @@ mod tests {
     fn delete_snapshots_batch_recomputes_run_stats() {
         let conn = open_in_memory().unwrap();
         let run_id = start_run(&conn, "farming").unwrap();
-        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0)).unwrap();
-        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0)).unwrap();
-        insert_snapshot(&conn, &run_id, 3, Some(11), Some(300.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &run_id, 3, Some(11), Some(300.0), None, None, None).unwrap();
         end_run(&conn, &run_id, Some(3), Some(11)).unwrap();
 
         let snaps = run_snapshots(&conn, &run_id).unwrap();
@@ -982,9 +1094,9 @@ mod tests {
     fn delete_snapshot_recomputes_run_stats() {
         let conn = open_in_memory().unwrap();
         let run_id = start_run(&conn, "farming").unwrap();
-        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0)).unwrap();
-        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0)).unwrap();
-        insert_snapshot(&conn, &run_id, 5, Some(12), Some(300.0)).unwrap();
+        insert_snapshot(&conn, &run_id, 1, Some(10), Some(100.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &run_id, 2, Some(11), Some(200.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &run_id, 5, Some(12), Some(300.0), None, None, None).unwrap();
         end_run(&conn, &run_id, Some(5), Some(12)).unwrap();
 
         let outlier = run_snapshots(&conn, &run_id)
@@ -1009,8 +1121,8 @@ mod tests {
     fn start_run_ends_previous_open_run() {
         let conn = open_in_memory().unwrap();
         let id1 = start_run(&conn, "farming").unwrap();
-        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0)).unwrap();
-        insert_snapshot(&conn, &id1, 5, Some(12), Some(200.0)).unwrap();
+        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &id1, 5, Some(12), Some(200.0), None, None, None).unwrap();
 
         let id2 = start_run(&conn, "farming").unwrap();
         assert_ne!(id1, id2);
@@ -1028,8 +1140,8 @@ mod tests {
     fn run_lifecycle_roundtrip() {
         let conn = open_in_memory().unwrap();
         let id = start_run(&conn, "tournament").unwrap();
-        insert_snapshot(&conn, &id, 1, Some(17), None).unwrap();
-        insert_snapshot(&conn, &id, 2, Some(17), Some(500.0)).unwrap();
+        insert_snapshot(&conn, &id, 1, Some(17), None, None, None, None).unwrap();
+        insert_snapshot(&conn, &id, 2, Some(17), Some(500.0), None, None, None).unwrap();
         end_run(&conn, &id, Some(2), Some(17)).unwrap();
 
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
@@ -1057,7 +1169,7 @@ mod tests {
     fn delete_runs_removes_snapshots() {
         let conn = open_in_memory().unwrap();
         let id = start_run(&conn, "farming").unwrap();
-        insert_snapshot(&conn, &id, 1, Some(10), Some(100.0)).unwrap();
+        insert_snapshot(&conn, &id, 1, Some(10), Some(100.0), None, None, None).unwrap();
         delete_runs(&conn, &[id.clone()]).unwrap();
         assert!(list_runs(&conn, &RunFilter::default()).unwrap().is_empty());
         assert!(run_snapshots(&conn, &id).unwrap().is_empty());
@@ -1348,7 +1460,7 @@ mod tests {
     fn combine_runs_rejects_open_run() {
         let conn = open_in_memory().unwrap();
         let id1 = start_run(&conn, "farming").unwrap();
-        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0)).unwrap();
+        insert_snapshot(&conn, &id1, 1, Some(10), Some(100.0), None, None, None).unwrap();
         let id2 = insert_closed_run(
             &conn,
             "2024-01-01T11:00:00Z",

@@ -3,10 +3,11 @@
 //! Pure logic: consumes classified poll results, emits actions for the
 //! storage layer. No I/O here so everything is unit-testable.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
-use crate::parser::CoinReading;
-use crate::parser::WaveSkipOverlay;
+use crate::parser::{CoinReading, GoldenComboReading, WaveSkipOverlay};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +109,8 @@ pub struct PollInput {
     pub coin: CoinReading,
     /// Parsed from the in-game "Wave Skipped!" banner.
     pub wave_skip_overlay: WaveSkipOverlay,
+    /// Parsed from the Golden Combo HUD (`0.03% ^166 = x0.05`).
+    pub golden_combo: GoldenComboReading,
     /// Dissonance (disco) run category when visible on screen.
     pub dissonance: Option<DissonanceKind>,
 }
@@ -122,6 +125,9 @@ pub enum Action {
         wave: u32,
         tier: Option<u32>,
         coin_per_minute: Option<f64>,
+        golden_combo_chance: Option<f64>,
+        golden_combo_caret: Option<u32>,
+        golden_combo_multiplier: Option<f64>,
     },
     WaveSkip {
         at_wave: u32,
@@ -155,6 +161,12 @@ pub struct LiveState {
     pub last_skip_multiplier: Option<u32>,
     /// Most recent wave increment (1 for normal progression).
     pub last_wave_delta: Option<u32>,
+    /// Last Golden Combo chance % from OCR.
+    pub golden_combo_chance: Option<f64>,
+    /// Last Golden Combo caret / stack count (`^N`).
+    pub golden_combo_caret: Option<u32>,
+    /// Last Golden Combo multiplier (`xN`).
+    pub golden_combo_multiplier: Option<f64>,
 }
 
 impl LiveState {
@@ -169,6 +181,9 @@ impl LiveState {
             total_coin_warning: false,
             last_skip_multiplier: None,
             last_wave_delta: None,
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None,
         }
     }
 }
@@ -182,6 +197,12 @@ struct ActiveRun {
     snapshots_saved: u32,
     coin_sum: f64,
     coin_rate_snapshots: u32,
+    /// Latched for live dashboard (toast is fleeting; keep last good read).
+    last_golden_combo: GoldenComboReading,
+    /// GC OCR seen while the current wave was confirmed — written on flush, then cleared.
+    wave_golden_combo: GoldenComboReading,
+    /// Votes for GC chance % this run (key = hundredths, e.g. 0.03 → 3). Chance is fixed in-game.
+    gc_chance_votes: HashMap<i32, u32>,
 }
 
 /// Debounce: a value must be seen on `DEBOUNCE` consecutive polls to be
@@ -568,6 +589,17 @@ impl RunStateMachine {
                 .is_some()
                 .then(|| self.last_wave_delta)
                 .flatten(),
+            golden_combo_chance: self.run.as_ref().and_then(|r| {
+                consensus_gc_chance(r).or(r.last_golden_combo.chance_percent)
+            }),
+            golden_combo_caret: self
+                .run
+                .as_ref()
+                .and_then(|r| r.last_golden_combo.caret_count),
+            golden_combo_multiplier: self
+                .run
+                .as_ref()
+                .and_then(|r| r.last_golden_combo.multiplier),
         }
     }
 
@@ -618,10 +650,16 @@ impl RunStateMachine {
         run_type: RunType,
         last_saved_wave: u32,
         peak_tier: Option<u32>,
+        last_golden_combo: Option<GoldenComboReading>,
     ) {
         let mut run = new_active_run(run_type);
         run.last_saved_wave = last_saved_wave;
         run.peak_tier = peak_tier;
+        if let Some(gc) = last_golden_combo {
+            // Demangle via merge (e.g. stored `816` → live `316`) so the dashboard
+            // matches corrected History values after resume.
+            run.last_golden_combo = GoldenComboReading::default().merge_with(gc);
+        }
         self.run = Some(run);
         if last_saved_wave > 0 {
             self.wave.candidate = Some(last_saved_wave);
@@ -630,6 +668,19 @@ impl RunStateMachine {
             self.last_seen_wave = Some(last_saved_wave);
         }
         self.wave_skip.set_resume_catchup_pending(true);
+    }
+
+    /// Apply a GC toast reading from a GC-only OCR tick (no coin/wave/skip updates).
+    /// Attributes the hit to the current confirmed wave for the per-wave snapshot.
+    pub fn poll_golden_combo_only(&mut self, gc: GoldenComboReading) {
+        if !gc.seen {
+            return;
+        }
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let update_wave_snapshot = self.wave.confirmed.is_some();
+        apply_golden_combo_reading(run, gc, update_wave_snapshot);
     }
 
     /// When scanning starts with no active run, open one immediately so snapshots can persist.
@@ -819,6 +870,14 @@ impl RunStateMachine {
         }
 
         if let Some(run) = self.run.as_mut() {
+            // Live latch tracks the latest successful OCR read. Per-wave snapshot
+            // fields only update when this poll's wave matches the confirmed wave,
+            // so an early (unconfirmed) next-wave toast cannot overwrite the prior
+            // wave's caret before flush.
+            let update_wave_snapshot = self.wave.confirmed.is_some()
+                && input.wave.is_some()
+                && input.wave == self.wave.confirmed;
+            apply_golden_combo_reading(run, input.golden_combo, update_wave_snapshot);
             accumulate_coin_sample(run, self.wave.confirmed, self.last_coin_rate);
         }
 
@@ -865,6 +924,9 @@ fn new_active_run(run_type: RunType) -> ActiveRun {
         snapshots_saved: 0,
         coin_sum: 0.0,
         coin_rate_snapshots: 0,
+        last_golden_combo: GoldenComboReading::default(),
+        wave_golden_combo: GoldenComboReading::default(),
+        gc_chance_votes: HashMap::new(),
     }
 }
 
@@ -905,11 +967,147 @@ fn flush_completed_wave(run: &mut ActiveRun, wave: u32, tier: Option<u32>) -> Ve
         run.coin_sum += c;
         run.coin_rate_snapshots += 1;
     }
+    let gc = run.wave_golden_combo;
+    run.wave_golden_combo = GoldenComboReading::default();
+    // Chance % is fixed for a run and chance-only OCR rows are noise — only persist
+    // when we have an activation count (^N). Attach the run consensus chance.
+    let (golden_combo_chance, golden_combo_caret, golden_combo_multiplier) =
+        if let Some(caret) = gc.caret_count {
+            (
+                consensus_gc_chance(run).or(gc.chance_percent),
+                Some(caret),
+                gc.multiplier,
+            )
+        } else {
+            (None, None, None)
+        };
     vec![Action::Snapshot {
         wave,
         tier,
         coin_per_minute,
+        golden_combo_chance,
+        golden_combo_caret,
+        golden_combo_multiplier,
     }]
+}
+
+/// In-game GC chance does not change mid-run; keep values in a tight HUD range.
+fn plausible_gc_chance(chance: f64) -> bool {
+    (0.01..=1.0).contains(&chance) && chance.is_finite()
+}
+
+fn quantize_gc_chance(chance: f64) -> Option<i32> {
+    if !plausible_gc_chance(chance) {
+        return None;
+    }
+    Some((chance * 100.0).round() as i32)
+}
+
+fn consensus_gc_chance(run: &ActiveRun) -> Option<f64> {
+    leading_gc_chance(run).map(|(chance, _)| chance)
+}
+
+/// Leading chance vote: `(chance, vote_count)`. `None` on empty or unresolved tie.
+fn leading_gc_chance(run: &ActiveRun) -> Option<(f64, u32)> {
+    let mut best_count = 0u32;
+    let mut leaders: Vec<i32> = Vec::new();
+    for (&key, &count) in &run.gc_chance_votes {
+        if count > best_count {
+            best_count = count;
+            leaders.clear();
+            leaders.push(key);
+        } else if count == best_count && count > 0 {
+            leaders.push(key);
+        }
+    }
+    if best_count == 0 || leaders.is_empty() {
+        return None;
+    }
+    if leaders.len() == 1 {
+        return Some((leaders[0] as f64 / 100.0, best_count));
+    }
+    // Tie: stick with the latched live chance if it is one of the leaders.
+    if let Some(prev) = run.last_golden_combo.chance_percent {
+        let pk = (prev * 100.0).round() as i32;
+        if leaders.contains(&pk) {
+            return Some((prev, best_count));
+        }
+    }
+    None
+}
+
+fn vote_gc_chance(run: &mut ActiveRun, chance: f64) {
+    let Some(key) = quantize_gc_chance(chance) else {
+        return;
+    };
+    *run.gc_chance_votes.entry(key).or_insert(0) += 1;
+}
+
+fn apply_golden_combo_reading(
+    run: &mut ActiveRun,
+    raw: GoldenComboReading,
+    update_wave_snapshot: bool,
+) {
+    if !raw.seen {
+        return;
+    }
+    let mut gc = raw;
+    if let Some(c) = gc.chance_percent {
+        if !plausible_gc_chance(c) {
+            gc.chance_percent = None;
+        } else {
+            let prior_leader = leading_gc_chance(run);
+            vote_gc_chance(run, c);
+            if let Some((leader, count)) = leading_gc_chance(run) {
+                if (c - leader).abs() > 0.005 {
+                    // Disagrees with the leading/majority value — keep leader for display,
+                    // drop chance from this hit (and drop the hit if chance was all we had).
+                    gc.chance_percent = if count >= 1 {
+                        Some(leader)
+                    } else {
+                        None
+                    };
+                    if gc.chance_percent.is_none()
+                        && gc.caret_count.is_none()
+                        && gc.multiplier.is_none()
+                    {
+                        return;
+                    }
+                    // If this was chance-only disagreeing with a strong majority, ignore entirely.
+                    if count >= 2
+                        && gc.caret_count.is_none()
+                        && gc.multiplier.is_none()
+                        && prior_leader.is_some_and(|(l, _)| (c - l).abs() > 0.005)
+                    {
+                        return;
+                    }
+                } else {
+                    gc.chance_percent = Some(leader);
+                }
+            }
+        }
+    }
+
+    if gc.chance_percent.is_none()
+        && gc.caret_count.is_none()
+        && gc.multiplier.is_none()
+    {
+        return;
+    }
+
+    // Live latch keeps chance/caret/mult for the dashboard (last successful read).
+    run.last_golden_combo = run.last_golden_combo.merge_with(gc);
+    if let Some((cons, _)) = leading_gc_chance(run) {
+        run.last_golden_combo.chance_percent = Some(cons);
+    }
+
+    // Per-wave snapshot accumulator: need caret or multiplier — chance-only is not stored.
+    if update_wave_snapshot && (gc.caret_count.is_some() || gc.multiplier.is_some()) {
+        run.wave_golden_combo = run.wave_golden_combo.merge_with(gc);
+        if let Some((cons, _)) = leading_gc_chance(run) {
+            run.wave_golden_combo.chance_percent = Some(cons);
+        }
+    }
 }
 
 fn flush_pending_wave(run: &mut ActiveRun, tier: Option<u32>) -> Vec<Action> {
@@ -938,6 +1136,7 @@ mod tests {
             wave: Some(wave),
             coin,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            golden_combo: GoldenComboReading::default(),
             dissonance: None,
         }
     }
@@ -955,6 +1154,7 @@ mod tests {
             wave: Some(wave),
             coin,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            golden_combo: GoldenComboReading::default(),
             dissonance: Some(dissonance),
         }
     }
@@ -972,6 +1172,7 @@ mod tests {
             wave: Some(wave),
             coin,
             wave_skip_overlay: overlay,
+            golden_combo: GoldenComboReading::default(),
             dissonance: None,
         }
     }
@@ -996,7 +1197,7 @@ mod tests {
     #[test]
     fn resume_from_db_continues_snapshotting_after_last_saved_wave() {
         let mut sm = RunStateMachine::new();
-        sm.resume_from_db(RunType::Farming, 42, Some(17));
+        sm.resume_from_db(RunType::Farming, 42, Some(17), None);
         let coin = CoinReading::Rate(100.0);
         feed2(&mut sm, p(GameMode::Normal, 17, 43, coin));
         let actions = feed2(
@@ -1009,11 +1210,30 @@ mod tests {
     }
 
     #[test]
+    fn resume_from_db_seeds_golden_combo_latch_and_demangles_8xx() {
+        let mut sm = RunStateMachine::new();
+        sm.resume_from_db(
+            RunType::Farming,
+            100,
+            Some(14),
+            Some(GoldenComboReading {
+                seen: true,
+                chance_percent: Some(0.03),
+                caret_count: Some(816),
+                multiplier: Some(0.1),
+            }),
+        );
+        assert_eq!(sm.live_state().golden_combo_caret, Some(316));
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.1));
+    }
+
+    #[test]
     fn resume_catchup_suppresses_false_multi_skip_without_banner() {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
         feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let actions = feed2(
             &mut sm,
             p(GameMode::Normal, 14, 105, CoinReading::Rate(1e12)),
@@ -1026,7 +1246,7 @@ mod tests {
         let mut sm = RunStateMachine::new();
         feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
         feed2(&mut sm, p(GameMode::Normal, 14, 100, CoinReading::Rate(1e12)));
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let overlay = WaveSkipOverlay {
             seen: true,
             multiplier: Some(5),
@@ -1050,7 +1270,7 @@ mod tests {
     #[test]
     fn resume_catchup_allows_single_skip_after_sync() {
         let mut sm = RunStateMachine::new();
-        sm.resume_from_db(RunType::Farming, 100, Some(14));
+        sm.resume_from_db(RunType::Farming, 100, Some(14), None);
         let overlay = WaveSkipOverlay {
             seen: true,
             multiplier: None,
@@ -1107,7 +1327,10 @@ mod tests {
         assert!(actions.contains(&Action::Snapshot {
             wave: 4500,
             tier: Some(14),
-            coin_per_minute: Some(100.0)
+            coin_per_minute: Some(100.0),
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None
         }));
     }
 
@@ -1131,7 +1354,10 @@ mod tests {
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
             tier: Some(12),
-            coin_per_minute: Some(150.0)
+            coin_per_minute: Some(150.0),
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None
         }));
 
         // Collect more samples on wave 2 before advancing.
@@ -1245,7 +1471,10 @@ mod tests {
         assert!(a.contains(&Action::Snapshot {
             wave: 4321,
             tier: Some(12),
-            coin_per_minute: Some(1.0)
+            coin_per_minute: Some(1.0),
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None
         }));
     }
 
@@ -1264,7 +1493,10 @@ mod tests {
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
             tier: Some(14),
-            coin_per_minute: Some(500.0) // average while on wave 1, not the total balance
+            coin_per_minute: Some(500.0), // average while on wave 1, not the total balance
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None,
         }));
         // feed2 above is two polls — warning should be on for sustained total_coin.
         assert!(sm.live_state().total_coin_warning);
@@ -1335,7 +1567,10 @@ mod tests {
         assert!(actions.contains(&Action::Snapshot {
             wave: 1,
             tier: Some(14),
-            coin_per_minute: None
+            coin_per_minute: None,
+            golden_combo_chance: None,
+            golden_combo_caret: None,
+            golden_combo_multiplier: None
         }));
     }
 
@@ -1400,6 +1635,7 @@ mod tests {
             wave: None,
             coin: CoinReading::Unreadable,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            golden_combo: GoldenComboReading::default(),
             dissonance: None,
         });
         assert_eq!(
@@ -1408,7 +1644,10 @@ mod tests {
                 Action::Snapshot {
                     wave: 2,
                     tier: Some(11),
-                    coin_per_minute: Some(10.0)
+                    coin_per_minute: Some(10.0),
+                    golden_combo_chance: None,
+                    golden_combo_caret: None,
+                    golden_combo_multiplier: None
                 },
                 Action::EndRun {
                     final_wave: 2,
@@ -1517,6 +1756,7 @@ mod tests {
             wave: None,
             coin: CoinReading::Unreadable,
             wave_skip_overlay: WaveSkipOverlay::default(),
+            golden_combo: GoldenComboReading::default(),
             dissonance: None,
         });
         assert_eq!(
@@ -1525,7 +1765,10 @@ mod tests {
                 Action::Snapshot {
                     wave: 3,
                     tier: Some(13),
-                    coin_per_minute: Some(1.0)
+                    coin_per_minute: Some(1.0),
+                    golden_combo_chance: None,
+                    golden_combo_caret: None,
+                    golden_combo_multiplier: None
                 },
                 Action::EndRun {
                     final_wave: 3,
@@ -1953,6 +2196,324 @@ mod tests {
                     skipped_count: 10,
                     ..
                 }
+            )
+        }));
+    }
+
+    #[test]
+    fn golden_combo_latches_on_live_and_snapshots() {
+        let mut sm = RunStateMachine::new();
+        let mut input = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        input.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(166),
+            multiplier: Some(0.05),
+        };
+        feed2(&mut sm, input);
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+        assert_eq!(sm.live_state().golden_combo_caret, Some(166));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.05));
+
+        // Partial OCR keeps prior fields on the live latch.
+        let mut partial = p(GameMode::Normal, 15, 2, CoinReading::Rate(110.0));
+        partial.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: None,
+            caret_count: Some(167),
+            multiplier: None,
+        };
+        let actions = feed2(&mut sm, partial);
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+        assert_eq!(sm.live_state().golden_combo_caret, Some(167));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.05));
+        // Unconfirmed wave-2 OCR must not overwrite wave 1's snapshot; caret 166
+        // flushes for wave 1. Live latch already shows the newer 167 read.
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_chance: Some(0.03),
+                    golden_combo_caret: Some(166),
+                    golden_combo_multiplier: Some(0.05),
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn golden_combo_not_copied_onto_later_wave_snapshots() {
+        let mut sm = RunStateMachine::new();
+        let mut with_gc = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        with_gc.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(200),
+            multiplier: Some(0.08),
+        };
+        feed2(&mut sm, with_gc);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(200));
+
+        // Advance through waves with no GC OCR — live latch stays, later DB rows stay null.
+        let actions = feed2(&mut sm, p(GameMode::Normal, 15, 2, CoinReading::Rate(110.0)));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_caret: Some(200),
+                    golden_combo_chance: Some(0.03),
+                    golden_combo_multiplier: Some(0.08),
+                    ..
+                }
+            )
+        }));
+        assert_eq!(sm.live_state().golden_combo_caret, Some(200));
+
+        let actions = feed2(&mut sm, p(GameMode::Normal, 15, 3, CoinReading::Rate(120.0)));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_chance: None,
+                    golden_combo_caret: None,
+                    golden_combo_multiplier: None,
+                    ..
+                }
+            )
+        }));
+        assert_eq!(sm.live_state().golden_combo_caret, Some(200));
+
+        let actions = feed2(&mut sm, p(GameMode::Normal, 15, 4, CoinReading::Rate(130.0)));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 3,
+                    golden_combo_chance: None,
+                    golden_combo_caret: None,
+                    golden_combo_multiplier: None,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn live_golden_combo_follows_last_read_while_wave_snapshots_stay_per_wave() {
+        let mut sm = RunStateMachine::new();
+        // High OCR latch first.
+        let mut high = p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12));
+        high.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(387),
+            multiplier: Some(0.1),
+        };
+        feed2(&mut sm, high);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(387));
+
+        // Next wave sees a lower caret — live updates immediately; wave 1 still flushes 387.
+        let mut low = p(GameMode::Normal, 14, 2, CoinReading::Rate(1e12));
+        low.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(324),
+            multiplier: Some(0.1),
+        };
+        let actions = feed2(&mut sm, low);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(324));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_caret: Some(387),
+                    ..
+                }
+            )
+        }));
+        // Advance again so wave 2 flushes with 324; live stays at last read.
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 3, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_caret: Some(324),
+                    ..
+                }
+            )
+        }));
+        assert_eq!(
+            sm.live_state().golden_combo_caret,
+            Some(324),
+            "live latch should keep the last OCR read"
+        );
+    }
+
+    #[test]
+    fn poll_golden_combo_only_updates_live_and_wave_snapshot() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)),
+        );
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 2, CoinReading::Rate(1e12)),
+        );
+        // Confirmed on wave 2 after flush of wave 1.
+        assert_eq!(sm.live_state().wave, Some(2));
+        assert!(!sm.live_state().total_coin_warning);
+        let mode_before = sm.live_state().mode;
+
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(200),
+            multiplier: Some(0.08),
+        });
+        assert_eq!(sm.live_state().golden_combo_caret, Some(200));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.08));
+        assert!(!sm.live_state().total_coin_warning);
+        assert_eq!(sm.live_state().mode, mode_before);
+
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 3, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_caret: Some(200),
+                    golden_combo_multiplier: Some(0.08),
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn poll_golden_combo_only_ignores_unseen_and_does_not_touch_coin() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)),
+        );
+        sm.poll_golden_combo_only(GoldenComboReading::default());
+        assert_eq!(sm.live_state().golden_combo_caret, None);
+        assert!(!sm.live_state().total_coin_warning);
+        // Two Unreadable full polls would warn; GC-only must not count as Unreadable.
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(50),
+            multiplier: None,
+        });
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(51),
+            multiplier: None,
+        });
+        assert!(!sm.live_state().total_coin_warning);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(51));
+    }
+
+    #[test]
+    fn golden_combo_chance_only_not_saved_on_snapshot() {
+        let mut sm = RunStateMachine::new();
+        let mut chance_only = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        chance_only.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: None,
+            multiplier: None,
+        };
+        feed2(&mut sm, chance_only);
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+
+        let actions = feed2(&mut sm, p(GameMode::Normal, 15, 2, CoinReading::Rate(110.0)));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_chance: None,
+                    golden_combo_caret: None,
+                    golden_combo_multiplier: None,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn golden_combo_rejects_outlier_chance_after_consensus() {
+        let mut sm = RunStateMachine::new();
+        // Establish 0.03 with a confirmed run + two matching samples.
+        let mut ok = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        ok.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(100),
+            multiplier: Some(0.05),
+        };
+        feed2(&mut sm, ok);
+        sm.poll(ok);
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+
+        let mut bad = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        bad.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.93),
+            caret_count: Some(101),
+            multiplier: None,
+        };
+        sm.poll(bad);
+        // Chance stays 0.03; caret can still update.
+        assert_eq!(sm.live_state().golden_combo_chance, Some(0.03));
+        assert_eq!(sm.live_state().golden_combo_caret, Some(101));
+    }
+
+    #[test]
+    fn golden_combo_snapshot_uses_consensus_chance_with_caret() {
+        let mut sm = RunStateMachine::new();
+        let mut first = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        first.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(150),
+            multiplier: Some(0.05),
+        };
+        feed2(&mut sm, first);
+
+        let mut second = p(GameMode::Normal, 15, 2, CoinReading::Rate(110.0));
+        second.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(151),
+            multiplier: None,
+        };
+        let actions = feed2(&mut sm, second);
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 1,
+                    golden_combo_chance: Some(0.03),
+                    golden_combo_caret: Some(c),
+                    ..
+                } if *c == 150 || *c == 151
             )
         }));
     }
