@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] — 2026-08-09
+
 ### Added
 
 - **Golden Combo tracking** — reads the in-game toast and shows chance, activations (`^N`), and bonus on the live Dashboard; saves them per wave in History (editable table, chart series, run average, CSV/ODS export). Charts can toggle GC activations and wave jumps; History compare can overlay GC like wave jumps. Samples the toast more often between full HUD reads.
@@ -12,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Wave jump display** — chart, History, and the live **Wave jump** stat use the observed wave increment for skip events (same as `+1` jumps). Banner OCR `×N` no longer replaces the jump size when it differs by ±1.
+- **History live tables** — coin/min and Golden Combo tables refresh while an open run is selected.
 
 ### Changed
 
