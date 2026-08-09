@@ -26,10 +26,6 @@ export function getUpdateChannel(): UpdateChannel {
   return "github";
 }
 
-export function isStoreDistribution(): boolean {
-  return getUpdateChannel() === "store";
-}
-
 export function isUpdaterEnabled(): boolean {
   return getUpdateChannel() === "github";
 }

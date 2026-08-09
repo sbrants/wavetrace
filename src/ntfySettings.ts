@@ -5,9 +5,7 @@ export const NTFY_RECOMMENDED_WAVE_EVERY_WITH_IMAGES = 1000;
 export const NTFY_MIN_WAVE_EVERY_WITH_IMAGES = 500;
 
 export function ntfySendsImages(settings: Settings): boolean {
-  return Boolean(
-    settings.notify_ntfy_enabled && settings.notify_ntfy_attach_capture !== false
-  );
+  return settings.notify_ntfy_enabled && settings.notify_ntfy_attach_capture;
 }
 
 export function ntfyWaveMilestoneWarning(settings: Settings): string | null {

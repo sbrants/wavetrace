@@ -45,29 +45,29 @@ export interface Settings {
   minimize_to_tray: boolean;
   notify_run_ended: boolean;
   notify_window_lost: boolean;
-  notify_desktop_enabled?: boolean;
-  notify_research_complete?: boolean;
-  notify_event_mission_complete?: boolean;
-  notify_system_shutdown?: boolean;
-  notify_coin_unavailable_after_secs?: number | null;
+  notify_desktop_enabled: boolean;
+  notify_research_complete: boolean;
+  notify_event_mission_complete: boolean;
+  notify_system_shutdown: boolean;
+  notify_coin_unavailable_after_secs: number | null;
   notify_wave_every: number | null;
-  notify_ntfy_enabled?: boolean;
-  notify_ntfy_attach_capture?: boolean;
-  notify_ntfy_topic?: string;
+  notify_ntfy_enabled: boolean;
+  notify_ntfy_attach_capture: boolean;
+  notify_ntfy_topic: string;
   /** Set when History run comparison is active (read-only from UI). */
-  compare_capture_active?: boolean;
+  compare_capture_active: boolean;
   /** Show header Download save when an emulator is reachable via ADB (hidden while auto-pull is on). */
-  save_pull_enabled?: boolean;
+  save_pull_enabled: boolean;
   /** Optional extra emulator ADB port (e.g. 62001). */
-  save_pull_adb_port?: number | null;
+  save_pull_adb_port: number | null;
   /** Append date/time to filename; off overwrites playerInfo.dat. */
-  save_pull_timestamp_filename?: boolean;
+  save_pull_timestamp_filename: boolean;
   /** Output folder; empty = Downloads. */
-  save_pull_dir?: string;
+  save_pull_dir: string;
   /** Periodically pull when emulator is online; only write if hash changed. */
-  save_pull_auto?: boolean;
+  save_pull_auto: boolean;
   /** Auto-pull interval seconds (min 15). */
-  save_pull_auto_interval_secs?: number;
+  save_pull_auto_interval_secs: number;
 }
 
 export interface GameSaveStatus {
@@ -143,13 +143,6 @@ export interface ScannerLogView {
   total_lines: number;
   truncated: boolean;
   log_tail_truncated: boolean;
-}
-
-export interface CaptureBurstResult {
-  saved: number;
-  coin_rate_detected: number;
-  manifest_path: string;
-  captured_dir: string;
 }
 
 export interface OcrProbeResult {
@@ -250,8 +243,6 @@ export const api = {
     invoke<void>("start_scanner", { mode }),
   stopScanner: () => invoke<void>("stop_scanner"),
   scannerRunning: () => invoke<boolean>("scanner_running"),
-  liveState: () => invoke<LiveState>("live_state"),
-  manualNewRun: () => invoke<void>("manual_new_run"),
   listRuns: (filter: RunFilter) => invoke<RunRow[]>("list_runs", { filter }),
   setRunComment: (runId: string, comment: string) =>
     invoke<void>("set_run_comment", { runId, comment }),
@@ -271,13 +262,11 @@ export const api = {
     invoke<string>("combine_runs", { runIds }),
   runSnapshots: (runId: string) =>
     invoke<SnapshotRow[]>("run_snapshots", { runId }),
-  currentRunSnapshots: () => invoke<SnapshotRow[]>("current_run_snapshots"),
   currentRunDashboard: () => invoke<DashboardRunView>("current_run_dashboard"),
   runDashboardData: (runId: string) =>
     invoke<DashboardRunView>("run_dashboard_data", { runId }),
   runWaveSkips: (runId: string) =>
     invoke<WaveSkipRow[]>("run_wave_skips", { runId }),
-  currentRunWaveSkips: () => invoke<WaveSkipRow[]>("current_run_wave_skips"),
   exportCsv: (filter: RunFilter) =>
     invoke<CsvExport>("export_csv", { filter }),
   exportWorkbook: (filter: RunFilter) =>
@@ -290,13 +279,13 @@ export const api = {
   appendAppLog: (source: string, message: string) =>
     invoke<void>("append_app_log", { source, message }),
   captureAppWindow: () => invoke<string>("capture_app_window"),
+  copyImageToClipboard: (pngBase64: string) =>
+    invoke<void>("copy_image_to_clipboard", { pngBase64 }),
   generateDebugPackage: (screenshots: DebugScreenshot[]) =>
     invoke<DebugPackageExport>("generate_debug_package", { screenshots }),
   getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: () => invoke<string>("preview_capture"),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
-  captureFixtureBurst: (count: number, intervalMs: number) =>
-    invoke<CaptureBurstResult>("capture_fixture_burst", { count, intervalMs }),
   onScannerUpdate: (cb: (e: ScannerEvent) => void): Promise<UnlistenFn> =>
     listen<ScannerEvent>("scanner-update", (event) => cb(event.payload)),
 };

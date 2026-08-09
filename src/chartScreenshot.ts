@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { api } from "./api";
 
 const PANEL_BG = "#16203a";
 const TITLE_COLOR = "#8da2c0";
@@ -169,7 +169,7 @@ export function blobToBase64(blob: Blob): Promise<string> {
 export async function copyChartScreenshot(blob: Blob) {
   if ("__TAURI_INTERNALS__" in window) {
     const pngBase64 = await blobToBase64(blob);
-    await invoke("copy_image_to_clipboard", { pngBase64 });
+    await api.copyImageToClipboard(pngBase64);
     return;
   }
 

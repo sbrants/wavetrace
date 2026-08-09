@@ -948,55 +948,6 @@ pub fn publish_ntfy_wave_milestone_blocking(
     }
 }
 
-/// Composite game + dashboard/comparison screenshots and publish to ntfy (async).
-pub fn publish_ntfy_wave_milestone_async(
-    app: &AppHandle,
-    title: String,
-    body: String,
-    game_png_base64: String,
-    ui_png_base64: Option<String>,
-) {
-    let cfg = load_settings();
-    if !cfg.notify_ntfy_enabled {
-        return;
-    }
-    let topic = cfg.notify_ntfy_topic.clone();
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let result: Result<(), NtfyPublishError> = (|| {
-            let game = decode_png_rgba(&game_png_base64).map_err(|detail| NtfyPublishError {
-                status: None,
-                detail,
-            })?;
-            let rgba = if let Some(ui_b64) = ui_png_base64.filter(|s| !s.trim().is_empty()) {
-                let ui = decode_png_rgba(&ui_b64).map_err(|detail| NtfyPublishError {
-                    status: None,
-                    detail,
-                })?;
-                composite_vertical_rgba(&game, &ui)
-            } else {
-                eprintln!(
-                    "wave milestone ntfy: no dashboard/compare screenshot — sending game capture only"
-                );
-                game
-            };
-            let att = prepare_ntfy_capture(&rgba).map_err(|e| NtfyPublishError {
-                status: None,
-                detail: e,
-            })?;
-            publish_ntfy_with_attachment(&topic, &title, &body, &att)
-        })();
-        if let Err(e) = result {
-            eprintln!("ntfy wave milestone publish failed: {e}");
-            if e.is_rate_limited() {
-                if let Some(state) = app.try_state::<NotifyState>() {
-                    state.record_ntfy_rate_limit(&app);
-                }
-            }
-        }
-    });
-}
-
 /// Fire-and-forget ntfy publish using saved settings (when enabled).
 fn publish_ntfy_async(app: &AppHandle, title: &str, body: &str, capture: Option<RgbaImage>) {
     let cfg = load_settings();
@@ -1057,11 +1008,6 @@ fn ntfy_publish_error(status: u16) -> NtfyPublishError {
             format!("ntfy returned HTTP {status}")
         },
     }
-}
-
-/// Publish a text-only notification to an ntfy topic (sync).
-pub fn publish_ntfy(topic_or_url: &str, title: &str, body: &str) -> Result<(), String> {
-    publish_ntfy_inner(topic_or_url, title, body, None).map_err(|e| e.detail)
 }
 
 fn publish_ntfy_inner(

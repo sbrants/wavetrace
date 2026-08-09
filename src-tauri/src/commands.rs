@@ -7,11 +7,9 @@ use crate::backup::{self, BackupExport, BackupRestore};
 use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
 use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
-use crate::fixture_capture::{self, CaptureEntry};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
-use crate::state_machine::LiveState;
-use crate::{capture, scanner, settings};
+use crate::{capture, settings};
 use serde::Serialize;
 
 pub struct AppState {
@@ -288,33 +286,6 @@ pub fn scanner_running(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn live_state(state: State<AppState>) -> LiveState {
-    state.scanner.cached_live_state()
-}
-
-#[tauri::command]
-pub fn manual_new_run(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let conn = conn()?;
-    let target = settings::resolve_target_window(&conn)?;
-    let actions = scanner::new_run_actions(
-        &mut state.scanner.machine.lock().unwrap(),
-        &target,
-    );
-    let action_refs = actions.as_slice();
-    scanner::apply_actions(
-        &conn,
-        &state.scanner.current_run_id,
-        action_refs,
-        &db::app_data_dir().join("logs"),
-    );
-    scanner::notify_scanner_actions(&app, action_refs, None, crate::notifications::NotifyFrameContext::default());
-    if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
-        notify.reset_run_tracking();
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub fn list_runs(filter: RunFilter) -> Result<Vec<RunRow>, String> {
     db::list_runs(&conn()?, &filter).map_err(|e| e.to_string())
 }
@@ -391,15 +362,6 @@ pub fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
     db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn current_run_snapshots(state: State<AppState>) -> Result<Vec<SnapshotRow>, String> {
-    let id = state.scanner.current_run_id.lock().unwrap().clone();
-    match id {
-        Some(id) => db::run_snapshots(&conn()?, &id).map_err(|e| e.to_string()),
-        None => Ok(Vec::new()),
-    }
-}
-
 #[derive(Debug, Serialize)]
 pub struct DashboardRunView {
     pub snapshot_total: usize,
@@ -451,15 +413,6 @@ pub fn run_dashboard_data(run_id: String) -> Result<DashboardRunView, String> {
 #[tauri::command]
 pub fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
     db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn current_run_wave_skips(state: State<AppState>) -> Result<Vec<WaveSkipRow>, String> {
-    let id = state.scanner.current_run_id.lock().unwrap().clone();
-    match id {
-        Some(id) => db::run_wave_skips(&conn()?, &id).map_err(|e| e.to_string()),
-        None => Ok(Vec::new()),
-    }
 }
 
 /// Export all snapshots (with run metadata) for browser download.
@@ -687,65 +640,6 @@ pub fn generate_debug_package(
     let export = debug_package::create_debug_package(&input)?;
     reveal_in_file_manager(std::path::Path::new(&export.path))?;
     Ok(export)
-}
-
-#[derive(Serialize)]
-pub struct CaptureBurstResult {
-    pub saved: usize,
-    pub coin_rate_detected: usize,
-    pub manifest_path: String,
-    pub captured_dir: String,
-}
-
-/// Save one frame + OCR metadata to fixtures/captured/.
-#[tauri::command]
-pub async fn capture_fixture_once() -> Result<CaptureEntry, String> {
-    tauri::async_runtime::spawn_blocking(capture_fixture_once_blocking)
-        .await
-        .map_err(|e| format!("capture task failed: {e}"))?
-}
-
-fn capture_fixture_once_blocking() -> Result<CaptureEntry, String> {
-    let conn = conn()?;
-    let target = settings::resolve_target_window(&conn)?;
-    fixture_capture::capture_once(&target, false)
-}
-
-/// Burst-capture frames for the OCR regression corpus.
-#[tauri::command]
-pub async fn capture_fixture_burst(
-    count: usize,
-    interval_ms: u64,
-) -> Result<CaptureBurstResult, String> {
-    let count = count.clamp(1, 200);
-    let interval_ms = interval_ms.clamp(100, 10_000);
-    tauri::async_runtime::spawn_blocking(move || capture_fixture_burst_blocking(count, interval_ms))
-        .await
-        .map_err(|e| format!("capture task failed: {e}"))?
-}
-
-fn capture_fixture_burst_blocking(
-    count: usize,
-    interval_ms: u64,
-) -> Result<CaptureBurstResult, String> {
-    let conn = conn()?;
-    let target = settings::resolve_target_window(&conn)?;
-    let entries =
-        fixture_capture::capture_burst(&target, count, interval_ms, false)?;
-    let coin_rate_detected = entries
-        .iter()
-        .filter(|e| e.classified.coin_rate_detected)
-        .count();
-    Ok(CaptureBurstResult {
-        saved: entries.len(),
-        coin_rate_detected,
-        manifest_path: fixture_capture::manifest_path()
-            .to_string_lossy()
-            .to_string(),
-        captured_dir: fixture_capture::captured_dir()
-            .to_string_lossy()
-            .to_string(),
-    })
 }
 
 #[derive(Serialize)]

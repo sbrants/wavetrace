@@ -132,31 +132,17 @@ export default function App() {
   }, [refreshCanResume]);
 
   useEffect(() => {
-    api
-      .getSettings()
-      .then((s) => {
-        setMinimizeToTray(s.minimize_to_tray ?? true);
-        setSavePullEnabled(s.save_pull_enabled ?? true);
-        setSavePullAuto(s.save_pull_auto ?? false);
-      })
-      .catch(() => {
-        setMinimizeToTray(true);
-        setSavePullEnabled(true);
-      });
-  }, [tab]);
-
-  useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       api
         .getSettings()
         .then((s) => {
           if (cancelled) return;
-          const enabled = s.save_pull_enabled ?? true;
-          const auto = s.save_pull_auto ?? false;
+          const enabled = s.save_pull_enabled;
+          const auto = s.save_pull_auto;
           setSavePullEnabled(enabled);
           setSavePullAuto(auto);
-          setMinimizeToTray(s.minimize_to_tray ?? true);
+          setMinimizeToTray(s.minimize_to_tray);
           if (!enabled) {
             setGameSaveStatus(null);
             return;
