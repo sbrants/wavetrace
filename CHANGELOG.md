@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Golden Combo tracking** — reads the in-game toast and shows chance, activations (`^N`), and bonus on the live Dashboard; saves them per wave in History (editable table, chart series, run average, CSV/ODS export). Charts can toggle GC activations and wave jumps; History compare can overlay GC like wave jumps.
+- **Golden Combo tracking** — reads the in-game toast and shows chance, activations (`^N`), and bonus on the live Dashboard; saves them per wave in History (editable table, chart series, run average, CSV/ODS export). Charts can toggle GC activations and wave jumps; History compare can overlay GC like wave jumps. Samples the toast more often between full HUD reads.
 
 ### Fixed
 

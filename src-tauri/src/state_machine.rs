@@ -670,6 +670,19 @@ impl RunStateMachine {
         self.wave_skip.set_resume_catchup_pending(true);
     }
 
+    /// Apply a GC toast reading from a GC-only OCR tick (no coin/wave/skip updates).
+    /// Attributes the hit to the current confirmed wave for the per-wave snapshot.
+    pub fn poll_golden_combo_only(&mut self, gc: GoldenComboReading) {
+        if !gc.seen {
+            return;
+        }
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let update_wave_snapshot = self.wave.confirmed.is_some();
+        apply_golden_combo_reading(run, gc, update_wave_snapshot);
+    }
+
     /// When scanning starts with no active run, open one immediately so snapshots can persist.
     pub fn ensure_run_for_scanning(&mut self) -> Vec<Action> {
         if self.run.is_some() {
@@ -2343,6 +2356,77 @@ mod tests {
             Some(324),
             "live latch should keep the last OCR read"
         );
+    }
+
+    #[test]
+    fn poll_golden_combo_only_updates_live_and_wave_snapshot() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)),
+        );
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 2, CoinReading::Rate(1e12)),
+        );
+        // Confirmed on wave 2 after flush of wave 1.
+        assert_eq!(sm.live_state().wave, Some(2));
+        assert!(!sm.live_state().total_coin_warning);
+        let mode_before = sm.live_state().mode;
+
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(200),
+            multiplier: Some(0.08),
+        });
+        assert_eq!(sm.live_state().golden_combo_caret, Some(200));
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.08));
+        assert!(!sm.live_state().total_coin_warning);
+        assert_eq!(sm.live_state().mode, mode_before);
+
+        let actions = feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 3, CoinReading::Rate(1e12)),
+        );
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_caret: Some(200),
+                    golden_combo_multiplier: Some(0.08),
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn poll_golden_combo_only_ignores_unseen_and_does_not_touch_coin() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 14, 1, CoinReading::Rate(100.0)),
+        );
+        sm.poll_golden_combo_only(GoldenComboReading::default());
+        assert_eq!(sm.live_state().golden_combo_caret, None);
+        assert!(!sm.live_state().total_coin_warning);
+        // Two Unreadable full polls would warn; GC-only must not count as Unreadable.
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(50),
+            multiplier: None,
+        });
+        sm.poll_golden_combo_only(GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(51),
+            multiplier: None,
+        });
+        assert!(!sm.live_state().total_coin_warning);
+        assert_eq!(sm.live_state().golden_combo_caret, Some(51));
     }
 
     #[test]

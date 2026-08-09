@@ -141,6 +141,38 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
     }
 }
 
+/// GC toast band only — skips full-frame OCR. Used between full HUD polls.
+/// `exit_bottom_norm` should be the last known Exit Battle bottom from a full poll
+/// (falls back to the default toast corridor when `None`).
+pub fn ocr_gc_only_cancellable<F: Fn() -> bool>(
+    frame: &RgbaImage,
+    exit_bottom_norm: Option<f32>,
+    should_continue: &F,
+) -> FieldOcr {
+    if !should_continue() {
+        return FieldOcr::default();
+    }
+    let started = Instant::now();
+    let gc = ocr::ocr_golden_combo_band_anchored(frame, exit_bottom_norm);
+    FieldOcr {
+        all_lines: gc.lines.clone(),
+        gc_band_lines: gc.lines.clone(),
+        exit_battle_y: exit_bottom_norm,
+        ocr_ms: started.elapsed().as_millis() as u64,
+        full_ms: 0,
+        gc_ms: gc.gc_ms(),
+        gc_yellow_ms: gc.yellow_ms,
+        gc_color_ms: gc.color_ms,
+        gc_ink: gc.ink_pixels,
+        gc_skip: gc.skip,
+    }
+}
+
+/// Parse Golden Combo from a GC-only band OCR result (no full-frame salvage).
+pub fn golden_combo_from_gc_only(fields: &FieldOcr) -> parser::GoldenComboReading {
+    parse_golden_combo(&fields.gc_band_lines)
+}
+
 fn salvage_gc_lines_from_frame(all_lines: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for (i, line) in all_lines.iter().enumerate() {
@@ -233,5 +265,20 @@ mod tests {
                 multiplier: Some(0.1),
             }
         );
+    }
+
+    #[test]
+    fn gc_only_parse_uses_band_lines_without_frame_salvage() {
+        let fields = FieldOcr {
+            all_lines: vec!["noise".into()],
+            gc_band_lines: vec!["Golden Combo: 0.03% ^200 = x0.08".into()],
+            exit_battle_y: Some(0.4),
+            full_ms: 0,
+            ..Default::default()
+        };
+        let g = golden_combo_from_gc_only(&fields);
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(200));
+        assert_eq!(g.multiplier, Some(0.08));
     }
 }

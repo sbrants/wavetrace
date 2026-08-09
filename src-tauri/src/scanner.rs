@@ -12,6 +12,9 @@ use crate::notifications::NotifyFrameContext;
 use crate::state_machine::{Action, LiveState, RunStateMachine, RunType};
 use crate::{capture, db, fields, settings};
 
+/// GC-only band ticks between each full HUD poll (capture → yellow toast, no full-frame OCR).
+const GC_ONLY_TICKS_BETWEEN_FULL: u32 = 2;
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanStartMode {
@@ -134,17 +137,23 @@ impl Scanner {
             std::fs::create_dir_all(&log_path).ok();
             emit(&app, "starting", &machine, &current_run_id, &cached_live);
 
+            let mut exit_y_cache: Option<f32> = None;
+            let mut gc_only_remaining: u32 = 0;
+
             while running.load(Ordering::SeqCst) {
                 let tick = Instant::now();
 
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
+                let do_gc_only = gc_only_remaining > 0;
                 let capture_started = Instant::now();
                 let frame = capture::capture_target(&target);
                 let capture_ms = capture_started.elapsed().as_millis();
                 let status = match frame {
                     None => {
+                        // Prefer a full HUD poll once the window returns.
+                        gc_only_remaining = 0;
                         emit(
                             &app,
                             "window_not_found",
@@ -154,6 +163,45 @@ impl Scanner {
                         );
                         sleep_remainder(tick, cfg.poll_interval_ms);
                         continue;
+                    }
+                    Some(full) if do_gc_only => {
+                        let should_continue = || running.load(Ordering::SeqCst);
+                        let fields = fields::ocr_gc_only_cancellable(
+                            &full,
+                            exit_y_cache,
+                            &should_continue,
+                        );
+                        if !should_continue() {
+                            break;
+                        }
+                        let gc = fields::golden_combo_from_gc_only(&fields);
+                        log_line(
+                            &log_path,
+                            &format!(
+                                "poll kind=gc {}x{} capture_ms={} ocr_ms={} full_ms={} \
+                                 gc_ms={} gc_y={} gc_c={} gc_ink={} gc_skip={} \
+                                 exit_y={:?} gc_band={:?} gc={:?}",
+                                full.width(),
+                                full.height(),
+                                capture_ms,
+                                fields.ocr_ms,
+                                fields.full_ms,
+                                fields.gc_ms,
+                                fields.gc_yellow_ms,
+                                fields.gc_color_ms,
+                                fields.gc_ink,
+                                fields.gc_skip,
+                                fields.exit_battle_y,
+                                fields.gc_band_lines,
+                                gc,
+                            ),
+                        );
+                        {
+                            let mut sm = machine.lock().unwrap();
+                            sm.poll_golden_combo_only(gc);
+                        }
+                        gc_only_remaining = gc_only_remaining.saturating_sub(1);
+                        "scanning"
                     }
                     Some(full) => {
                         let should_continue = || running.load(Ordering::SeqCst);
@@ -165,7 +213,7 @@ impl Scanner {
                         log_line(
                             &log_path,
                             &format!(
-                                "poll {}x{} capture_ms={} ocr_ms={} full_ms={} \
+                                "poll kind=full {}x{} capture_ms={} ocr_ms={} full_ms={} \
                                  gc_ms={} gc_y={} gc_c={} gc_ink={} gc_skip={} \
                                  tier={:?} wave={:?} coin={:?} skip={:?} \
                                  exit_y={:?} gc_band={:?} lines={:?}",
@@ -209,6 +257,10 @@ impl Scanner {
                                 frame_ctx,
                             );
                         }
+                        if fields.exit_battle_y.is_some() {
+                            exit_y_cache = fields.exit_battle_y;
+                        }
+                        gc_only_remaining = GC_ONLY_TICKS_BETWEEN_FULL;
                         "scanning"
                     }
                 };
