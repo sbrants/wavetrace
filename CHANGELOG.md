@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Discord support link** — header control after Settings (official Discord mark + label) opens the WaveTrace Discord channel; also listed in the README and privacy contact.
+
+### Fixed
+
+- **Defense dissonance icon detection** — HUD purple matching used a single bounding box of all purple pixels; defense screens include extra purple UI that inflated the crop past size limits. Connected-component blob picking restores defense (and keeps the other kinds working).
+
+### Changed
+
+- **Code cleanup** — removed unused Tauri commands/API wrappers and ntfy helpers, tightened Settings types, fixed History compare clear, and pruned shipped items from the future-capabilities doc.
+
 ---
 
 ## [0.2.44] — 2026-08-07
