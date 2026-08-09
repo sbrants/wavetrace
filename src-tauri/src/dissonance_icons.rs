@@ -74,11 +74,6 @@ pub fn detect(frame: &RgbaImage) -> Option<DissonanceKind> {
     detect_in_image(&crop, templates, true)
 }
 
-/// Match against a pre-cropped region (used by tests and diagnostics).
-pub fn detect_in_region(region: &RgbaImage) -> Option<DissonanceKind> {
-    detect_in_image(region, templates(), false)
-}
-
 /// Purple circle beside Tier/Wave in the in-run HUD.
 fn is_dissonance_hud_icon_pixel(r: u8, g: u8, b: u8) -> bool {
     r >= 88 && r <= 128 && g >= 30 && g <= 70 && b >= 120 && b <= 175 && r > g + 35
@@ -107,32 +102,86 @@ fn find_icon_bbox(region: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
     };
     let x_min = (region.width() as f32 * 0.20) as u32;
     let x_max = (region.width() as f32 * 0.85) as u32;
-    let mut min_x = region.width();
-    let mut max_x = 0u32;
-    let mut min_y = region.height();
-    let mut max_y = 0u32;
-    let mut count = 0u32;
-    for y in y_min..region.height() {
-        for x in x_min..x_max.min(region.width()) {
+    let width = region.width();
+    let height = region.height();
+
+    // Defense (and some other) screens include extra purple UI in the HUD band.
+    // Take the bounding box of *all* purple pixels and the real icon gets rejected
+    // (e.g. 192×86). Find connected blobs and keep the one that looks like the
+    // ~40×40 HUD circle instead.
+    let mut visited = vec![false; (width * height) as usize];
+    let mut best: Option<(u32, u32, u32, u32, i64)> = None; // x,y,w,h,score
+
+    for y in y_min..height {
+        for x in x_min..x_max.min(width) {
+            let idx = (y * width + x) as usize;
+            if visited[idx] {
+                continue;
+            }
             let p = region.get_pixel(x, y);
-            if is_dissonance_hud_icon_pixel(p[0], p[1], p[2]) {
-                min_x = min_x.min(x);
-                max_x = max_x.max(x);
-                min_y = min_y.min(y);
-                max_y = max_y.max(y);
+            if !is_dissonance_hud_icon_pixel(p[0], p[1], p[2]) {
+                continue;
+            }
+
+            let mut stack = vec![(x, y)];
+            visited[idx] = true;
+            let mut min_x = x;
+            let mut max_x = x;
+            let mut min_y = y;
+            let mut max_y = y;
+            let mut count = 0u32;
+
+            while let Some((cx, cy)) = stack.pop() {
                 count += 1;
+                min_x = min_x.min(cx);
+                max_x = max_x.max(cx);
+                min_y = min_y.min(cy);
+                max_y = max_y.max(cy);
+                for (nx, ny) in [
+                    (cx.wrapping_sub(1), cy),
+                    (cx + 1, cy),
+                    (cx, cy.wrapping_sub(1)),
+                    (cx, cy + 1),
+                ] {
+                    if nx < x_min || nx >= x_max.min(width) || ny < y_min || ny >= height {
+                        continue;
+                    }
+                    let nidx = (ny * width + nx) as usize;
+                    if visited[nidx] {
+                        continue;
+                    }
+                    let np = region.get_pixel(nx, ny);
+                    if !is_dissonance_hud_icon_pixel(np[0], np[1], np[2]) {
+                        continue;
+                    }
+                    visited[nidx] = true;
+                    stack.push((nx, ny));
+                }
+            }
+
+            if count < 80 || count > 2500 {
+                continue;
+            }
+            let w = max_x - min_x + 1;
+            let h = max_y - min_y + 1;
+            if w < 18 || h < 18 || w > 70 || h > 70 {
+                continue;
+            }
+            // Prefer roughly circular mid-size blobs (the HUD icon is ~40×40).
+            let aspect = (w as i64 - h as i64).abs();
+            let size_err = (w as i64 - 40).abs() + (h as i64 - 40).abs();
+            let score = -(aspect * 10 + size_err);
+            let better = best
+                .as_ref()
+                .map(|(_, _, _, _, s)| score > *s)
+                .unwrap_or(true);
+            if better {
+                best = Some((min_x, min_y, w, h, score));
             }
         }
     }
-    if count < 80 || count > 2500 {
-        return None;
-    }
-    let w = max_x - min_x + 1;
-    let h = max_y - min_y + 1;
-    if w < 18 || h < 18 || w > 70 || h > 70 {
-        return None;
-    }
-    Some((min_x, min_y, w, h))
+
+    best.map(|(x, y, w, h, _)| (x, y, w, h))
 }
 
 fn detect_in_image(

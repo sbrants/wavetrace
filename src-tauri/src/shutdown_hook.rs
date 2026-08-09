@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 static SHUTDOWN_NOTIFIED: AtomicBool = AtomicBool::new(false);
 

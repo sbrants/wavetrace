@@ -7,7 +7,6 @@ import {
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 import { formatRunType, runTypeUsesBadge } from "../runType";
-import { setDashboardChartEl } from "../notificationCapture";
 
 const SNAPSHOT_REFRESH_MS = 15_000;
 
@@ -23,11 +22,6 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const liveWaveRef = useRef<number | null>(null);
   liveWaveRef.current = event?.live?.wave ?? null;
   const live = event?.live ?? null;
-
-  useEffect(() => {
-    setDashboardChartEl(chartRef.current);
-    return () => setDashboardChartEl(null);
-  });
 
   useEffect(() => {
     const refresh = (force = false) => {

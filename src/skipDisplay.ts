@@ -28,10 +28,3 @@ export function formatSkipLiveStat(display: SkipDisplay): string {
 export function skipChartValue(display: SkipDisplay): number {
   return display.value;
 }
-
-export function formatSkipTooltipFromRow(row: {
-  skipped_count: number;
-  skip_multiplier?: number | null;
-}): string {
-  return formatSkipDisplay(skipDisplayFromRow(row));
-}

@@ -1,6 +1,6 @@
 # Future capabilities (reference)
 
-Ideas to revisit when planning releases. Not a commitment — prioritize based on user feedback and Store/cert constraints after the initial Microsoft Store launch.
+Ideas to revisit when planning releases. Not a commitment — prioritize based on user feedback and Store/cert constraints.
 
 See also: [Goal.md](../Goal.md) (phases, acceptance criteria, open questions).
 
@@ -12,19 +12,9 @@ See also: [Goal.md](../Goal.md) (phases, acceptance criteria, open questions).
 
 Still the main gap vs “real” companion usage. Today the emulator must stay visible. Improving capture when another window is on top (or documenting hard OS limits) would matter more than most chart tweaks.
 
-### 2. macOS (Phase 1b) ✅ shipped (v0.2.9)
+### 2. More tracked fields (carefully)
 
-DMGs for Apple Silicon and Intel on GitHub Releases. Follow-ups: Developer ID signing/notarization, optional Apple Vision OCR vs Tesseract tuning. In-app updater shipped in v0.2.11.
-
-### 3. System tray + “scan in background” ✅ shipped
-
-### 4. Notifications ✅ shipped
-
-Lightweight wins: run ended, target window lost for N minutes, optional “wave X” milestone. Local desktop notifications plus optional **ntfy** phone mirror (Settings → Background).
-
-### 5. More tracked fields (carefully)
-
-Tier / Wave / Coin-min are the initial set. **Wave skips** shipped in v0.2.22–v0.2.24 (detection, charting, skip/coin analytics); **wave jump** chart and dashboard UX in v0.2.25. Good next candidates are **stable, OCR-friendly** values:
+Tier / Wave / Coin-min are the initial set. Wave skips and wave-jump charting already shipped. Good next candidates are **stable, OCR-friendly** values:
 
 - Round / session coins (from end-of-run screen — `end_of_run` is already detected)
 - Cash/min vs coin/min if the UI exposes both reliably
@@ -35,23 +25,23 @@ Avoid chasing every HUD stat until there are fixtures and mode rules like `total
 
 ## Medium term — power users
 
-### 6. Personal bests & run comparison
+### 3. Personal bests & run comparison
 
 Extend existing run overlay and combine: “best coin/min at wave N”, “best run this tier”, compare two runs on the same wave axis.
 
-### 7. Profiles per emulator/window
+### 4. Profiles per emulator/window
 
 Saved window + poll interval per profile (“BlueStacks”, “phone mirror”) so switching setups isn’t all manual.
 
-### 8. Smarter export / portable backup ✅ shipped (v0.2.7)
+### 5. Cloud backup upload
 
-Zip backup of `wavetrace.db` + manifest via Settings → **Backup & restore**. Google Drive or other cloud upload remains a possible follow-up (same bundle format).
+Local zip backup/restore already ships. Google Drive or other cloud upload remains a possible follow-up (same bundle format).
 
-### 9. Auto-start on login (optional)
+### 6. Auto-start on login (optional)
 
 Common for idle-game tools. **Autostart** plugin; off by default with a clear Settings toggle (Store-friendly).
 
-### 10. OCR confidence / quality hints
+### 7. OCR confidence / quality hints
 
 Surface “low confidence” polls in the scanner log or dashboard when classification is shaky — builds trust without new game fields.
 
@@ -59,13 +49,25 @@ Surface “low confidence” polls in the scanner log or dashboard when classifi
 
 ## Long term (Phase 3+) — only if scope should grow
 
-### 11. Cloud sync + auth
+### 8. Cloud sync + auth
 
 Multi-device history, shared links, community stats. Biggest architectural shift (API, privacy policy, Store disclosure). Only worth it if users explicitly ask.
 
-### 12. Android / iOS
+### 9. Android / iOS
 
 Separate app, MediaProjection / ReplayKit, different OCR stack. Not an extension of the Tauri desktop app.
+
+---
+
+## Shipped (keep for history)
+
+| Capability | Notes |
+| --- | --- |
+| System tray + scan in background | v0.2.6 |
+| Desktop + ntfy notifications | run ended, window lost, wave milestones, research/event popups, shutdown |
+| Local backup / restore | v0.2.7 — Settings → Backup & restore |
+| macOS DMGs | v0.2.9; in-app updater v0.2.11 — Developer ID signing/notarization still open |
+| Wave skips + jump charts | v0.2.22–v0.2.25 |
 
 ---
 
@@ -85,16 +87,14 @@ Keep exports on the Rust side (as today) if you want fewer Store surface-area qu
 
 ---
 
-## Suggested priority after Store certification
+## Suggested priority
 
-1. ~~**Tray + notifications**~~ — done (v0.2.6)
-2. ~~**Local backup / restore**~~ — done (v0.2.7)
-3. ~~**macOS DMGs**~~ — done (v0.2.9); ~~macOS updater~~ — done (v0.2.11); Developer ID signing/notarization remains
-4. **Background capture** — hardest, but matches the product promise
-5. **End-of-run stats capture** — builds on existing `end_of_run` work
+1. **Background capture** — hardest, but matches the product promise
+2. **End-of-run stats capture** — builds on existing `end_of_run` work
+3. macOS Developer ID signing/notarization (DMGs/updater already ship)
 
 Defer cloud/mobile until there’s clear demand; WaveTrace’s strength is **local, focused, and trustworthy**.
 
 ---
 
-*Captured from planning discussion, 2026-06.*
+*Captured from planning discussion, 2026-06; pruned shipped “near term” items 2026-08.*

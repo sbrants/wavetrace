@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { api, type DebugScreenshot } from "./api";
 import { logUiError } from "./uiError";
 
 export type DebugTab = "dashboard" | "history" | "settings";
@@ -35,11 +35,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export interface DebugScreenshot {
-  label: string;
-  png_base64: string;
-}
-
 const DEBUG_TABS: { tab: DebugTab; label: string }[] = [
   { tab: "dashboard", label: "dashboard" },
   { tab: "history", label: "history" },
@@ -71,7 +66,7 @@ export async function captureDebugScreenshots(): Promise<DebugScreenshot[]> {
   for (const { tab, label } of DEBUG_TABS) {
     try {
       await withTabVisible(tab, async () => {
-        const png_base64 = await invoke<string>("capture_app_window");
+        const png_base64 = await api.captureAppWindow();
         shots.push({ label, png_base64 });
       });
     } catch (e) {

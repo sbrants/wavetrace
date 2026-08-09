@@ -373,6 +373,7 @@ mod tests {
         assert_eq!(input.dissonance, Some(DissonanceKind::Defense));
     }
 
+    #[test]
     fn farming_utility_upgrades_screen_is_not_dissonance() {
         let input = classify(&s(&[
             "$ 1.76M/min",

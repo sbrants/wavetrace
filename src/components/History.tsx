@@ -17,7 +17,7 @@ import { formatSkipDisplay, skipDisplayFromRow } from "../skipDisplay";
 import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
 import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
-import { setCompareChartEl, setCompareRunCount, setCompareSessionActive } from "../notificationCapture";
+import { setCompareSessionActive } from "../notificationCapture";
 
 type SortKey = "started_at" | "final_wave" | "peak_tier" | "avg_coin_per_minute";
 
@@ -81,17 +81,8 @@ export default function History() {
 
   useEffect(() => {
     const active = compareRuns.length >= 2;
-    setCompareRunCount(compareRuns.length);
     setCompareSessionActive(active);
     void api.setCompareCaptureActive(active);
-    if (!active) {
-      setCompareChartEl(null);
-      return;
-    }
-    const frame = requestAnimationFrame(() => {
-      setCompareChartEl(compareChartRef.current);
-    });
-    return () => cancelAnimationFrame(frame);
   }, [compareRuns]);
 
   const listFilter = useCallback((): RunFilter => {
@@ -349,6 +340,7 @@ export default function History() {
     setCompareRuns([]);
     setCompareSnapshots({});
     setCompareWaveSkips({});
+    setCompareNormalJumps({});
   };
 
   const combineSelected = async () => {
@@ -1021,7 +1013,7 @@ export default function History() {
             <h3>
               Compare {compareRuns.length} runs — coin/min vs wave
               {hasOngoingCompareRun && (
-                <span className="muted compare-live"> · live</span>
+                <span className="muted"> · live</span>
               )}
             </h3>
             <div className="chart-card-actions">
@@ -1161,7 +1153,7 @@ export default function History() {
                   </span>
                 )}
                 {hasOngoingSelectedRun && (
-                  <span className="muted compare-live"> · live</span>
+                  <span className="muted"> · live</span>
                 )}
               </h3>
               <div className="chart-card-actions">

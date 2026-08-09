@@ -18,6 +18,7 @@ current and past runs.
 | **Install** | [GitHub Releases](https://github.com/sbrants/wavetrace/releases) — Windows (NSIS), macOS (DMG), or Linux (AppImage). [Microsoft Store](https://apps.microsoft.com/detail/9P9M9DHX1L76) for MSIX. |
 | **Develop** | `npm install` then `npm run tauri dev` (Rust, Node 18+, MSVC on Windows — see [Prerequisites](#prerequisites-windows-10)) |
 | **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [good first issues](https://github.com/sbrants/wavetrace/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) · [Code of Conduct](CODE_OF_CONDUCT.md) |
+| **Support** | [WaveTrace Discord channel](https://discord.com/channels/850137217828388904/1521360695147368560) · [GitHub Issues](https://github.com/sbrants/wavetrace/issues) |
 | **Docs** | [Goal.md](Goal.md) · [PRIVACY.md](PRIVACY.md) · OCR corpus [`fixtures/captured/manifest.json`](fixtures/captured/manifest.json) |
 
 ## Stack

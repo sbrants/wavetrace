@@ -86,5 +86,6 @@ We may update this policy when the app changes. The effective date at the top wi
 
 ## Contact
 
+- **Support / questions:** [WaveTrace Discord channel](https://discord.com/channels/850137217828388904/1521360695147368560)
 - **Issues / privacy requests:** [github.com/sbrants/wavetrace/issues](https://github.com/sbrants/wavetrace/issues)
 - **Source & releases:** [github.com/sbrants/wavetrace](https://github.com/sbrants/wavetrace)

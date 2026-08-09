@@ -73,18 +73,3 @@ export function restoreTab(tab: AppTab) {
   }
   setTabFn(tab);
 }
-
-/** Switch tab, wait for render, run `fn`, then restore the prior tab. */
-export async function withAppTab<T>(
-  tab: AppTab,
-  fn: () => Promise<T>,
-  renderDelayMs = 1200,
-): Promise<T> {
-  const previous = await beginTabCapture(tab, renderDelayMs);
-  try {
-    return await fn();
-  } finally {
-    restoreTab(previous);
-    await waitForPaint();
-  }
-}

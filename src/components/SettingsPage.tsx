@@ -20,6 +20,7 @@ import { ntfyWaveMilestoneWarning } from "../ntfySettings";
 import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
 import { captureDebugScreenshots } from "../debugPackage";
+import ExternalLink from "../ExternalLink";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -459,7 +460,7 @@ export default function SettingsPage() {
           <p className="error">{probeError}</p>
         )}
         {probe && (
-          <div className="ocr-probe">
+          <div>
             <p>
               <strong>Window:</strong>{" "}
               {probe.window_found
@@ -505,7 +506,7 @@ export default function SettingsPage() {
         <label className="checkbox-inline">
           <input
             type="checkbox"
-            checked={settings.minimize_to_tray ?? true}
+            checked={settings.minimize_to_tray}
             onChange={(e) =>
               setSettings({ ...settings, minimize_to_tray: e.target.checked })
             }
@@ -525,7 +526,7 @@ export default function SettingsPage() {
         <label className="checkbox-inline">
           <input
             type="checkbox"
-            checked={settings.save_pull_enabled ?? true}
+            checked={settings.save_pull_enabled}
             onChange={(e) =>
               setSettings({ ...settings, save_pull_enabled: e.target.checked })
             }
@@ -539,7 +540,7 @@ export default function SettingsPage() {
         <label className="checkbox-inline">
           <input
             type="checkbox"
-            checked={settings.save_pull_auto ?? false}
+            checked={settings.save_pull_auto}
             onChange={(e) =>
               setSettings({ ...settings, save_pull_auto: e.target.checked })
             }
@@ -550,7 +551,7 @@ export default function SettingsPage() {
         <label className="checkbox-inline">
           <input
             type="checkbox"
-            checked={settings.save_pull_timestamp_filename ?? false}
+            checked={settings.save_pull_timestamp_filename}
             onChange={(e) =>
               setSettings({
                 ...settings,
@@ -568,7 +569,7 @@ export default function SettingsPage() {
               id="save-pull-dir"
               type="text"
               placeholder="Downloads (default)"
-              value={settings.save_pull_dir ?? ""}
+              value={settings.save_pull_dir}
               onChange={(e) =>
                 setSettings({ ...settings, save_pull_dir: e.target.value })
               }
@@ -606,7 +607,7 @@ export default function SettingsPage() {
               type="number"
               min={15}
               step={15}
-              value={settings.save_pull_auto_interval_secs ?? 60}
+              value={settings.save_pull_auto_interval_secs}
               onChange={(e) => {
                 const n = Number.parseInt(e.target.value, 10) || 60;
                 setSettings({
@@ -674,7 +675,7 @@ export default function SettingsPage() {
             id="notify-run-ended"
             label="Run ended"
             description="When a run stops and final stats are saved."
-            checked={settings.notify_run_ended ?? true}
+            checked={settings.notify_run_ended}
             onChange={(checked) =>
               setSettings({ ...settings, notify_run_ended: checked })
             }
@@ -738,7 +739,7 @@ export default function SettingsPage() {
             id="notify-system-shutdown"
             label="PC shutdown or restart"
             description="Best-effort alert when Windows is about to shut down or restart (e.g. updates). Uses your Delivery settings; won't fire on hard power-off."
-            checked={settings.notify_system_shutdown ?? true}
+            checked={settings.notify_system_shutdown}
             onChange={(checked) =>
               setSettings({ ...settings, notify_system_shutdown: checked })
             }
@@ -751,7 +752,7 @@ export default function SettingsPage() {
             id="notify-window-lost"
             label="Game window not found"
             description="When WaveTrace can't see the target window during a scan."
-            checked={settings.notify_window_lost ?? true}
+            checked={settings.notify_window_lost}
             onChange={(checked) =>
               setSettings({ ...settings, notify_window_lost: checked })
             }
@@ -767,7 +768,7 @@ export default function SettingsPage() {
             id="notify-research-complete"
             label="Lab research complete"
             description='When OCR sees "Research Complete:" (e.g. Starting Cash Lv.33).'
-            checked={settings.notify_research_complete ?? true}
+            checked={settings.notify_research_complete}
             onChange={(checked) =>
               setSettings({ ...settings, notify_research_complete: checked })
             }
@@ -776,7 +777,7 @@ export default function SettingsPage() {
             id="notify-event-mission-complete"
             label="Event mission complete"
             description='When OCR sees "EVENT MISSION COMPLETED" (e.g. Stun 50,000 enemies…).'
-            checked={settings.notify_event_mission_complete ?? true}
+            checked={settings.notify_event_mission_complete}
             onChange={(checked) =>
               setSettings({ ...settings, notify_event_mission_complete: checked })
             }
@@ -806,7 +807,7 @@ export default function SettingsPage() {
             id="notify-desktop-enabled"
             label="Desktop notifications"
             description="Show alerts in your OS notification center."
-            checked={settings.notify_desktop_enabled ?? true}
+            checked={settings.notify_desktop_enabled}
             onChange={(checked) =>
               setSettings({ ...settings, notify_desktop_enabled: checked })
             }
@@ -815,7 +816,7 @@ export default function SettingsPage() {
             id="notify-ntfy-enabled"
             label="Phone alerts (ntfy)"
             description="Mirror enabled events above to the ntfy app on your phone."
-            checked={settings.notify_ntfy_enabled ?? false}
+            checked={settings.notify_ntfy_enabled}
             onChange={(checked) =>
               setSettings({ ...settings, notify_ntfy_enabled: checked })
             }
@@ -824,8 +825,8 @@ export default function SettingsPage() {
             id="notify-ntfy-attach"
             label="Attach game screenshot to phone alerts"
             description="JPEG capture on phone alerts. Wave milestones include the game window plus the dashboard chart (or run comparison when enabled in History)."
-            checked={settings.notify_ntfy_attach_capture ?? true}
-            disabled={!(settings.notify_ntfy_enabled ?? false)}
+            checked={settings.notify_ntfy_attach_capture}
+            disabled={!settings.notify_ntfy_enabled}
             onChange={(checked) =>
               setSettings({ ...settings, notify_ntfy_attach_capture: checked })
             }
@@ -837,8 +838,8 @@ export default function SettingsPage() {
                 id="notify-ntfy-topic"
                 type="text"
                 placeholder="wavetrace-your-secret-topic"
-                value={settings.notify_ntfy_topic ?? ""}
-                disabled={!(settings.notify_ntfy_enabled ?? false)}
+                value={settings.notify_ntfy_topic}
+                disabled={!settings.notify_ntfy_enabled}
                 onChange={(e) =>
                   setSettings({ ...settings, notify_ntfy_topic: e.target.value })
                 }
@@ -847,16 +848,8 @@ export default function SettingsPage() {
           </div>
           <p className="muted">
             Install the free{" "}
-            <a
-              href="https://ntfy.sh"
-              onClick={(e) => {
-                e.preventDefault();
-                void api.openExternalUrl("https://ntfy.sh");
-              }}
-            >
-              ntfy
-            </a>{" "}
-            app, subscribe to your topic, then use{" "}
+            <ExternalLink href="https://ntfy.sh">ntfy</ExternalLink> app,
+            subscribe to your topic, then use{" "}
             <strong>Send test notification</strong> to verify delivery (tests phone
             setup only; does not depend on the event toggles above).
           </p>
@@ -865,8 +858,8 @@ export default function SettingsPage() {
               type="button"
               disabled={
                 ntfyBusy ||
-                !(settings.notify_ntfy_enabled ?? false) ||
-                !(settings.notify_ntfy_topic ?? "").trim()
+                !settings.notify_ntfy_enabled ||
+                !settings.notify_ntfy_topic.trim()
               }
               onClick={sendTestNtfy}
             >
@@ -940,7 +933,7 @@ export default function SettingsPage() {
             }}
           />
         </label>
-        <p className="muted">Polling interval, app log, and support tools.</p>
+        <p className="muted">Polling interval, app log, and debugging package.</p>
       </section>
 
       {showAdvanced && (
@@ -969,7 +962,7 @@ export default function SettingsPage() {
       <ScannerLogViewer appData={appData} />
 
       <section>
-        <h3>Support</h3>
+        <h3>Debugging package</h3>
         <p className="muted">
           Build a zip with <code>wavetrace.log</code> (recent tail), settings,
           scanner/runtime state, target-window OCR probe + capture, database summary, visible window list, and

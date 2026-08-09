@@ -1,7 +1,5 @@
 import changelogMd from "../CHANGELOG.md?raw";
 
-export const CHANGELOG_TEXT = changelogMd;
-
 /** Drop the title block and empty Unreleased section for in-app display. */
 export function changelogBody(): string {
   const lines = changelogMd.split("\n");
