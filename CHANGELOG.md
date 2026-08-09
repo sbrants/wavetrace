@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.45] — 2026-08-09
+
 ### Added
 
 - **Discord support link** — header control after Settings (official Discord mark + label) opens the WaveTrace Discord channel; also listed in the README and privacy contact.
