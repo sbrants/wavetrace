@@ -772,17 +772,16 @@ impl GoldenComboReading {
 /// - Reject OCR digit-swap inflation (`303`→`803`, `227`→`827`) even for small jumps.
 /// - When a swollen read is a confused twin of a nearby real stack, keep/recover that stack
 ///   (`302` + OCR `803` → `303`).
+/// - Cold-start leading `8` on a 3-digit caret demangles to `3` (`816`→`316`) — dominant
+///   yellow-toast error while stacks are still in the 3xx band.
 fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
     match (prev, newer) {
-        (None, n) => n,
+        (None, n) => n.map(demangle_leading_eight_cold),
         (p, None) => p,
         (Some(p), Some(n)) if p == n => Some(p),
         (Some(p), Some(n)) if n > p => {
             if let Some(fixed) = caret_ocr_inflation_correction(p, n) {
                 return Some(fixed);
-            }
-            if n - p <= 100 {
-                return Some(n);
             }
             Some(n)
         }
@@ -791,8 +790,6 @@ fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
             if caret_digit_confusion(p, n) {
                 return Some(n);
             }
-            // High latch looks like OCR inflation of a stack near the newer reading
-            // (`803` latched, then `302` seen → recover `303`).
             if let Some(fixed) = caret_ocr_inflation_correction(n, p) {
                 return Some(fixed);
             }
@@ -801,56 +798,53 @@ fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
     }
 }
 
-/// When `newer` looks like `prev` (or a small real bump from it) with one OCR digit
-/// swollen — e.g. prev `302` + OCR `803` → real `303` (leading `3`→`8`).
+/// Cold latch: prefer `3xx` over `8xx` (yellow toast often reads `3` as `8`).
+fn demangle_leading_eight_cold(n: u32) -> u32 {
+    let s = n.to_string();
+    if s.len() == 3 && s.starts_with('8') {
+        300 + (n % 100)
+    } else {
+        n
+    }
+}
+
+/// When `newer` looks like `prev` (or a small real bump from it) with a leading-digit
+/// OCR swell — e.g. prev `302` + OCR `803` → real `303` (`3`→`8`), or `227`+`827`→`227`.
 fn caret_ocr_inflation_correction(prev: u32, newer: u32) -> Option<u32> {
     if newer <= prev {
         return None;
     }
-    if caret_digit_confusion(newer, prev) {
-        return Some(prev);
-    }
-    let chars: Vec<char> = newer.to_string().chars().collect();
-    if chars.len() < 2 {
-        return None;
-    }
-    let mut best: Option<u32> = None;
-    for i in 0..chars.len() {
-        for &alt in ocr_digit_alternates(chars[i]) {
-            let mut trial = chars.clone();
-            trial[i] = alt;
-            let Ok(cand) = trial.iter().collect::<String>().parse::<u32>() else {
-                continue;
-            };
-            if cand < 10 || cand >= newer {
-                continue;
-            }
-            // Demangled value is the latch or a modest authentic increase.
+    let ns = newer.to_string();
+    if ns.len() == 3 && ns.starts_with('8') {
+        let rest = newer % 100;
+        // Prefer the 2xx/3xx twin nearest the prior latch (within a modest authentic bump).
+        let mut best: Option<u32> = None;
+        for lead in [2u32, 3u32] {
+            let cand = lead * 100 + rest;
             if cand >= prev && cand - prev <= 100 {
-                best = Some(best.map_or(cand, |b| b.max(cand)));
+                best = Some(best.map_or(cand, |b| {
+                    // Closer to prev wins; tie → higher (real growth).
+                    if cand.abs_diff(prev) < b.abs_diff(prev) {
+                        cand
+                    } else if cand.abs_diff(prev) > b.abs_diff(prev) {
+                        b
+                    } else {
+                        cand.max(b)
+                    }
+                }));
             }
         }
+        if let Some(cand) = best {
+            return Some(cand);
+        }
     }
-    best
+    // Exact single-digit twin that's far above prev (`227`→`827`).
+    if caret_digit_confusion(newer, prev) && newer - prev >= 400 {
+        return Some(prev);
+    }
+    None
 }
 
-fn ocr_digit_alternates(d: char) -> &'static [char] {
-    match d {
-        '8' => &['2', '3', '0'],
-        '2' => &['8'],
-        '3' => &['8'],
-        '0' => &['8', '6'],
-        '5' => &['6'],
-        '6' => &['5', '0'],
-        '1' => &['7'],
-        '7' => &['1'],
-        '4' => &['9'],
-        '9' => &['4'],
-        _ => &[],
-    }
-}
-
-/// True when `a` and `b` are the same length and differ by one common OCR digit swap.
 fn caret_digit_confusion(a: u32, b: u32) -> bool {
     let sa = a.to_string();
     let sb = b.to_string();
@@ -1611,7 +1605,7 @@ fn caret_marker_in_text(text: &str) -> Option<u32> {
             continue;
         }
         if let Some(n) = caret_digits_after_marker(&chars, i) {
-            best = Some(best.map_or(n, |b| b.max(n)));
+            best = merge_caret_count(best, Some(n));
         }
     }
     best
@@ -2684,8 +2678,49 @@ mod tests {
             multiplier: Some(0.09),
         };
         let frame = parse_golden_combo(&s(&["Golden Combo: 0.03%803 ="]));
-        assert_eq!(frame.caret_count, Some(803)); // raw OCR still sees 803
+        // Parse demangles leading 8→3 on cold/low stacks.
+        assert_eq!(frame.caret_count, Some(303));
         assert_eq!(prev.merge_with(frame).caret_count, Some(303));
+    }
+
+    #[test]
+    fn golden_combo_cold_start_demangles_816_to_316() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03%816 = xo.10!"]));
+        assert_eq!(g.caret_count, Some(316));
+    }
+
+    #[test]
+    fn golden_combo_merge_310_plus_ocr_816_becomes_316() {
+        let prev = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(310),
+            multiplier: Some(0.1),
+        };
+        let bad = GoldenComboReading {
+            seen: true,
+            chance_percent: None,
+            caret_count: Some(816),
+            multiplier: None,
+        };
+        assert_eq!(prev.merge_with(bad).caret_count, Some(316));
+    }
+
+    #[test]
+    fn golden_combo_keeps_8xx_when_already_in_high_regime() {
+        let prev = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(780),
+            multiplier: None,
+        };
+        let newer = GoldenComboReading {
+            seen: true,
+            chance_percent: None,
+            caret_count: Some(816),
+            multiplier: None,
+        };
+        assert_eq!(prev.merge_with(newer).caret_count, Some(816));
     }
 
     #[test]

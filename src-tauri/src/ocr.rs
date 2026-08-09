@@ -96,10 +96,15 @@ const GC_TOAST_BELOW_EXIT: f32 = 0.18;
 const GC_TOAST_Y: f32 = 0.14;
 const GC_TOAST_H: f32 = 0.22;
 /// Skip GC OCR when the yellow mask has almost no ink (empty corridor).
-const GC_YELLOW_MIN_INK_PIXELS: u32 = 400;
+/// Live toast hits were ≥~860 ink; raising from 400 skips sparse FX crumbs.
+const GC_YELLOW_MIN_INK_PIXELS: u32 = 800;
 /// Skip GC OCR when ink is huge — battlefield gold FX, not a toast-sized glyph run.
-/// Live hits sat ~3–5k ink; 30k+ polls were FX soup.
-const GC_YELLOW_MAX_INK_PIXELS: u32 = 12_000;
+/// Live hits topped out ~6.7k; above ~7k was miss/FX.
+const GC_YELLOW_MAX_INK_PIXELS: u32 = 7_000;
+/// Color backup only when yellow OCR is blank *and* ink is in the live toast cluster.
+/// Hits sit ~3.5k–6.5k; blank+out-of-band usually means FX crumbs, not a missed toast.
+const GC_COLOR_MIN_INK_PIXELS: u32 = 3_500;
+const GC_COLOR_MAX_INK_PIXELS: u32 = 6_500;
 
 /// Result of the dedicated Golden Combo toast OCR path (may skip OCR on ink gate).
 #[derive(Debug, Clone)]
@@ -176,7 +181,8 @@ pub fn ocr_golden_combo_band_anchored(
 
     let mut lines = Vec::new();
     // One dilated yellow pass — crush cyan/battlefield, thicken thin glyphs (`^`, `x0.NN`).
-    // Color upscale only when yellow finds no GC-like text (and ink still toast-sized).
+    // Color is a rare backup: live logs show yellow finds ~96% of GC-like bands while
+    // color ran on every miss. Only try color when yellow OCR returns no text at all.
     let yellow_started = Instant::now();
     let yellow = prepare_gc_band_yellow_from_mask(mask);
     if let Ok(extra) = ocr_prepared_rgba(&yellow) {
@@ -185,7 +191,10 @@ pub fn ocr_golden_combo_band_anchored(
     let yellow_ms = yellow_started.elapsed().as_millis() as u64;
 
     let mut color_ms = 0u64;
-    if !lines.iter().any(|l| line_looks_like_gc(l)) {
+    let yellow_blank = lines.iter().all(|l| l.trim().is_empty());
+    let toast_ink =
+        ink_pixels >= GC_COLOR_MIN_INK_PIXELS && ink_pixels <= GC_COLOR_MAX_INK_PIXELS;
+    if yellow_blank && toast_ink {
         let color_started = Instant::now();
         let color = upscale_rgba(&crop, GC_BAND_UPSCALE, GC_BAND_MAX_WIDTH);
         if let Ok(extra) = ocr_prepared_rgba(&color) {
@@ -265,17 +274,6 @@ pub fn dump_gc_toast_previews(
 
 fn count_yellow_ink(mask: &image::GrayImage) -> u32 {
     mask.pixels().filter(|p| p[0] > 0).count() as u32
-}
-
-fn line_looks_like_gc(line: &str) -> bool {
-    let t = line.to_lowercase();
-    let compact: String = t.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-    compact.contains("golden")
-        || compact.contains("combo")
-        || compact.contains("golde")
-        || t.contains("xo.")
-        || t.contains("x0.")
-        || (t.contains("0.03") && (t.contains('%') || t.contains("/0") || t.contains('=')))
 }
 
 /// Bottom of the Exit Battle control as a fraction of frame height, if OCR saw it.

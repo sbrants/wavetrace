@@ -25,8 +25,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **GC OCR cost** — stricter saturated-yellow mask; ink gate skips empty (`ink`) and FX-soup (`busy`) corridors; one dilated yellow pass; color only when yellow misses GC-like text; 2× CatmullRom upscale (was 3× Lanczos). Poll logs: `full_ms` / `gc_y` / `gc_c` / `gc_ink` / `gc_skip` (prep folded into `gc_y`/`gc_c`).
-- **History live tables** — while an open run is selected, coin/min / GC / jump tables refresh on `scanner-update` (throttled ~2.5s) in addition to the sampled live chart; 15s poll kept as backup.
+- **GC OCR cost** — stricter saturated-yellow mask; ink gate skips empty (`ink`, &lt;800) and FX-soup (`busy`, &gt;7k); one dilated yellow pass; color backup only when yellow OCR is blank **and** ink is in the toast band (3.5k–6.5k). 2× CatmullRom upscale. Poll logs: `full_ms` / `gc_y` / `gc_c` / `gc_ink` / `gc_skip`.
+- **GC caret 3↔8** — leading `8` on 3-digit stacks demangles to `3` (e.g. `816`→`316`) unless the run is already in the 700+ regime; within-line caret picks no longer prefer the higher confused twin.
 - **History compare** — wave jumps and GC activations overlays are off by default; **10 pts** smoothing and **lead/lag band** are on by default (when comparing exactly two runs).
 - **GC full-frame salvage** — when the toast band is empty/junk but full-frame OCR already has a GC-like line, that line is fed into the GC parser (and shown in `gc_band=` logs).
 - **GC chance %** — treated as fixed for a run (majority vote); outlier OCR (e.g. `0.93` vs `0.03`) ignored; snapshots only store GC when `^N` is present (no chance-only rows).
