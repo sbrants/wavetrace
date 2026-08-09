@@ -333,6 +333,7 @@ impl NotifyState {
                     wave,
                     tier,
                     coin_per_minute,
+                    ..
                 } => {
                     if let Some(every) = cfg.notify_wave_every {
                         if every > 0 {

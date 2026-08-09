@@ -736,6 +736,1085 @@ pub fn parse_wave_skip_overlay(lines: &[String]) -> WaveSkipOverlay {
     }
 }
 
+/// OCR reading of the in-game Golden Combo HUD line.
+/// Expected shape: `Golden Combo: 0.03% ^166 = x0.05`
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GoldenComboReading {
+    pub seen: bool,
+    /// Chance shown before `%` (e.g. `0.03`).
+    pub chance_percent: Option<f64>,
+    /// Stack / caret count after `^` (OCR often reads `^` as `A`).
+    pub caret_count: Option<u32>,
+    /// Multiplier after `= x` (may be fractional, e.g. `0.05`).
+    pub multiplier: Option<f64>,
+}
+
+impl GoldenComboReading {
+    /// Merge a newer OCR hit into a latched reading (keep prior fields if this frame omitted them).
+    pub fn merge_with(self, newer: Self) -> Self {
+        if !newer.seen {
+            return self;
+        }
+        Self {
+            seen: true,
+            chance_percent: self.chance_percent.or(newer.chance_percent),
+            // Activations only grow during a run; never let a flicker like `301`→`1` win.
+            caret_count: merge_caret_count(self.caret_count, newer.caret_count),
+            // Prefer a newly parsed multiplier so a bad early latch (e.g. `@x2S…`)
+            // can be corrected when OCR later yields `xo.08`.
+            multiplier: newer.multiplier.or(self.multiplier),
+        }
+    }
+}
+
+/// Latch GC activations across polls.
+/// - Prefer growth over shrink (guards `A301`→`A1` flicker).
+/// - Reject OCR digit-swap inflation (`303`→`803`, `227`→`827`) even for small jumps.
+/// - When a swollen read is a confused twin of a nearby real stack, keep/recover that stack
+///   (`302` + OCR `803` → `303`).
+fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
+    match (prev, newer) {
+        (None, n) => n,
+        (p, None) => p,
+        (Some(p), Some(n)) if p == n => Some(p),
+        (Some(p), Some(n)) if n > p => {
+            if let Some(fixed) = caret_ocr_inflation_correction(p, n) {
+                return Some(fixed);
+            }
+            if n - p <= 100 {
+                return Some(n);
+            }
+            Some(n)
+        }
+        (Some(p), Some(n)) => {
+            // n < p: allow correcting a corrupted high latch (`827`→`227`, `803`→`303`).
+            if caret_digit_confusion(p, n) {
+                return Some(n);
+            }
+            // High latch looks like OCR inflation of a stack near the newer reading
+            // (`803` latched, then `302` seen → recover `303`).
+            if let Some(fixed) = caret_ocr_inflation_correction(n, p) {
+                return Some(fixed);
+            }
+            Some(p)
+        }
+    }
+}
+
+/// When `newer` looks like `prev` (or a small real bump from it) with one OCR digit
+/// swollen — e.g. prev `302` + OCR `803` → real `303` (leading `3`→`8`).
+fn caret_ocr_inflation_correction(prev: u32, newer: u32) -> Option<u32> {
+    if newer <= prev {
+        return None;
+    }
+    if caret_digit_confusion(newer, prev) {
+        return Some(prev);
+    }
+    let chars: Vec<char> = newer.to_string().chars().collect();
+    if chars.len() < 2 {
+        return None;
+    }
+    let mut best: Option<u32> = None;
+    for i in 0..chars.len() {
+        for &alt in ocr_digit_alternates(chars[i]) {
+            let mut trial = chars.clone();
+            trial[i] = alt;
+            let Ok(cand) = trial.iter().collect::<String>().parse::<u32>() else {
+                continue;
+            };
+            if cand < 10 || cand >= newer {
+                continue;
+            }
+            // Demangled value is the latch or a modest authentic increase.
+            if cand >= prev && cand - prev <= 100 {
+                best = Some(best.map_or(cand, |b| b.max(cand)));
+            }
+        }
+    }
+    best
+}
+
+fn ocr_digit_alternates(d: char) -> &'static [char] {
+    match d {
+        '8' => &['2', '3', '0'],
+        '2' => &['8'],
+        '3' => &['8'],
+        '0' => &['8', '6'],
+        '5' => &['6'],
+        '6' => &['5', '0'],
+        '1' => &['7'],
+        '7' => &['1'],
+        '4' => &['9'],
+        '9' => &['4'],
+        _ => &[],
+    }
+}
+
+/// True when `a` and `b` are the same length and differ by one common OCR digit swap.
+fn caret_digit_confusion(a: u32, b: u32) -> bool {
+    let sa = a.to_string();
+    let sb = b.to_string();
+    if sa.len() != sb.len() || sa.len() < 2 {
+        return false;
+    }
+    let mut diffs = 0usize;
+    for (ca, cb) in sa.chars().zip(sb.chars()) {
+        if ca == cb {
+            continue;
+        }
+        diffs += 1;
+        if diffs > 1 || !ocr_confused_digits(ca, cb) {
+            return false;
+        }
+    }
+    diffs == 1
+}
+
+fn ocr_confused_digits(a: char, b: char) -> bool {
+    matches!(
+        (a, b),
+        ('2', '8')
+            | ('8', '2')
+            | ('3', '8')
+            | ('8', '3')
+            | ('0', '8')
+            | ('8', '0')
+            | ('5', '6')
+            | ('6', '5')
+            | ('1', '7')
+            | ('7', '1')
+            | ('4', '9')
+            | ('9', '4')
+            | ('0', '6')
+            | ('6', '0')
+    )
+}
+
+/// True when a line should be fed into [`parse_golden_combo`] (label or strong fields).
+pub fn is_golden_combo_candidate_line(line: &str) -> bool {
+    let lower = normalize_gc_ocr(&line.to_lowercase());
+    if is_golden_tower_noise(&lower) || is_gc_neighbor_poison(&lower) {
+        return false;
+    }
+    is_golden_combo_line(&lower)
+}
+
+/// Parse Golden Combo HUD text from OCR lines (tolerates common Windows OCR mangling).
+pub fn parse_golden_combo(lines: &[String]) -> GoldenComboReading {
+    let mut best = GoldenComboReading::default();
+    let lowers: Vec<String> = lines
+        .iter()
+        .map(|l| normalize_gc_ocr(&l.to_lowercase()))
+        .collect();
+
+    for (i, lower) in lowers.iter().enumerate() {
+        if is_golden_tower_noise(lower) {
+            continue;
+        }
+        let prev_golden = i > 0 && golden_token_present(&lowers[i - 1]);
+        let paired_next = i + 1 < lowers.len()
+            && golden_token_present(lower)
+            && combo_token_present(&lowers[i + 1]);
+        let paired_prev = combo_token_present(lower)
+            && !golden_token_present(lower)
+            && prev_golden;
+        // Do NOT treat bare "Gold"/"Golden" alone as enough — that was latching
+        // Wave Skip / coin neighbors (`A 446`) as carets. Require combo pairing
+        // or same-line field cues via `is_golden_combo_line`.
+        if !is_golden_combo_line(lower) && !paired_next && !paired_prev {
+            continue;
+        }
+
+        // Fold a tight window. Pulling wave counters / TV / skip lines in as neighbors
+        // made caret latch onto values like 2340 or 446 from `A 446`.
+        let start = if paired_prev
+            || (combo_token_present(lower) && prev_golden)
+            || (i > 0
+                && looks_like_gc_field_fragment(&lowers[i - 1])
+                && !is_gc_neighbor_poison(&lowers[i - 1]))
+        {
+            i.saturating_sub(1)
+        } else {
+            i
+        };
+        let mut end = (i + 1).min(lowers.len());
+        while end < lowers.len() && end < i + 3 {
+            if is_gc_neighbor_poison(&lowers[end]) {
+                break;
+            }
+            if looks_like_gc_field_fragment(&lowers[end])
+                || lowers[end].contains("xo.")
+                || lowers[end].contains("x0.")
+                || (combo_token_present(&lowers[end]) && !golden_token_present(lower))
+            {
+                end += 1;
+                continue;
+            }
+            // One more line only when the hit itself lacks fields.
+            if end == i + 1
+                && !looks_like_gc_field_fragment(lower)
+                && !lower.contains('%')
+                && !lower.contains('=')
+            {
+                end += 1;
+                continue;
+            }
+            break;
+        }
+        let mut blob = String::new();
+        for (j, part) in lowers[start..end].iter().enumerate() {
+            if j > 0 {
+                blob.push(' ');
+            }
+            // Skip wave-progress / skip-overlay / enemy-health neighbors.
+            if is_wave_progress_line(part)
+                || is_wave_label_line(part)
+                || is_gc_neighbor_poison(part)
+            {
+                continue;
+            }
+            blob.push_str(part);
+        }
+        if blob.trim().is_empty() {
+            continue;
+        }
+
+        let reading = extract_golden_combo_fields(&blob);
+        best = best.merge_with(reading);
+        if best.chance_percent.is_some()
+            && best.caret_count.is_some()
+            && best.multiplier.is_some()
+        {
+            break;
+        }
+    }
+    best
+}
+
+fn is_wave_label_line(lower: &str) -> bool {
+    let t = lower.trim();
+    t.starts_with("wave ") && t.chars().any(|c| c.is_ascii_digit())
+}
+
+/// Neighbor / band lines that must never contribute caret digits.
+fn is_gc_neighbor_poison(lower: &str) -> bool {
+    let compact = alphanumeric_compact(lower);
+    compact.contains("waveskip")
+        || compact.contains("skipped")
+        || compact.contains("enemyhealth")
+        || compact.contains("enemyattack")
+        || compact.contains("healthlevel")
+        || compact.contains("attacklevel")
+        || compact.contains("utilityupgrade")
+        || compact.contains("attackupgrade")
+        || compact.contains("executed")
+        || lower.contains("wave skipped")
+        || lower.contains("enemy health")
+        || lower.contains("enemy attack")
+        || lower.contains("/min")
+        // Coin/TV rate crumbs (`@ 1.46T`) — require a digit so `@ i.iot` OCR junk
+        // next to a real `xo.07` neighbor is not treated as poison.
+        || (lower.contains('@')
+            && lower.chars().any(|c| c.is_ascii_digit())
+            && (lower.contains('t') || lower.contains('q') || lower.contains('b'))
+            && !lower.contains("xo")
+            && !lower.contains("x0"))
+}
+
+/// Enough label signal to trust chance / caret / mult from this blob.
+fn gc_label_confident(blob: &str) -> bool {
+    let g = golden_token_present(blob);
+    let c = combo_token_present(blob);
+    if g && c {
+        return true;
+    }
+    // Golden + field cues on the same blob (Combo OCR-dropped).
+    if g
+        && (blob.contains('%')
+            || blob.contains("0/0")
+            || blob.contains("/0")
+            || blob.contains("xo.")
+            || blob.contains("x0.")
+            || blob.contains('=')
+            || looks_like_gc_field_fragment(blob))
+    {
+        return true;
+    }
+    // Label-less but strong: chance + bonus together.
+    looks_like_strong_gc_fields(blob)
+}
+
+/// Fold common OCR confusions / accented glyphs into ASCII-ish text.
+fn fold_gc_glyphs(lower: &str) -> String {
+    lower
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
+            'é' | 'è' | 'ë' | 'ê' | 'ē' | 'ė' | 'ę' => 'e',
+            'í' | 'ì' | 'ï' | 'î' | 'ī' | 'į' => 'i',
+            'ó' | 'ò' | 'ö' | 'ô' | 'õ' | 'ø' | 'ō' | 'ő' => 'o',
+            'ú' | 'ù' | 'ü' | 'û' | 'ū' | 'ů' => 'u',
+            'ç' | 'ć' | 'č' => 'c',
+            'ñ' | 'ń' => 'n',
+            'ý' | 'ÿ' => 'y',
+            'ß' => 's',
+            '„' | '‚' | '“' | '”' | '‘' | '’' | '«' | '»' => ' ',
+            '\u{00a0}' | '\u{2007}' | '\u{202f}' => ' ',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Collapse the worst Windows-OCR spellings before matching.
+fn normalize_gc_ocr(lower: &str) -> String {
+    let mut s = fold_gc_glyphs(lower);
+    for (from, to) in [
+        ("goten", "golden"),
+        ("goteh", "golden"),
+        ("colden", "golden"),
+        ("gol#n", "golden"),
+        ("goldach", "golden"),
+        ("goldacn", "golden"),
+        ("goldacm", "golden"),
+        ("goldbh", "golden"),
+        ("goldem", "golden"),
+        ("goldefi", "golden"),
+        ("goldeh", "golden"),
+        ("goldeni", "golden"),
+        ("goldenc", "golden"),
+        ("gdlde", "golden"),
+        ("g0lden", "golden"),
+        ("g01den", "golden"),
+        ("g010de", "golden"),
+        ("g010d", "golden"),
+        ("go den", "golden"),
+        ("gol e", "golden"),
+        ("gol ", "golden "),
+        ("@tden", "golden"),
+        ("@ den", "golden"),
+        ("@den", "golden"),
+        ("ocqptden", "golden"),
+        ("tidercombo", "golden combo"),
+        ("colibb", "combo"),
+        ("colib", "combo"),
+        ("gbmbo", "combo"),
+        ("cpmbop", "combo"),
+        ("gombo", "combo"),
+        ("-ombo", " combo"),
+        // Windows OCR often reads `x0.05` as `3<0.05` / `<0.05` / glued `Bxo.09`.
+        // Map `3<0.` → `x0.` (not `xo.0`) so `3<0.05` becomes `x0.05`, not `xo.005`.
+        ("3<0.", "x0."),
+        ("3<o.", "x0."),
+        ("bxo.", " xo."),
+        ("axo.", " xo."),
+        (" a xo.", " xo."),
+        ("<0.", "xo.0"),
+        ("<o.", "xo.0"),
+        ("xo.d", "xo.0"),
+        ("xo.o", "xo.0"),
+        ("xo.oi", "xo.01"),
+        ("xo.ou", "xo.0"),
+        ("xo.u", "xo.0"),
+        ("xoo.", "xo.0"),
+        ("xo ", "xo."),
+        ("xo0.", "xo.0"),
+        // `0.030<304` — `<` standing in for `%` before the caret.
+        ("0<", "%"),
+        ("o<", "%"),
+    ] {
+        if s.contains(from) {
+            s = s.replace(from, to);
+        }
+    }
+    s
+}
+
+fn is_golden_tower_noise(lower: &str) -> bool {
+    let compact = alphanumeric_compact(lower);
+    if compact.contains("combo")
+        || compact.contains("cotnb")
+        || compact.contains("epeibo")
+        || compact.contains("ombo")
+        || looks_like_gc_field_fragment(lower)
+    {
+        return false;
+    }
+    compact.contains("goldentower")
+        || compact.contains("goldentow")
+        || compact.contains("goldenbonus")
+        || compact.contains("towerbonus")
+        || (compact.contains("tower") && golden_token_present(lower))
+        || (compact.contains("bonus") && golden_token_present(lower))
+}
+
+fn alphanumeric_compact(lower: &str) -> String {
+    lower
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
+}
+
+fn golden_token_present(lower: &str) -> bool {
+    let compact = alphanumeric_compact(lower);
+    compact.contains("golden")
+        || compact.contains("golde")
+        || compact.contains("goiden")
+        || compact.contains("goidel")
+        || compact.contains("voiden")
+        || compact.contains("g01den")
+        || compact.contains("g0lden")
+        || compact.contains("g010de")
+        || compact.contains("qotaen")
+        || compact.contains("olden")
+        || compact.contains("tden")
+        || compact.contains("goldn")
+        || compact.contains("glden")
+        || compact.contains("gdlde")
+        || (compact.contains("gold") && compact.contains("den"))
+        || lower.contains("gold")
+        // Truncated first token: "Gol" / "Go" on its own line before "Combo:".
+        || compact == "gol"
+        || compact == "go"
+}
+
+fn combo_token_present(lower: &str) -> bool {
+    let compact = alphanumeric_compact(lower);
+    compact.contains("combo")
+        || compact.contains("cotnb")
+        || compact.contains("cpmbo")
+        || compact.contains("cpmb")
+        || compact.contains("gbmbo")
+        || compact.contains("epeibo")
+        || compact.contains("btnbo")
+        || compact.contains("comhbo")
+        || compact.contains("qmb")
+        || compact.contains("ombo")
+        || compact.contains("aubo")
+        || compact.contains("c0bo")
+        || compact.contains("cobo")
+        || compact.contains("cqbo")
+        || compact.contains("cqobo")
+        || lower.contains("co bo")
+        || lower.contains("com bo")
+        || lower.contains("com o")
+        || lower.contains("go bo")
+        || lower.contains("@ bo")
+        || lower.contains(".com")
+        || lower.contains("com ")
+        || lower.ends_with("com")
+        // Truncated "Golden Co" / "Golden Co:"
+        || lower.trim_end_matches(':').trim_end().ends_with(" co")
+        || compact.ends_with("co") && golden_token_present(lower)
+}
+
+fn looks_like_gc_field_fragment(lower: &str) -> bool {
+    let t = lower.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.contains('%')
+        || t.contains("0/0")
+        || t.contains("/0")
+        || t.contains("xo.")
+        || t.contains("x0.")
+        || t.contains("xo ")
+        || (t.contains('=') && !t.contains("tier"))
+        // Glued chance+caret with no percent marker: `0.0307263`
+        || (t.contains("0.03")
+            && t.chars().filter(|c| c.is_ascii_digit()).count() >= 5)
+        || (t.starts_with('a') && t.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+        || (t.starts_with('q') && t.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+        || (t.starts_with('^') && t.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+        // `00 A162 g` — caret token not at line start.
+        || t.split_whitespace().any(|tok| {
+            let tok = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '^');
+            let mut chars = tok.chars();
+            match chars.next() {
+                Some('a' | 'q' | '^') => chars.next().is_some_and(|c| c.is_ascii_digit()),
+                _ => false,
+            }
+        })
+}
+
+/// Standalone OCR crumbs that are almost certainly GC fields (no label).
+fn looks_like_strong_gc_fields(lower: &str) -> bool {
+    let t = lower.trim();
+    let has_chance = t.contains("0.03")
+        || (t.contains("0.0") && (t.contains('%') || t.contains("/0") || t.contains("0/0")));
+    let has_bonus = t.contains("xo.") || t.contains("x0.0");
+    let has_caret = looks_like_gc_field_fragment(t)
+        && t.chars().any(|c| c == 'a' || c == 'q' || c == '^' || c.is_ascii_digit());
+    let caretish = {
+        let chars: Vec<char> = t.chars().collect();
+        chars.windows(3).any(|w| {
+            matches!(w[0], 'a' | 'q' | '^')
+                && w[1].is_ascii_digit()
+                && w[2].is_ascii_digit()
+        }) || (t.contains('=')
+            && t.chars()
+                .filter(|c| c.is_ascii_digit())
+                .take(6)
+                .count()
+                >= 2)
+    };
+    (has_chance && (has_bonus || caretish)) || (has_bonus && (has_chance || caretish)) || (has_bonus && has_caret && t.contains('='))
+}
+
+fn is_golden_combo_line(lower: &str) -> bool {
+    let compact = alphanumeric_compact(lower);
+    if compact.contains("goldencombo")
+        || compact.contains("g01dencombo")
+        || compact.contains("goidelcombo")
+        || compact.contains("goidencombo")
+        || compact.contains("goldficombo")
+        || compact.contains("goldencom")
+        || compact.contains("goldencotnb")
+        || compact.contains("goldenombo")
+        || compact.contains("goldecombo")
+        || compact.contains("voidencombo")
+        || compact.contains("enicombo")
+    {
+        return true;
+    }
+    let has_golden = golden_token_present(lower);
+    let has_combo = combo_token_present(lower);
+    if has_golden && has_combo {
+        return true;
+    }
+    // Combo line with chance/bonus cues even when "Golden" was dropped.
+    if has_combo && looks_like_gc_field_fragment(lower) {
+        return true;
+    }
+    // OCR often drops "Combo" into noise but keeps chance / caret / xo on the Golden line.
+    if has_golden
+        && (lower.contains('%')
+            || lower.contains("0/0")
+            || lower.contains("xo.")
+            || lower.contains("x0.")
+            || lower.contains("xo ")
+            || lower.contains('=')
+            || looks_like_gc_field_fragment(lower))
+    {
+        return true;
+    }
+    // Label-less field crumb: `0.0 0/0 275=xo.09!`
+    if looks_like_strong_gc_fields(lower) {
+        return true;
+    }
+    false
+}
+
+fn extract_golden_combo_fields(blob: &str) -> GoldenComboReading {
+    if is_golden_tower_noise(blob) {
+        return GoldenComboReading::default();
+    }
+    let confident = gc_label_confident(blob);
+    let chance_percent = if confident || golden_token_present(blob) || combo_token_present(blob)
+    {
+        extract_golden_combo_chance(blob)
+    } else {
+        None
+    };
+    // Caret is the most poisoned field (skip overlays use `A NNN`). Only trust it
+    // on a confident GC blob.
+    let caret_count = if confident {
+        extract_golden_combo_caret(blob)
+    } else {
+        None
+    };
+    let multiplier = if confident {
+        extract_golden_combo_multiplier(blob)
+    } else {
+        None
+    };
+    let seen = chance_percent.is_some()
+        || caret_count.is_some()
+        || multiplier.is_some()
+        || golden_token_present(blob)
+        || combo_token_present(blob);
+    GoldenComboReading {
+        seen,
+        chance_percent,
+        caret_count,
+        multiplier,
+    }
+}
+
+fn percent_marker_len(rest: &str) -> Option<usize> {
+    let t = rest.trim_start();
+    if t.starts_with('%') {
+        return Some(rest.len() - t.len() + 1);
+    }
+    // OCR often substitutes `<` for `%` (`0.03<304`).
+    if t.starts_with('<') {
+        return Some(rest.len() - t.len() + 1);
+    }
+    for marker in ["/0", "0/0", "p/0", "o/0", "/o", "/oe"] {
+        if t.starts_with(marker) {
+            return Some(rest.len() - t.len() + marker.len());
+        }
+    }
+    None
+}
+
+fn extract_golden_combo_chance(blob: &str) -> Option<f64> {
+    // `0 03` / `0 03070` — space where the decimal point should be.
+    if let Some(v) = chance_from_spaced_decimal(blob) {
+        return Some(v);
+    }
+    // `Comboo.030/0` — leading 0 of chance glued onto "Combo" as `o`.
+    if let Some(v) = chance_from_o_decimal(blob) {
+        return Some(v);
+    }
+
+    let bytes = blob.as_bytes();
+    let mut i = 0usize;
+    let mut best: Option<f64> = None;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'.' {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            let Ok(num) = std::str::from_utf8(&bytes[start..i]) else {
+                continue;
+            };
+            let Ok(mut v) = num.parse::<f64>() else {
+                continue;
+            };
+            // Glued `0.0300259` / `0.03070` where chance+caret ran together.
+            if v >= 1.0 && num.starts_with("0") && num.contains('.') {
+                // e.g. unexpected
+            } else if !num.contains('.') && num.starts_with('0') && num.len() >= 3 {
+                // `003070` after normalize failures — treat as 0.03 if followed by caret digits.
+                if let Ok(head) = num[..3].parse::<f64>() {
+                    if head == 3.0 || head == 30.0 {
+                        // fall through
+                    }
+                }
+            }
+            // `0.0300259` → chance 0.03, caret parsed separately from trailing digits.
+            if num.contains('.') {
+                if let Some(dot) = num.find('.') {
+                    let frac = &num[dot + 1..];
+                    if frac.len() >= 4 {
+                        if let Ok(short) = format!("0.{}", &frac[..2]).parse::<f64>() {
+                            if short > 0.0 && short < 1.0 {
+                                v = short;
+                            }
+                        }
+                    }
+                }
+            }
+            if !(0.0 < v && v <= 10.0) {
+                continue;
+            }
+            let rest = &blob[i..];
+            if percent_marker_len(rest).is_some() {
+                return Some(v);
+            }
+            if v < 1.0 && num.contains('.') {
+                best = Some(v);
+            }
+            continue;
+        }
+        i += 1;
+    }
+    best
+}
+
+/// `Comboo.030/0` / `comboo.03%` — OCR glued the chance onto the word Combo.
+fn chance_from_o_decimal(blob: &str) -> Option<f64> {
+    let bytes = blob.as_bytes();
+    let mut i = 0usize;
+    while i + 3 < bytes.len() {
+        let c = bytes[i];
+        if (c == b'o' || c == b'O') && bytes[i + 1] == b'.' && bytes[i + 2].is_ascii_digit() {
+            // Don't treat `xo.05` multiplier as chance.
+            if i > 0 && bytes[i - 1] == b'x' {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            let frac = std::str::from_utf8(&bytes[i + 2..j]).ok()?;
+            let head: String = frac.chars().take(2).collect();
+            if let Ok(n) = head.parse::<u32>() {
+                let v = n as f64 / 100.0;
+                if v > 0.0 && v <= 0.25 {
+                    let rest = &blob[j..];
+                    if percent_marker_len(rest).is_some() || frac.len() >= 3 {
+                        return Some(v);
+                    }
+                }
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn chance_from_spaced_decimal(blob: &str) -> Option<f64> {
+    // `0 03` / `0 03070` near golden/combo text.
+    let chars: Vec<char> = blob.chars().collect();
+    for i in 0..chars.len() {
+        if chars[i] != '0' {
+            continue;
+        }
+        let mut j = i + 1;
+        let mut skipped_space = false;
+        while j < chars.len() && chars[j].is_whitespace() {
+            skipped_space = true;
+            j += 1;
+        }
+        // Require a real gap — otherwise `xo.05` looks like spaced `0`+`5`.
+        if !skipped_space || j >= chars.len() || !chars[j].is_ascii_digit() {
+            continue;
+        }
+        let start = j;
+        while j < chars.len() && chars[j].is_ascii_digit() {
+            j += 1;
+        }
+        let digits: String = chars[start..j].iter().collect();
+        if digits.is_empty() {
+            continue;
+        }
+        // Prefer `0 03…` (chance ~0.03) over noisy `0 530/0` → 0.53.
+        let head: String = if digits.starts_with('0') && digits.len() >= 3 {
+            digits.chars().skip(1).take(2).collect()
+        } else {
+            digits.chars().take(2).collect()
+        };
+        if let Ok(frac) = head.parse::<u32>() {
+            if (1..100).contains(&frac) {
+                let v = frac as f64 / 100.0;
+                // GC chance is a small percent (typically ≤ ~0.2).
+                if v > 0.0 && v <= 0.25 {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_golden_combo_caret(blob: &str) -> Option<u32> {
+    // Merge candidates with the same latch rules as across polls so a crumb `30`
+    // loses to `A310`, while `827` does not beat a cleaner `227` on the same blob.
+    let mut best: Option<u32> = None;
+    let bump = |best: &mut Option<u32>, n: u32| {
+        *best = merge_caret_count(*best, Some(n));
+    };
+
+    let chars: Vec<char> = blob.chars().collect();
+    for i in 0..chars.len() {
+        if !is_caret_marker_at(&chars, i) {
+            continue;
+        }
+        if let Some(n) = caret_digits_after_marker(&chars, i) {
+            bump(&mut best, n);
+        }
+    }
+
+    if let Some(n) = caret_digits_after_percent(blob) {
+        bump(&mut best, n);
+    }
+
+    if let Some(n) = caret_digits_before_equals(blob) {
+        bump(&mut best, n);
+    }
+
+    best
+}
+
+/// Digits after `^` / `A` / `Q`. Skips one OCR-junk glyph (`o`/`l`/`i`) so `Ao310`→310,
+/// but rejects 2-digit values that only appear after that junk (`Ao 30` must not latch).
+fn caret_digits_after_marker(chars: &[char], marker_idx: usize) -> Option<u32> {
+    let mut j = marker_idx + 1;
+    while j < chars.len() && (chars[j].is_whitespace() || chars[j] == '-') {
+        j += 1;
+    }
+    let mut skipped_junk = false;
+    if j < chars.len() && !chars[j].is_ascii_digit() {
+        // `A310` OCR'd as `Ao310` / `Al310` / `A|310` — one phantom glyph before digits.
+        if matches!(chars[j], 'o' | 'l' | 'i' | '|' | '!' | '/') {
+            skipped_junk = true;
+            j += 1;
+            while j < chars.len() && (chars[j].is_whitespace() || chars[j] == '-') {
+                j += 1;
+            }
+        }
+    }
+    let start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j <= start {
+        return None;
+    }
+    let digits: String = chars[start..j].iter().collect();
+    // After junk, only trust a full 3-digit stack — `Ao 30` is almost always a dropped
+    // middle digit from `A310`, not a real ^30.
+    if skipped_junk && digits.len() < 3 {
+        return None;
+    }
+    parse_plausible_caret(&digits)
+}
+
+/// `^166` / OCR `A151` / `Q77` — require a token boundary so mid-word `a` never matches.
+fn is_caret_marker_at(chars: &[char], i: usize) -> bool {
+    let c = chars[i];
+    if c == '^' || c == 'λ' || c == 'Λ' {
+        return true;
+    }
+    // Windows OCR often reads `^` as `A` or `Q`.
+    if c != 'a' && c != 'q' {
+        return false;
+    }
+    i == 0 || !chars[i - 1].is_ascii_alphanumeric()
+}
+
+fn parse_plausible_caret(digits: &str) -> Option<u32> {
+    if digits.is_empty() || digits.len() > 4 {
+        return None;
+    }
+    // OCR often pads stacks with a leading zero (`0289`, `026`); trim then require
+    // a real 2–3 digit value so crumbs like `01`→1 cannot wipe a latched stack.
+    let trimmed = digits.trim_start_matches('0');
+    if trimmed.is_empty() || trimmed.len() > 3 {
+        return None;
+    }
+    let n: u32 = trimmed.parse().ok()?;
+    if (10..=999).contains(&n) {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// Find `A260` / `Q77` / `^166` / `Ao310` inside a post-percent fragment.
+fn caret_marker_in_text(text: &str) -> Option<u32> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut best: Option<u32> = None;
+    for i in 0..chars.len() {
+        if !is_caret_marker_at(&chars, i) {
+            continue;
+        }
+        if let Some(n) = caret_digits_after_marker(&chars, i) {
+            best = Some(best.map_or(n, |b| b.max(n)));
+        }
+    }
+    best
+}
+
+fn caret_digits_before_equals(blob: &str) -> Option<u32> {
+    let eq = blob.find('=')?;
+    let before = blob[..eq].trim_end();
+    // Require the GC label somewhere before the equals.
+    if !golden_token_present(before) && !combo_token_present(before) {
+        return None;
+    }
+    let digits: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    // Unmarked digits before `=` are a weak signal. Require a full 3-digit stack so
+    // mangled `…/Ao 30 =` (true ^310) cannot latch as ^30. Two-digit stacks still
+    // parse via an explicit `A`/`^`/`Q` marker.
+    if digits.len() != 3 {
+        return None;
+    }
+    // Don't take the fractional tail of `0.03` — reject if the char before the digits is `.`.
+    let digit_start = before.len().saturating_sub(digits.len());
+    if digit_start > 0 {
+        let prev = before[..digit_start].chars().last();
+        if matches!(prev, Some('.')) {
+            return None;
+        }
+    }
+    parse_plausible_caret(&digits)
+}
+
+fn caret_digits_after_percent(blob: &str) -> Option<u32> {
+    let bytes = blob.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'.' {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            let rest = &blob[i..];
+            if let Some(marker_len) = percent_marker_len(rest) {
+                let after = rest[marker_len..].trim_start();
+                // Prefer an explicit caret marker in the remainder (`…/0 A260`, `…/60A260`).
+                if let Some(n) = caret_marker_in_text(after) {
+                    return Some(n);
+                }
+                let after = after.trim_start_matches(|c: char| {
+                    c == 'a'
+                        || c == 'q'
+                        || c == '^'
+                        || c == '*'
+                        || c == '·'
+                        || c == '-'
+                        || c == 'e'
+                        || c == 'm' // OCR often reads `^` as `m`
+                        || c.is_whitespace()
+                });
+                let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                // Unmarked digits after `%`/`/0` need a full 3-digit stack. Two-digit
+                // crumbs (`…/Ao 30`) are usually a dropped digit from ^1xx/^2xx/^3xx.
+                if digits.len() >= 3 {
+                    if let Some(n) = parse_plausible_caret(&digits) {
+                        return Some(n);
+                    }
+                }
+                // Glued chance+caret without marker gap: `0.0300259` already shortened
+                // chance; also handle `0.030/oe226`.
+            }
+            // Digits glued onto a long fractional chance: `0.0300259` → caret 259 / 0259.
+            continue;
+        }
+        i += 1;
+    }
+
+    // `0.0300259` / `0.03070` — take trailing 2–4 digits after a 0.03-like prefix.
+    caret_from_glued_fraction(blob)
+}
+
+fn caret_from_glued_fraction(blob: &str) -> Option<u32> {
+    // Only when this looks like a GC chance glue, not a random `0.08` multiplier/coin.
+    if !golden_token_present(blob) && !combo_token_present(blob) {
+        return None;
+    }
+    let bytes = blob.as_bytes();
+    let mut i = 0usize;
+    while i + 4 < bytes.len() {
+        if bytes[i] == b'0' && bytes[i + 1] == b'.' && bytes[i + 2] == b'0' {
+            let mut j = i + 3;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            let frac = std::str::from_utf8(&bytes[i + 2..j]).ok()?;
+            // Need a long frac so we are not reading `0.03` or `0.08` alone.
+            if frac.len() >= 5 {
+                // `0300259` → skip `03`, remaining `00259` / `0259` / `259`
+                let rest = &frac[2..];
+                let trimmed = rest.trim_start_matches('0');
+                let digits = if trimmed.is_empty() {
+                    rest
+                } else if trimmed.len() >= 3 {
+                    &trimmed[..trimmed.len().min(3)]
+                } else if rest.len() >= 3 {
+                    &rest[rest.len() - 3..]
+                } else {
+                    trimmed
+                };
+                if let Some(n) = parse_plausible_caret(digits) {
+                    return Some(n);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn extract_golden_combo_multiplier(blob: &str) -> Option<f64> {
+    let normalized = blob
+        .replace("xo ", "xo.")
+        .replace("x o.", "xo.")
+        .replace("xo.d", "xo.0")
+        .replace("xo.o", "xo.0")
+        .replace("xo.ou", "xo.0")
+        .replace("xoo.", "xo.0")
+        // Dilated OCR often drops `x` → `'(0.10!` / `(0.10!` / `'0.10!`
+        .replace("'(0.", "x0.")
+        .replace("(0.", "x0.")
+        .replace("'0.", "x0.");
+    // Prefer text after `=`, but always also scan the full blob for `xo.0N`
+    // (OCR often drops the equals or puts the bonus on a neighbor line).
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(eq) = normalized.find('=') {
+        candidates.push(&normalized[eq + 1..]);
+    }
+    candidates.push(normalized.as_str());
+
+    for (ci, search) in candidates.iter().enumerate() {
+        let fractional_only = ci + 1 == candidates.len() && normalized.find('=').is_none();
+        let chars: Vec<char> = search.chars().collect();
+        for i in 0..chars.len() {
+            let c = chars[i];
+            let star_as_x = c == '*';
+            if c != 'x' && c != '×' && !star_as_x {
+                continue;
+            }
+            if i > 0 {
+                let prev = chars[i - 1];
+                if prev == '@' || prev.is_ascii_alphanumeric() {
+                    continue;
+                }
+            }
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let mut num = String::new();
+            let mut used_xo = star_as_x;
+            if j < chars.len() && (chars[j] == 'o' || chars[j] == 'd') && !star_as_x {
+                num.push('0');
+                j += 1;
+                used_xo = true;
+            }
+            while j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == '.') {
+                num.push(chars[j]);
+                j += 1;
+            }
+            if num.is_empty() || num == "." {
+                continue;
+            }
+            let has_frac = num.contains('.');
+            if fractional_only && !used_xo && !has_frac {
+                continue;
+            }
+            if !has_frac && !used_xo && j < chars.len() && chars[j].is_ascii_alphabetic() {
+                continue;
+            }
+            if let Ok(v) = num.parse::<f64>() {
+                // Real GC bonus is a small fractional multiplier (x0.05), not x2 / x245.
+                if used_xo || has_frac {
+                    if v > 0.0 && v < 1.0 {
+                        return Some(v);
+                    }
+                } else if v > 0.0 && v <= 20.0 {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn is_standalone_skip_multiplier_line(lower: &str) -> bool {
     parse_standalone_x_multiplier(lower.trim()).is_some()
 }
@@ -1273,6 +2352,478 @@ mod tests {
                 multiplier: Some(9),
             }
         );
+    }
+
+    #[test]
+    fn golden_combo_clean_line() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% ^166 = x0.05"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(166));
+        assert_eq!(g.multiplier, Some(0.05));
+    }
+
+    #[test]
+    fn golden_combo_candidate_line_accepts_label_less_chance_crumb() {
+        assert!(is_golden_combo_candidate_line("0.03%288 = xo.09!"));
+        assert!(is_golden_combo_candidate_line("Golden Comb D'O(030/0 A288 ="));
+        assert!(!is_golden_combo_candidate_line("oo"));
+        assert!(!is_golden_combo_candidate_line("Wave Skipped! x2"));
+    }
+
+    #[test]
+    fn golden_combo_ocr_caret_as_a() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% A151 =", "$107.90K"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(151));
+    }
+
+    #[test]
+    fn golden_combo_ocr_xo_for_x0() {
+        let g = parse_golden_combo(&s(&["Goidel? Combo: 01030/0 A152 = xo.05!"]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(152));
+        assert_eq!(g.multiplier, Some(0.05));
+    }
+
+    #[test]
+    fn golden_combo_ignores_unrelated() {
+        assert!(!parse_golden_combo(&s(&["Golden Tower", "1m Ils"])).seen);
+        assert!(!parse_golden_combo(&s(&["Golden tower bonus x1.5"])).seen);
+    }
+
+    #[test]
+    fn golden_combo_rejects_coin_rate_at_x2_noise() {
+        // Live OCR often glues the next TV line: `44.76B/s@x2S911.96`.
+        let g = parse_golden_combo(&s(&[
+            "Golden Combo: 0.03% A219 =",
+            "@ 646.96B",
+            "887.85TV 44.76B/s@x2S911.96 Tier 15",
+        ]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(219));
+        assert_eq!(g.multiplier, None);
+    }
+
+    #[test]
+    fn golden_combo_same_line_tv_noise_after_equals() {
+        let g = parse_golden_combo(&s(&[
+            "Golden Combo: 0.03% A219 = @ 646.96B 887.85TV 44.76B/s@x2S911.96 Tier 15",
+        ]));
+        assert_eq!(g.multiplier, None);
+    }
+
+    #[test]
+    fn golden_combo_keeps_real_xo_multiplier() {
+        let g = parse_golden_combo(&s(&[
+            "Golden Combo: 0.03%242 = xo.08!",
+            "0409.66B",
+        ]));
+        assert_eq!(g.multiplier, Some(0.08));
+        assert_eq!(g.caret_count, Some(242));
+    }
+
+    #[test]
+    fn golden_combo_ocr_split_co_bo_and_glued_caret() {
+        let g = parse_golden_combo(&s(&["Golden Co�bo: 0.03%296 ="]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(296));
+    }
+
+    #[test]
+    fn golden_combo_ocr_mangled_epeibo_with_xo() {
+        let g = parse_golden_combo(&s(&["0 Golden epeibo: 0.03%242 = xo.08!"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(242));
+        assert_eq!(g.multiplier, Some(0.08));
+    }
+
+    #[test]
+    fn golden_combo_ocr_slash_zero_percent_and_star_multiplier() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% = *0.07!"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.multiplier, Some(0.07));
+    }
+
+    #[test]
+    fn golden_combo_ocr_bare_golden_with_caret_before_equals() {
+        let g = parse_golden_combo(&s(&["Golden 253 ="]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(253));
+    }
+
+    #[test]
+    fn golden_combo_ocr_split_golden_c9_fields_on_next_line() {
+        let g = parse_golden_combo(&s(&[
+            "EXIT BATTLE",
+            "Golden C9",
+            "0.03% A196",
+            "$0",
+        ]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(196));
+    }
+
+    #[test]
+    fn golden_combo_ocr_gol_combo_split_lines() {
+        let g = parse_golden_combo(&s(&["Gol", "Combo:", "0.03%", "A110"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(110));
+    }
+
+    #[test]
+    fn golden_combo_ocr_accented_and_xo_neighbor() {
+        let g = parse_golden_combo(&s(&[
+            "EXIT BATTLE",
+            "Golden combq: 0: 00",
+            "@ i.iot",
+            "xo.07!",
+        ]));
+        assert!(g.seen);
+        assert_eq!(g.multiplier, Some(0.07));
+    }
+
+    #[test]
+    fn golden_combo_ocr_olden_missing_g() {
+        let g = parse_golden_combo(&s(&["olden Combo: 0.03% A162 = xo.05"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(162));
+        assert_eq!(g.multiplier, Some(0.05));
+    }
+
+    #[test]
+    fn golden_combo_ocr_glued_chance_without_percent() {
+        let g = parse_golden_combo(&s(&["Golden o bq: 0.0307263"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        let n = g.caret_count.expect("glued caret");
+        assert!((10..=9999).contains(&n), "caret={n}");
+    }
+
+    #[test]
+    fn golden_combo_ocr_chance_glued_onto_combo_word() {
+        let g = parse_golden_combo(&s(&["Golden Comboo.030/0 = xo.05"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.multiplier, Some(0.05));
+    }
+
+    #[test]
+    fn golden_combo_rejects_wave_number_as_caret() {
+        let g = parse_golden_combo(&s(&[
+            "2347 / 2386",
+            "EXIT BATTLE",
+            "Golden Combo:",
+            "$0",
+            "@ 1.38T",
+            "Tier 15",
+            "Wave 2340",
+        ]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, None);
+    }
+
+    #[test]
+    fn golden_combo_rejects_wave_skip_a_number_as_caret() {
+        let g = parse_golden_combo(&s(&[
+            "Gold",
+            "Enemy Health Level Skip x2",
+            "Wave Skipped! x2",
+            "A 446",
+            "@ 27.41T",
+        ]));
+        assert_ne!(g.caret_count, Some(446));
+        assert_ne!(g.caret_count, Some(27));
+    }
+
+    #[test]
+    fn golden_combo_rejects_bare_gold_with_coin_neighbor() {
+        let g = parse_golden_combo(&s(&["Gold", "xo 091", "on 294", "@ 1.66T"]));
+        assert_ne!(g.caret_count, Some(294));
+        assert_ne!(g.caret_count, Some(91));
+    }
+
+    #[test]
+    fn golden_combo_still_reads_labeled_line_with_caret() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% A208 = xo.08"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(208));
+        assert_eq!(g.multiplier, Some(0.08));
+    }
+
+    #[test]
+    fn golden_combo_reads_dilated_toast_a306_quote_paren_mult() {
+        // Windows OCR on cyan-noisy toast after yellow dilate: `^306`→`A306`, `x0.10`→`'(0.10`.
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% A306 = '(0.10!"]));
+        assert!(g.seen);
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(306));
+        assert_eq!(g.multiplier, Some(0.1));
+    }
+
+    #[test]
+    fn golden_combo_merges_dilate_and_thin_ocr_variants() {
+        let g = parse_golden_combo(&s(&[
+            "Golden Combo: 0.03% A306 = '(0.10!",
+            "Golden Combo: 0.03%006 = xo.10!",
+        ]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(306));
+        assert_eq!(g.multiplier, Some(0.1));
+    }
+
+    #[test]
+    fn golden_combo_clean_line_with_caret_and_mult() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% ^306 = x0.10!"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(306));
+        assert_eq!(g.multiplier, Some(0.1));
+    }
+
+    #[test]
+    fn golden_combo_rejects_coin_fraction_as_caret() {
+        let g = parse_golden_combo(&s(&[
+            "148 times @",
+            "2348 / 2386",
+            "Golden Combo:",
+            "@1.25",
+        ]));
+        assert_ne!(g.caret_count, Some(25));
+        assert_ne!(g.caret_count, Some(2348));
+        assert_ne!(g.caret_count, Some(2386));
+    }
+
+    #[test]
+    fn golden_combo_rejects_implausible_four_digit_caret() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% 6244 = xo.08!"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.multiplier, Some(0.08));
+        assert_eq!(g.caret_count, None);
+    }
+
+    #[test]
+    fn golden_combo_ocr_caret_on_previous_line() {
+        let g = parse_golden_combo(&s(&["00 A162 g", "Golden Combo:", "8", "00"]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(162));
+    }
+
+    #[test]
+    fn golden_combo_ocr_m_as_caret_marker_after_percent() {
+        let g = parse_golden_combo(&s(&["Golden 0.03% m263 ="]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(263));
+    }
+
+    #[test]
+    fn golden_combo_merge_keeps_higher_caret_against_flicker() {
+        let good = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(301),
+            multiplier: Some(0.08),
+        };
+        let flicker = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(1),
+            multiplier: None,
+        };
+        let merged = good.merge_with(flicker);
+        assert_eq!(merged.caret_count, Some(301));
+    }
+
+    #[test]
+    fn golden_combo_merge_rejects_2_to_8_ocr_swap_227_as_827() {
+        let good = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(227),
+            multiplier: Some(0.08),
+        };
+        let bad = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(827),
+            multiplier: None,
+        };
+        assert_eq!(good.merge_with(bad).caret_count, Some(227));
+    }
+
+    #[test]
+    fn golden_combo_merge_302_plus_ocr_803_recovers_303() {
+        // Real stack grew 302→303; dilated OCR read unmarked `%803`.
+        let prev = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(302),
+            multiplier: Some(0.09),
+        };
+        let bad = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(803),
+            multiplier: None,
+        };
+        assert_eq!(prev.merge_with(bad).caret_count, Some(303));
+    }
+
+    #[test]
+    fn golden_combo_parse_then_merge_rejects_percent_803_after_302() {
+        let prev = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(302),
+            multiplier: Some(0.09),
+        };
+        let frame = parse_golden_combo(&s(&["Golden Combo: 0.03%803 ="]));
+        assert_eq!(frame.caret_count, Some(803)); // raw OCR still sees 803
+        assert_eq!(prev.merge_with(frame).caret_count, Some(303));
+    }
+
+    #[test]
+    fn golden_combo_merge_corrects_803_latch_when_303_arrives() {
+        let bad = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(803),
+            multiplier: None,
+        };
+        let good = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(303),
+            multiplier: Some(0.1),
+        };
+        assert_eq!(bad.merge_with(good).caret_count, Some(303));
+    }
+
+    #[test]
+    fn golden_combo_merge_corrects_827_latch_when_227_arrives() {
+        let bad = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(827),
+            multiplier: None,
+        };
+        let good = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(227),
+            multiplier: Some(0.08),
+        };
+        assert_eq!(bad.merge_with(good).caret_count, Some(227));
+    }
+
+    #[test]
+    fn golden_combo_merge_allows_large_catchup_without_digit_confusion() {
+        let prev = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(200),
+            multiplier: None,
+        };
+        let catchup = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.03),
+            caret_count: Some(350),
+            multiplier: None,
+        };
+        assert_eq!(prev.merge_with(catchup).caret_count, Some(350));
+    }
+
+    #[test]
+    fn golden_combo_rejects_leading_zero_caret_crumb() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03%01 = xo.08"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, None);
+        assert_eq!(g.multiplier, Some(0.08));
+    }
+
+    #[test]
+    fn golden_combo_keeps_three_digit_caret_301() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% A301 = xo.08"]));
+        assert_eq!(g.caret_count, Some(301));
+    }
+
+    #[test]
+    fn golden_combo_ocr_q_caret_and_slash_zero_junk() {
+        let g = parse_golden_combo(&s(&["Golden 030/0 Q77 ="]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(77));
+    }
+
+    #[test]
+    fn golden_combo_ocr_caret_after_junk_digits_with_a_marker() {
+        let g = parse_golden_combo(&s(&["Golden Combo, 0.030/60A260 ="]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(260));
+    }
+
+    #[test]
+    fn golden_combo_ocr_less_than_as_percent_before_caret() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.030<304 ="]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(304));
+    }
+
+    #[test]
+    fn golden_combo_ocr_padded_zero_caret_0289() {
+        let g = parse_golden_combo(&s(&["Goldencombo: 0.03%0289 ="]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(289));
+    }
+
+    #[test]
+    fn golden_combo_ocr_colden_and_angle_multiplier() {
+        let g = parse_golden_combo(&s(&["Colden Combo: 0.03% A151 = 3<0.05!"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(151));
+        assert_eq!(g.multiplier, Some(0.05));
+    }
+
+    #[test]
+    fn golden_combo_ocr_label_less_fields_with_xo() {
+        let g = parse_golden_combo(&s(&["0.0 0/0 275=xo.09!"]));
+        assert!(g.seen);
+        assert_eq!(g.caret_count, Some(275));
+        assert_eq!(g.multiplier, Some(0.09));
+    }
+
+    #[test]
+    fn golden_combo_ocr_bxo_glued_after_caret() {
+        let g = parse_golden_combo(&s(&["Golden co .bo: 0.03% A283Bxo.09!"]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_eq!(g.caret_count, Some(283));
+        assert_eq!(g.multiplier, Some(0.09));
+    }
+
+    #[test]
+    fn golden_combo_rejects_mangled_ao_30_crumb_from_310() {
+        // Live OCR for ^310 came through as `0.030/Ao 30 =` — must not latch ^30.
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.030/Ao 30 ="]));
+        assert_eq!(g.chance_percent, Some(0.03));
+        assert_ne!(g.caret_count, Some(30));
+        assert_eq!(g.caret_count, None);
+    }
+
+    #[test]
+    fn golden_combo_recovers_ao310_junk_glyph() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% Ao310 = xo.08"]));
+        assert_eq!(g.caret_count, Some(310));
+    }
+
+    #[test]
+    fn golden_combo_prefers_310_over_30_crumb_on_same_line() {
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.03% A310 = xo.08", "30 ="]));
+        assert_eq!(g.caret_count, Some(310));
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::ptr;
 #[cfg(windows)]
 use std::slice;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use image::{imageops, RgbaImage};
 
@@ -56,14 +57,420 @@ fn ensure_tesseract_paths() {
 /// OCR the entire capture and return every non-empty text line discovered.
 #[cfg(windows)]
 pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
+    Ok(ocr_full_frame_located(img)?
+        .into_iter()
+        .map(|l| l.text)
+        .collect())
+}
+
+/// Full-frame OCR with line positions (normalized 0..1), used to anchor the GC strip.
+#[cfg(windows)]
+pub fn ocr_full_frame_located(img: &RgbaImage) -> Result<Vec<LocatedLine>, String> {
     let dynamic = prepare_image(img);
     let rgba = dynamic.to_rgba8();
     let result = recognize_rgba8(&rgba)?;
-    lines_from_result(&result)
+    located_lines_from_result(&result, rgba.height())
+}
+
+#[derive(Debug, Clone)]
+pub struct LocatedLine {
+    pub text: String,
+    /// Top of the line as a fraction of image height, when Windows OCR provides bounds.
+    pub y_norm: Option<f32>,
+    /// Bottom of the line as a fraction of image height.
+    pub bottom_norm: Option<f32>,
+}
+
+/// Floating Golden Combo toast corridor (not a fixed HUD line).
+/// The toast spawns mid-battle (lower when skip/other toasts stack), rises, then fades.
+/// We OCR a tall left-biased strip so one capture can catch it anywhere on that path.
+const GC_BAND_X: f32 = 0.0;
+const GC_BAND_W: f32 = 0.90;
+/// 2× is enough for Windows OCR on the toast; 3× Lanczos was ~1s+ of prep per poll.
+const GC_BAND_UPSCALE: u32 = 2;
+const GC_BAND_MAX_WIDTH: u32 = 1000;
+/// How far below Exit Battle the toast may still be spawning / rising.
+/// Keep short: a tall band ingested Wave Skip / enemy-health OCR (`A 446`) as fake carets.
+const GC_TOAST_BELOW_EXIT: f32 = 0.18;
+/// Default toast travel band when Exit Battle was not located.
+const GC_TOAST_Y: f32 = 0.14;
+const GC_TOAST_H: f32 = 0.22;
+/// Skip GC OCR when the yellow mask has almost no ink (empty corridor).
+const GC_YELLOW_MIN_INK_PIXELS: u32 = 400;
+/// Skip GC OCR when ink is huge — battlefield gold FX, not a toast-sized glyph run.
+/// Live hits sat ~3–5k ink; 30k+ polls were FX soup.
+const GC_YELLOW_MAX_INK_PIXELS: u32 = 12_000;
+
+/// Result of the dedicated Golden Combo toast OCR path (may skip OCR on ink gate).
+#[derive(Debug, Clone)]
+pub struct GoldenComboBandOcr {
+    pub lines: Vec<String>,
+    /// Non-zero pixels in the native-resolution yellow mask.
+    pub ink_pixels: u32,
+    /// `"-"`, `"ink"` (too little), or `"busy"` (too much FX).
+    pub skip: &'static str,
+    pub yellow_ms: u64,
+    pub color_ms: u64,
+}
+
+impl Default for GoldenComboBandOcr {
+    fn default() -> Self {
+        Self {
+            lines: Vec::new(),
+            ink_pixels: 0,
+            skip: "-",
+            yellow_ms: 0,
+            color_ms: 0,
+        }
+    }
+}
+
+impl GoldenComboBandOcr {
+    pub fn gc_ms(&self) -> u64 {
+        self.yellow_ms.saturating_add(self.color_ms)
+    }
+
+    pub fn skipped(&self) -> bool {
+        self.skip != "-"
+    }
+}
+
+/// Dedicated OCR pass for the floating Golden Combo toast.
+/// Full-frame Windows OCR downscales and often misses the short-lived yellow line;
+/// this crop is upscaled (yellow isolation, optional color) over the toast travel path.
+pub fn ocr_golden_combo_band(img: &RgbaImage) -> GoldenComboBandOcr {
+    ocr_golden_combo_band_anchored(img, None)
+}
+
+/// Like [`ocr_golden_combo_band`]. When `exit_bottom_norm` is known, the corridor
+/// runs from just under Exit Battle downward through the toast spawn/rise zone
+/// (skip and other popups push the start position lower).
+pub fn ocr_golden_combo_band_anchored(
+    img: &RgbaImage,
+    exit_bottom_norm: Option<f32>,
+) -> GoldenComboBandOcr {
+    let gate_started = Instant::now();
+    let (y, h) = toast_corridor(exit_bottom_norm);
+    let crop = crop_norm_region(img, GC_BAND_X, y, GC_BAND_W, h);
+    let mask = gc_band_yellow_mask(&crop);
+    let ink_pixels = count_yellow_ink(&mask);
+    if ink_pixels < GC_YELLOW_MIN_INK_PIXELS {
+        return GoldenComboBandOcr {
+            lines: Vec::new(),
+            ink_pixels,
+            skip: "ink",
+            // Gate cost (mask) only — keep visibility in gc_y when skipped.
+            yellow_ms: gate_started.elapsed().as_millis() as u64,
+            color_ms: 0,
+        };
+    }
+    if ink_pixels > GC_YELLOW_MAX_INK_PIXELS {
+        return GoldenComboBandOcr {
+            lines: Vec::new(),
+            ink_pixels,
+            skip: "busy",
+            yellow_ms: gate_started.elapsed().as_millis() as u64,
+            color_ms: 0,
+        };
+    }
+
+    let mut lines = Vec::new();
+    // One dilated yellow pass — crush cyan/battlefield, thicken thin glyphs (`^`, `x0.NN`).
+    // Color upscale only when yellow finds no GC-like text (and ink still toast-sized).
+    let yellow_started = Instant::now();
+    let yellow = prepare_gc_band_yellow_from_mask(mask);
+    if let Ok(extra) = ocr_prepared_rgba(&yellow) {
+        push_unique_lines(&mut lines, extra);
+    }
+    let yellow_ms = yellow_started.elapsed().as_millis() as u64;
+
+    let mut color_ms = 0u64;
+    if !lines.iter().any(|l| line_looks_like_gc(l)) {
+        let color_started = Instant::now();
+        let color = upscale_rgba(&crop, GC_BAND_UPSCALE, GC_BAND_MAX_WIDTH);
+        if let Ok(extra) = ocr_prepared_rgba(&color) {
+            push_unique_lines(&mut lines, extra);
+        }
+        color_ms = color_started.elapsed().as_millis() as u64;
+    }
+
+    let filtered: Vec<String> = lines
+        .into_iter()
+        .filter(|l| !is_gc_band_poison_line(l))
+        .collect();
+    GoldenComboBandOcr {
+        lines: filtered,
+        ink_pixels,
+        skip: "-",
+        yellow_ms,
+        color_ms,
+    }
+}
+
+fn is_gc_band_poison_line(line: &str) -> bool {
+    let t = line.to_lowercase();
+    let compact: String = t.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    compact.contains("waveskip")
+        || compact.contains("skipped")
+        || compact.contains("enemyhealth")
+        || compact.contains("enemylevelskip")
+        || compact.contains("enemyattack")
+        || compact.contains("healthlevel")
+        || compact.contains("attacklevel")
+        || compact.contains("utilityupgrade")
+        || compact.contains("attackupgrade")
+        || compact.contains("executed")
+        || compact.contains("exitbattle")
+        || t.contains("wave skipped")
+        || t.contains("enemy health")
+        || t.contains("enemy level skip")
+        || t.contains("enemy attack")
+        || (t.contains("tier ") && !t.contains("gold"))
+}
+
+fn toast_corridor(exit_bottom_norm: Option<f32>) -> (f32, f32) {
+    if let Some(bottom) = exit_bottom_norm {
+        // Cover from Exit down through the rise path (toast moves upward toward Exit).
+        let y = bottom.clamp(0.08, 0.40);
+        let h = GC_TOAST_BELOW_EXIT.min(0.55 - y).max(0.16);
+        (y, h)
+    } else {
+        (GC_TOAST_Y, GC_TOAST_H)
+    }
+}
+
+/// Write raw crop + yellow-isolated + color-upscaled GC toast previews for debugging.
+/// Returns the corridor `(y, h)` used.
+pub fn dump_gc_toast_previews(
+    img: &RgbaImage,
+    exit_bottom_norm: Option<f32>,
+    out_dir: &std::path::Path,
+) -> Result<(f32, f32), String> {
+    std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
+    let (y, h) = toast_corridor(exit_bottom_norm);
+    let crop = crop_norm_region(img, GC_BAND_X, y, GC_BAND_W, h);
+    let yellow = prepare_gc_band_yellow_rgba(&crop);
+    let color = upscale_rgba(&crop, GC_BAND_UPSCALE, GC_BAND_MAX_WIDTH);
+
+    crop.save(out_dir.join("gc_toast_raw_crop.png"))
+        .map_err(|e| format!("save raw crop: {e}"))?;
+    yellow
+        .save(out_dir.join("gc_toast_yellow_preprocessed.png"))
+        .map_err(|e| format!("save yellow: {e}"))?;
+    color
+        .save(out_dir.join("gc_toast_color_upscaled.png"))
+        .map_err(|e| format!("save color: {e}"))?;
+    Ok((y, h))
+}
+
+fn count_yellow_ink(mask: &image::GrayImage) -> u32 {
+    mask.pixels().filter(|p| p[0] > 0).count() as u32
+}
+
+fn line_looks_like_gc(line: &str) -> bool {
+    let t = line.to_lowercase();
+    let compact: String = t.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    compact.contains("golden")
+        || compact.contains("combo")
+        || compact.contains("golde")
+        || t.contains("xo.")
+        || t.contains("x0.")
+        || (t.contains("0.03") && (t.contains('%') || t.contains("/0") || t.contains('=')))
+}
+
+/// Bottom of the Exit Battle control as a fraction of frame height, if OCR saw it.
+pub fn exit_battle_bottom_norm(lines: &[LocatedLine]) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for line in lines {
+        let lower = line.text.to_lowercase();
+        let compact: String = lower.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let hit = (compact.contains("exit") && compact.contains("batt"))
+            || compact.contains("exitbattle")
+            || (lower.contains("exit") && lower.contains("battle"));
+        if !hit {
+            continue;
+        }
+        if let Some(b) = line.bottom_norm.or(line.y_norm) {
+            best = Some(best.map_or(b, |p| p.max(b)));
+        }
+    }
+    best
+}
+
+fn push_unique_lines(dst: &mut Vec<String>, incoming: Vec<String>) {
+    for line in incoming {
+        let key = line.to_lowercase();
+        if dst.iter().any(|e| e.to_lowercase() == key) {
+            continue;
+        }
+        dst.push(line);
+    }
+}
+
+fn upscale_rgba(img: &RgbaImage, upscale: u32, max_width: u32) -> RgbaImage {
+    if upscale <= 1 {
+        return img.clone();
+    }
+    let target_w = img
+        .width()
+        .saturating_mul(upscale)
+        .clamp(img.width(), max_width);
+    if target_w <= img.width() {
+        return img.clone();
+    }
+    let target_h = ((img.height() as f32) * (target_w as f32 / img.width() as f32))
+        .round()
+        .max(1.0) as u32;
+    // CatmullRom is far cheaper than Lanczos3 at toast sizes and good enough for OCR.
+    imageops::resize(img, target_w, target_h, imageops::FilterType::CatmullRom)
+}
+
+fn ocr_prepared_rgba(img: &RgbaImage) -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        let result = recognize_rgba8(img)?;
+        return lines_from_result(&result);
+    }
+    #[cfg(not(windows))]
+    {
+        ensure_tesseract_paths();
+        let gray = imageops::grayscale(img);
+        let width = gray.width() as i32;
+        let height = gray.height() as i32;
+        let text = run_tesseract(
+            gray.as_raw(),
+            width,
+            height,
+            1,
+            width,
+            tesseract::PageSegMode::PsmSingleBlock,
+        )?;
+        Ok(split_lines(&text))
+    }
+}
+
+fn crop_norm_region(img: &RgbaImage, x: f32, y: f32, w: f32, h: f32) -> RgbaImage {
+    let fw = img.width() as f32;
+    let fh = img.height() as f32;
+    let x0 = (x * fw).round() as u32;
+    let y0 = (y * fh).round() as u32;
+    let w_px = ((w * fw).round() as u32)
+        .max(1)
+        .min(img.width().saturating_sub(x0));
+    let h_px = ((h * fh).round() as u32)
+        .max(1)
+        .min(img.height().saturating_sub(y0));
+    imageops::crop_imm(img, x0, y0, w_px, h_px).to_image()
+}
+
+/// Keep saturated yellow toast ink; reject cyan trails and warm/near-white FX that
+/// previously inflated ink counts so the gate never fired.
+fn gc_band_yellow_mask(crop: &RgbaImage) -> image::GrayImage {
+    use image::{GrayImage, Luma};
+
+    let (w, h) = crop.dimensions();
+    let mut gray = GrayImage::new(w, h);
+    for (x, y, p) in crop.enumerate_pixels() {
+        let r = p[0];
+        let g = p[1];
+        let b = p[2];
+        let luma = ((u16::from(r) * 30 + u16::from(g) * 59 + u16::from(b) * 11) / 100) as u8;
+        let yellow_score = r.saturating_add(g).saturating_sub(b.saturating_mul(2));
+        // Cyan arcs are bright with high B — do not treat them as toast ink.
+        let not_cyan = b < r.saturating_add(20) && b < g.saturating_add(20) && b < 140;
+        // Saturated yellow/gold glyphs only (dropped the near-white HUD catch-all).
+        let keep = not_cyan
+            && luma >= 100
+            && r >= 160
+            && g >= 120
+            && b <= 110
+            && yellow_score >= 90
+            && r > b.saturating_add(50)
+            && g > b.saturating_add(30);
+        let v = if keep {
+            luma.max(r).max(g)
+        } else {
+            0
+        };
+        gray.put_pixel(x, y, Luma([v]));
+    }
+    imageops::colorops::contrast(&gray, 55.0)
+}
+
+fn gray_to_rgba(gray: &image::GrayImage) -> RgbaImage {
+    use image::Rgba;
+    let mut out = RgbaImage::new(gray.width(), gray.height());
+    for (x, y, p) in gray.enumerate_pixels() {
+        let v = p[0];
+        out.put_pixel(x, y, Rgba([v, v, v, 255]));
+    }
+    out
+}
+
+fn upscale_gray(gray: image::GrayImage) -> image::GrayImage {
+    let target_w = gray
+        .width()
+        .saturating_mul(GC_BAND_UPSCALE)
+        .clamp(gray.width(), GC_BAND_MAX_WIDTH);
+    if target_w <= gray.width() {
+        return gray;
+    }
+    let target_h = ((gray.height() as f32) * (target_w as f32 / gray.width() as f32))
+        .round()
+        .max(1.0) as u32;
+    imageops::resize(&gray, target_w, target_h, imageops::FilterType::CatmullRom)
+}
+
+fn dilate_gray(gray: &image::GrayImage) -> image::GrayImage {
+    use image::{GrayImage, Luma};
+    let (w, h) = gray.dimensions();
+    let mut out = GrayImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let mut m = 0u8;
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let xx = x as i32 + dx;
+                    let yy = y as i32 + dy;
+                    if xx >= 0 && yy >= 0 && (xx as u32) < w && (yy as u32) < h {
+                        m = m.max(gray.get_pixel(xx as u32, yy as u32)[0]);
+                    }
+                }
+            }
+            out.put_pixel(x, y, Luma([m]));
+        }
+    }
+    out
+}
+
+fn binarize_gray(gray: &image::GrayImage, threshold: u8) -> image::GrayImage {
+    let mut out = gray.clone();
+    for p in out.pixels_mut() {
+        p[0] = if p[0] >= threshold { 255 } else { 0 };
+    }
+    out
+}
+
+/// Dilated + binarized yellow toast — thickens `^` / thin `x0.NN` for Windows OCR.
+fn prepare_gc_band_yellow_rgba(crop: &RgbaImage) -> RgbaImage {
+    prepare_gc_band_yellow_from_mask(gc_band_yellow_mask(crop))
+}
+
+fn prepare_gc_band_yellow_from_mask(gray: image::GrayImage) -> RgbaImage {
+    let gray = upscale_gray(binarize_gray(&dilate_gray(&gray), 80));
+    gray_to_rgba(&gray)
 }
 
 #[cfg(not(windows))]
 pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
+    Ok(ocr_full_frame_located(img)?
+        .into_iter()
+        .map(|l| l.text)
+        .collect())
+}
+
+#[cfg(not(windows))]
+pub fn ocr_full_frame_located(img: &RgbaImage) -> Result<Vec<LocatedLine>, String> {
     ensure_tesseract_paths();
     let mut all_lines = Vec::new();
     let mut any_ok = false;
@@ -72,7 +479,16 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
             Ok(lines) => {
                 if !lines.is_empty() {
                     any_ok = true;
-                    all_lines.extend(lines);
+                    for text in lines {
+                        if all_lines.iter().any(|e: &LocatedLine| e.text == text) {
+                            continue;
+                        }
+                        all_lines.push(LocatedLine {
+                            text,
+                            y_norm: None,
+                            bottom_norm: None,
+                        });
+                    }
                 }
             }
             Err(e) => eprintln!("OCR region {} failed: {e}", region.name),
@@ -124,6 +540,7 @@ const OCR_REGIONS: &[OcrRegion] = &[
         upscale: 3,
     },
 ];
+// Golden Combo is OCR'd separately via `ocr_golden_combo_band` (tighter crop + preprocess).
 
 #[cfg(not(windows))]
 impl OcrRegion {
@@ -243,6 +660,15 @@ fn recognize_rgba8(img: &RgbaImage) -> Result<OcrResult, String> {
 
 #[cfg(windows)]
 fn lines_from_result(result: &OcrResult) -> Result<Vec<String>, String> {
+    Ok(located_lines_from_result(result, 1)?
+        .into_iter()
+        .map(|l| l.text)
+        .collect())
+}
+
+#[cfg(windows)]
+fn located_lines_from_result(result: &OcrResult, image_height: u32) -> Result<Vec<LocatedLine>, String> {
+    let h = image_height.max(1) as f32;
     let lines = result
         .Lines()
         .map_err(|e| format!("Windows OCR Lines() failed: {e}"))?;
@@ -259,16 +685,64 @@ fn lines_from_result(result: &OcrResult) -> Result<Vec<String>, String> {
             .map_err(|e| format!("Windows OCR line {i} text failed: {e}"))?
             .to_string();
         let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_string());
+        if trimmed.is_empty() {
+            continue;
         }
+
+        let (y_norm, bottom_norm) = match line_bounds_norm(&line, h) {
+            Ok(b) => b,
+            Err(_) => (None, None),
+        };
+        out.push(LocatedLine {
+            text: trimmed.to_string(),
+            y_norm,
+            bottom_norm,
+        });
     }
     if out.is_empty() {
         if let Ok(text) = result.Text() {
-            out = split_lines(&text.to_string());
+            for t in split_lines(&text.to_string()) {
+                out.push(LocatedLine {
+                    text: t,
+                    y_norm: None,
+                    bottom_norm: None,
+                });
+            }
         }
     }
     Ok(out)
+}
+
+#[cfg(windows)]
+fn line_bounds_norm(
+    line: &windows::Media::Ocr::OcrLine,
+    image_height: f32,
+) -> Result<(Option<f32>, Option<f32>), String> {
+    let words = line
+        .Words()
+        .map_err(|e| format!("Windows OCR Words() failed: {e}"))?;
+    let count = words
+        .Size()
+        .map_err(|e| format!("Windows OCR word count failed: {e}"))?;
+    if count == 0 {
+        return Ok((None, None));
+    }
+    let mut top = f32::MAX;
+    let mut bottom = f32::MIN;
+    for i in 0..count {
+        let word = words
+            .GetAt(i)
+            .map_err(|e| format!("Windows OCR word {i} failed: {e}"))?;
+        let rect = word
+            .BoundingRect()
+            .map_err(|e| format!("Windows OCR BoundingRect failed: {e}"))?;
+        top = top.min(rect.Y);
+        bottom = bottom.max(rect.Y + rect.Height);
+    }
+    if !top.is_finite() || !bottom.is_finite() || bottom < top {
+        return Ok((None, None));
+    }
+    Ok((Some(top / image_height), Some(bottom / image_height)))
 }
 
 #[cfg(windows)]
@@ -344,6 +818,7 @@ fn split_lines(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::Rgba;
 
     #[test]
     fn split_lines_trims_and_drops_blanks() {
@@ -351,6 +826,114 @@ mod tests {
             split_lines("  Tier 14\n\nWave 2000\n"),
             vec!["Tier 14".to_string(), "Wave 2000".to_string()]
         );
+    }
+
+    #[test]
+    fn prepare_gc_band_yellow_upsizes_and_keeps_rgba() {
+        let mut img = RgbaImage::new(40, 20);
+        for pixel in img.pixels_mut() {
+            *pixel = Rgba([220, 200, 40, 255]);
+        }
+        let out = prepare_gc_band_yellow_rgba(&img);
+        assert!(out.width() >= img.width() * 2);
+        assert_eq!(out.get_pixel(0, 0)[3], 255);
+    }
+
+    #[test]
+    fn yellow_ink_gate_skips_empty_corridor() {
+        let img = RgbaImage::from_pixel(200, 200, Rgba([20, 30, 40, 255]));
+        let result = ocr_golden_combo_band_anchored(&img, Some(0.10));
+        assert_eq!(result.skip, "ink");
+        assert!(result.ink_pixels < GC_YELLOW_MIN_INK_PIXELS);
+        assert!(result.lines.is_empty());
+        assert_eq!(result.color_ms, 0);
+    }
+
+    #[test]
+    fn yellow_ink_gate_skips_busy_fx_soup() {
+        // Dense saturated yellow in a large corridor — above MAX, treat as FX not toast.
+        let img = RgbaImage::from_pixel(400, 400, Rgba([220, 200, 40, 255]));
+        let result = ocr_golden_combo_band_anchored(&img, Some(0.10));
+        assert_eq!(result.skip, "busy");
+        assert!(result.ink_pixels > GC_YELLOW_MAX_INK_PIXELS);
+        assert!(result.lines.is_empty());
+        assert_eq!(result.color_ms, 0);
+    }
+
+    #[test]
+    fn yellow_ink_gate_counts_toast_colored_pixels() {
+        let mut img = RgbaImage::from_pixel(120, 80, Rgba([10, 10, 10, 255]));
+        for y in 30..50 {
+            for x in 10..110 {
+                img.put_pixel(x, y, Rgba([220, 200, 40, 255]));
+            }
+        }
+        let mask = gc_band_yellow_mask(&img);
+        let ink = count_yellow_ink(&mask);
+        assert!(
+            ink >= GC_YELLOW_MIN_INK_PIXELS,
+            "expected toast yellow ink, got {ink}"
+        );
+        assert!(
+            ink <= GC_YELLOW_MAX_INK_PIXELS,
+            "toast stripe should stay under busy cap, got {ink}"
+        );
+    }
+
+    #[test]
+    fn yellow_mask_rejects_near_white_warm_noise() {
+        let mut img = RgbaImage::from_pixel(80, 40, Rgba([10, 10, 10, 255]));
+        for y in 5..35 {
+            for x in 5..75 {
+                // Warm near-white — old mask kept these; new mask should not.
+                img.put_pixel(x, y, Rgba([220, 210, 180, 255]));
+            }
+        }
+        let ink = count_yellow_ink(&gc_band_yellow_mask(&img));
+        assert!(
+            ink < GC_YELLOW_MIN_INK_PIXELS,
+            "near-white warm noise should not count as toast ink, got {ink}"
+        );
+    }
+
+    #[test]
+    fn gc_toast_corridor_covers_rise_path_below_exit() {
+        let img = RgbaImage::new(975, 2077);
+        let (y, h) = toast_corridor(Some(0.27));
+        assert!(y >= 0.20 && y <= 0.30);
+        assert!(h >= 0.16 && h <= 0.22);
+        let crop = crop_norm_region(&img, GC_BAND_X, y, GC_BAND_W, h);
+        assert_eq!(crop.width(), (975.0 * GC_BAND_W).round() as u32);
+        assert!(crop.height() > 300);
+    }
+
+    #[test]
+    fn gc_toast_corridor_default_without_exit() {
+        let (y, h) = toast_corridor(None);
+        assert_eq!(y, GC_TOAST_Y);
+        assert_eq!(h, GC_TOAST_H);
+    }
+
+    #[test]
+    fn exit_battle_bottom_picks_lowest_match() {
+        let lines = vec![
+            LocatedLine {
+                text: "noise".into(),
+                y_norm: Some(0.1),
+                bottom_norm: Some(0.12),
+            },
+            LocatedLine {
+                text: "EXIT BATTLE".into(),
+                y_norm: Some(0.25),
+                bottom_norm: Some(0.27),
+            },
+            LocatedLine {
+                text: "Exit BattIe".into(),
+                y_norm: Some(0.26),
+                bottom_norm: Some(0.29),
+            },
+        ];
+        assert!((exit_battle_bottom_norm(&lines).unwrap() - 0.29).abs() < 1e-6);
     }
 
     #[cfg(not(windows))]

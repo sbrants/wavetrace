@@ -304,7 +304,7 @@ main {
 
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -832,6 +832,25 @@ tbody tr.selected {
   flex-wrap: wrap;
 }
 
+.outlier-quick-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outlier-quick-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.outlier-quick-input {
+  width: 4.5rem;
+}
+
 .snapshot-panel-header h3 {
   font-size: 14px;
   color: var(--muted);
@@ -871,6 +890,9 @@ tbody tr.selected {
 }
 
 .snapshot-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
   text-align: right;
   white-space: nowrap;
 }
@@ -878,6 +900,18 @@ tbody tr.selected {
 .snapshot-actions button {
   padding: 4px 10px;
   font-size: 12px;
+}
+
+.gc-edit-input {
+  width: 5.5rem;
+  max-width: 100%;
+  padding: 4px 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel, #121a2e);
+  color: inherit;
+  border: 1px solid var(--border, #2a3550);
+  border-radius: 4px;
 }
 
 .history-pagination {

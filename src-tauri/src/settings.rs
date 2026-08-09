@@ -88,7 +88,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             target_window: None,
-            poll_interval_ms: 1500,
+            poll_interval_ms: 1000,
             minimize_to_tray: true,
             notify_run_ended: true,
             notify_window_lost: true,

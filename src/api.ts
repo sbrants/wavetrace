@@ -19,6 +19,9 @@ export interface LiveState {
   total_coin_warning: boolean;
   last_skip_multiplier: number | null;
   last_wave_delta: number | null;
+  golden_combo_chance: number | null;
+  golden_combo_caret: number | null;
+  golden_combo_multiplier: number | null;
 }
 
 export interface ScannerEvent {
@@ -99,6 +102,7 @@ export interface RunRow {
   peak_tier: number | null;
   final_wave: number | null;
   avg_coin_per_minute: number | null;
+  avg_golden_combo_caret: number | null;
   snapshot_count: number;
   comment: string | null;
 }
@@ -108,6 +112,9 @@ export interface SnapshotRow {
   wave: number;
   tier: number | null;
   coin_per_minute: number | null;
+  golden_combo_chance: number | null;
+  golden_combo_caret: number | null;
+  golden_combo_multiplier: number | null;
   recorded_at: string;
 }
 
@@ -127,6 +134,7 @@ export interface DashboardRunView {
   skip_total: number;
   chart_wave_skips: WaveSkipRow[];
   chart_normal_jumps: number[];
+  avg_golden_combo_caret: number | null;
 }
 
 export interface RunFilter {
@@ -254,6 +262,16 @@ export const api = {
     invoke<void>("delete_snapshot", { snapshotId }),
   deleteSnapshots: (snapshotIds: string[]) =>
     invoke<number>("delete_snapshots", { snapshotIds }),
+  updateSnapshotGoldenCombo: (
+    snapshotId: string,
+    update: {
+      chance: number | null;
+      caret: number | null;
+      multiplier: number | null;
+    }
+  ) => invoke<void>("update_snapshot_golden_combo", { snapshotId, update }),
+  clearSnapshotGoldenCombo: (snapshotIds: string[]) =>
+    invoke<number>("clear_snapshot_golden_combo", { snapshotIds }),
   deleteWaveSkips: (waveSkipIds: string[]) =>
     invoke<number>("delete_wave_skips", { waveSkipIds }),
   deleteWaveSkip: (waveSkipId: string) =>
@@ -302,4 +320,40 @@ export function formatCoin(value: number | null): string {
   }
   const num = v >= 100 ? v.toFixed(1) : v.toFixed(2);
   return `${parseFloat(num)}${suffixes[idx]}`;
+}
+
+/** Format Golden Combo HUD fields (`0.03% ^166 = x0.05`). */
+export function formatGoldenCombo(
+  chance: number | null | undefined,
+  caret: number | null | undefined,
+  multiplier: number | null | undefined
+): string {
+  if (chance == null && caret == null && multiplier == null) return "—";
+  const parts: string[] = [];
+  if (chance != null) parts.push(`${trimFloat(chance)}%`);
+  if (caret != null) parts.push(`^${caret}`);
+  if (multiplier != null) parts.push(`x${trimFloat(multiplier)}`);
+  return parts.join(" ");
+}
+
+/** Format Golden Combo multiplier only (`x0.05`). */
+export function formatGoldenComboMultiplier(
+  multiplier: number | null | undefined
+): string {
+  if (multiplier == null || !Number.isFinite(multiplier)) return "—";
+  return `x${trimFloat(multiplier)}`;
+}
+
+/** Format average Golden Combo activations for stats / History. */
+export function formatAvgGoldenComboCaret(
+  value: number | null | undefined
+): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function trimFloat(value: number): string {
+  const s = value.toFixed(4).replace(/\.?0+$/, "");
+  return s === "-0" ? "0" : s;
 }

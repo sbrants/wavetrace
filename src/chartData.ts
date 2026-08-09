@@ -1,7 +1,11 @@
 import { SnapshotRow, WaveSkipRow } from "./api";
 import { skipChartValue, skipDisplayFromRow } from "./skipDisplay";
 
-export type CoinChartPoint = { wave: number; coin: number };
+export type CoinChartPoint = {
+  wave: number;
+  coin: number | null;
+  golden_combo_caret: number | null;
+};
 
 /** Keep Recharts responsive during very long runs. Sync with `CHART_SNAPSHOT_LIMIT` in `src-tauri/src/db.rs`. */
 export const MAX_CHART_POINTS = 5000;
@@ -28,7 +32,7 @@ export function downsampleChartData(
 export type WaveSkipMarker = {
   id: string;
   wave: number;
-  /** Y-axis value (multiplier when known, else wave jump). */
+  /** Y-axis value: observed wave increment (same as +1 jumps). */
   skip_count: number;
   skip_tooltip: string;
 };
@@ -38,9 +42,30 @@ export function snapshotsToChartData(
   options?: { alreadySampled?: boolean }
 ): CoinChartPoint[] {
   const points = snapshots
-    .filter((s) => s.coin_per_minute !== null)
-    .map((s) => ({ wave: s.wave, coin: s.coin_per_minute as number }));
+    .filter(
+      (s) => s.coin_per_minute !== null || s.golden_combo_caret !== null
+    )
+    .map((s) => ({
+      wave: s.wave,
+      coin: s.coin_per_minute,
+      golden_combo_caret: s.golden_combo_caret,
+    }));
   return options?.alreadySampled ? points : downsampleChartData(points);
+}
+
+/** Average Golden Combo activation count (^N) across snapshots that have it. */
+export function averageGoldenComboCaret(
+  snapshots: SnapshotRow[]
+): number | null {
+  let sum = 0;
+  let count = 0;
+  for (const s of snapshots) {
+    if (s.golden_combo_caret != null && Number.isFinite(s.golden_combo_caret)) {
+      sum += s.golden_combo_caret;
+      count += 1;
+    }
+  }
+  return count === 0 ? null : sum / count;
 }
 
 function markerFromSkipRow(row: WaveSkipRow): WaveSkipMarker {
@@ -127,7 +152,7 @@ export function buildCompareChartDataByWave(
   const waves = new Set<number>();
   for (const id of runIds) {
     for (const s of snapshots[id] ?? []) {
-      if (s.coin_per_minute !== null) {
+      if (s.coin_per_minute !== null || s.golden_combo_caret !== null) {
         waves.add(s.wave);
       }
     }
@@ -137,9 +162,20 @@ export function buildCompareChartDataByWave(
     runIds.forEach((id, i) => {
       const snap = (snapshots[id] ?? []).find((s) => s.wave === wave);
       row[`coin_${i}`] = snap?.coin_per_minute ?? null;
+      row[`gc_${i}`] = snap?.golden_combo_caret ?? null;
     });
     return row;
   });
+}
+
+/** True when any compare run has Golden Combo activation samples. */
+export function compareHasGoldenComboActivations(
+  runIds: string[],
+  snapshots: Record<string, SnapshotRow[]>
+): boolean {
+  return runIds.some((id) =>
+    (snapshots[id] ?? []).some((s) => s.golden_combo_caret != null)
+  );
 }
 
 /** Centered moving average; nulls are skipped and do not contribute to the window. */

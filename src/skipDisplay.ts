@@ -2,13 +2,17 @@ export type SkipDisplay =
   | { kind: "multiplier"; value: number }
   | { kind: "delta"; value: number };
 
-/** Prefer banner ×N when stored; otherwise wave jump count. */
+/**
+ * Wave jump size is always the observed wave increment (`skipped_count`).
+ * Banner `skip_multiplier` only marks the event for a live `×` prefix — it must
+ * not replace the jump value (OCR ×N can differ from the real delta by ±1).
+ */
 export function skipDisplayFromRow(row: {
   skipped_count: number;
   skip_multiplier?: number | null;
 }): SkipDisplay {
   if (row.skip_multiplier != null) {
-    return { kind: "multiplier", value: row.skip_multiplier };
+    return { kind: "multiplier", value: row.skipped_count };
   }
   return { kind: "delta", value: row.skipped_count };
 }

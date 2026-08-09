@@ -1,7 +1,7 @@
 //! Classify a set of OCR lines into a PollInput, following the
 //! "Game mode edge cases" decision flow in Goal.md.
 
-use crate::parser::{has_coin_icon_prefix, parse_coin_line, CoinReading};
+use crate::parser::{has_coin_icon_prefix, parse_coin_line, parse_golden_combo, CoinReading};
 use crate::state_machine::{DissonanceKind, GameMode, PollInput};
 
 /// Find "<keyword> <int>[+]" anywhere inside a line, tolerating separators.
@@ -71,6 +71,7 @@ pub fn classify(lines: &[String]) -> PollInput {
         wave,
         coin,
         wave_skip_overlay: crate::parser::parse_wave_skip_overlay(lines),
+        golden_combo: parse_golden_combo(lines),
         dissonance,
     }
 }

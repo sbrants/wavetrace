@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Golden Combo tracking** — OCR parses the HUD (`chance% ^N = xM`, including common OCR mangling), latches values on the live dashboard, and stores them on wave snapshots (History + CSV/ODS export).
+- **Golden Combo activations on chart** — single-run charts plot `^N` activations vs wave (right axis), with run average in History (sortable Avg GC ^ column).
+- **History GC activations table** — editable chance / `^N` / multiplier rows (clear without deleting coin/min); coin/min is its own table; chart jump/GC dots select the matching table rows.
+- **GC bonus OCR hardening** — ignore coin-rate `@x2S…` noise that was latching a fake `x2` multiplier.
+- **Chart series toggles** — Dashboard can show/hide wave jumps and GC activations; History compare can overlay GC activations like wave jumps.
+- **Golden Combo OCR recall** — looser matching for mangled HUD text, but **stricter accuracy**: ignore Wave Skip / enemy-health / coin-rate neighbors (they were latching fake `A 446` carets); require a confident Golden Combo label before accepting `^N`; treat GC as a floating toast in a shorter corridor under Exit Battle (~18% of frame). Digit-swap latch guard (`227`↛`827`, and `302`+OCR`803`→`303`). Default poll 1000ms. Yellow toast prep rejects cyan trails, dilates thin glyphs, and merges a thin backup pass so `^306` / `x0.10` survive Windows OCR.
+
+### Removed
+
+- **GC denoise×4 experiment** — live logs: `ocr_ms` ~3.2s → ~6.0s with no hit-rate gain (~15% → ~11% GC-like bands); dropped.
+
+### Fixed
+
+- **Wave jump display** — chart, History, and the live **Wave jump** stat use the observed wave increment for skip events (same as `+1` jumps). Banner OCR `×N` no longer replaces the jump size when it differs by ±1.
+- **GC snapshot spam** — live dashboard still latches the last Golden Combo toast, but each wave snapshot only stores GC OCR seen during that wave (no longer copies the latch onto every later wave).
+
+### Changed
+
+- **GC OCR cost** — stricter saturated-yellow mask; ink gate skips empty (`ink`) and FX-soup (`busy`) corridors; one dilated yellow pass; color only when yellow misses GC-like text; 2× CatmullRom upscale (was 3× Lanczos). Poll logs: `full_ms` / `gc_y` / `gc_c` / `gc_ink` / `gc_skip` (prep folded into `gc_y`/`gc_c`).
+- **History compare** — wave jumps and GC activations overlays are off by default; **10 pts** smoothing and **lead/lag band** are on by default (when comparing exactly two runs).
+- **GC full-frame salvage** — when the toast band is empty/junk but full-frame OCR already has a GC-like line, that line is fed into the GC parser (and shown in `gc_band=` logs).
+- **GC chance %** — treated as fixed for a run (majority vote); outlier OCR (e.g. `0.93` vs `0.03`) ignored; snapshots only store GC when `^N` is present (no chance-only rows).
+
 ---
 
 ## [0.2.45] — 2026-08-09

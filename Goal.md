@@ -121,7 +121,7 @@ flowchart LR
 2. Settings (`target_window`, `poll_interval_ms`) are persisted in the SQLite `settings` table
 3. On each poll: capture window → full-frame OCR → classify lines → parse Tier / Wave / coin rate
 
-**Poll interval:** 1.5 seconds (1500ms, configurable via `poll_interval_ms`)
+**Poll interval:** 1.0 seconds (1000ms, configurable via `poll_interval_ms`)
 
 ### Tracked fields (initial set)
 
@@ -358,7 +358,7 @@ Each skip stores: `run_id`, `at_wave` (wave after the skip), `skipped_count` (ob
 
 - **Wave jump** — the wave increment between two captured snapshots (usually **1** during normal play). Shown on the live dashboard **Wave jump** stat and the chart **Wave jump** axis. The chart derives `+1` jumps from consecutive snapshots; larger jumps appear only when a **recorded skip** exists at that wave, so gaps from stopped scanning or missed OCR are not plotted as false skips.
 - **Wave skip** — an in-game **Wave Skipped!** upgrade event, stored in `wave_skips` when banner detection rules pass. Used for History skip rows (column **Wave jump**), deletion, and **Skip vs coin/min** analytics. Not every jump is a skip; normal `+1` progression is a jump but not recorded as a skip event.
-- **Display** — when the banner multiplier is known (`×N`), the dashboard may show `×N`; `skipped_count` remains the observed wave increment for analytics and storage.
+- **Display** — chart / History **Wave jump** values always use `skipped_count` (same scale as `+1` jumps). When a banner was seen, the live dashboard may add a `×` prefix, but the number is still the wave increment — never the raw OCR `×N` when it disagrees.
 
 #### Skip vs coin/min analytics
 
@@ -429,7 +429,7 @@ Database file: `{app_data}/wavetrace/wavetrace.db`
 
 | key              | type    | notes                                              |
 | ---------------- | ------- | -------------------------------------------------- |
-| poll_interval_ms | INTEGER | default 1500                                       |
+| poll_interval_ms | INTEGER | default 1000                                       |
 | target_window    | JSON    | `{title_substring, process_name}` for reconnection |
 
 ---

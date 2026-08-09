@@ -164,16 +164,26 @@ impl Scanner {
                         log_line(
                             &log_path,
                             &format!(
-                                "poll {}x{} capture_ms={} ocr_ms={} \
-                                 tier={:?} wave={:?} coin={:?} skip={:?} lines={:?}",
+                                "poll {}x{} capture_ms={} ocr_ms={} full_ms={} \
+                                 gc_ms={} gc_y={} gc_c={} gc_ink={} gc_skip={} \
+                                 tier={:?} wave={:?} coin={:?} skip={:?} \
+                                 exit_y={:?} gc_band={:?} lines={:?}",
                                 full.width(),
                                 full.height(),
                                 capture_ms,
                                 fields.ocr_ms,
+                                fields.full_ms,
+                                fields.gc_ms,
+                                fields.gc_yellow_ms,
+                                fields.gc_color_ms,
+                                fields.gc_ink,
+                                fields.gc_skip,
                                 input.tier,
                                 input.wave,
                                 input.coin,
                                 input.wave_skip_overlay,
+                                fields.exit_battle_y,
+                                fields.gc_band_lines,
                                 fields.all_lines,
                             ),
                         );
@@ -263,6 +273,9 @@ pub fn apply_actions(
                 wave,
                 tier,
                 coin_per_minute,
+                golden_combo_chance,
+                golden_combo_caret,
+                golden_combo_multiplier,
             } => {
                 let id = current_run_id.lock().unwrap().clone();
                 match id {
@@ -272,6 +285,9 @@ pub fn apply_actions(
                         *wave as i64,
                         tier.map(|t| t as i64),
                         *coin_per_minute,
+                        *golden_combo_chance,
+                        golden_combo_caret.map(|n| n as i64),
+                        *golden_combo_multiplier,
                     ),
                     None => Ok(()),
                 }
