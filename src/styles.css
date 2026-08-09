@@ -86,13 +86,32 @@ header h1 {
   color: var(--accent);
 }
 
+a.header-support {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+a.header-support:hover {
+  color: #5865f2;
+  border-color: #5865f2;
+}
+
 nav {
   display: flex;
   gap: 4px;
   align-items: center;
 }
 
-button.header-download-save {
+button.header-download-save,
+a.header-support {
   margin-left: 8px;
 }
 

@@ -9,6 +9,8 @@ import AppUpdater from "./components/AppUpdater";
 import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { registerTabControl, type AppTab } from "./tabCapture";
+import ExternalLink from "./ExternalLink";
+import { DISCORD_SUPPORT_URL, DiscordIcon } from "./support";
 
 type Tab = "dashboard" | "history" | "settings";
 
@@ -242,6 +244,14 @@ export default function App() {
               {t[0].toUpperCase() + t.slice(1)}
             </button>
           ))}
+          <ExternalLink
+            className="header-support"
+            href={DISCORD_SUPPORT_URL}
+            title="Ask for help in the WaveTrace Discord channel"
+          >
+            <DiscordIcon />
+            Discord
+          </ExternalLink>
           {showDownloadSave && (
             <button
               type="button"

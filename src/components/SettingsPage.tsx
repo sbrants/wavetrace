@@ -20,6 +20,7 @@ import { ntfyWaveMilestoneWarning } from "../ntfySettings";
 import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
 import { captureDebugScreenshots } from "../debugPackage";
+import ExternalLink from "../ExternalLink";
 
 const showDevTools = import.meta.env.DEV;
 const ADVANCED_SETTINGS_KEY = "wavetrace.settings.advanced";
@@ -847,16 +848,8 @@ export default function SettingsPage() {
           </div>
           <p className="muted">
             Install the free{" "}
-            <a
-              href="https://ntfy.sh"
-              onClick={(e) => {
-                e.preventDefault();
-                void api.openExternalUrl("https://ntfy.sh");
-              }}
-            >
-              ntfy
-            </a>{" "}
-            app, subscribe to your topic, then use{" "}
+            <ExternalLink href="https://ntfy.sh">ntfy</ExternalLink> app,
+            subscribe to your topic, then use{" "}
             <strong>Send test notification</strong> to verify delivery (tests phone
             setup only; does not depend on the event toggles above).
           </p>
