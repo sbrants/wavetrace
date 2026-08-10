@@ -47,16 +47,20 @@ export async function withTabVisible<T>(
   fn: () => Promise<T>,
   renderDelayMs = 400,
 ): Promise<T> {
+  // Listen before dispatch so a sync/rAF ready event cannot be missed.
+  let ready = waitForDebugReady();
   dispatchDebugCapture({ phase: "start" });
-  await waitForDebugReady();
+  await ready;
   try {
+    ready = waitForDebugReady();
     dispatchDebugCapture({ phase: "switch", tab });
-    await waitForDebugReady();
+    await ready;
     await sleep(renderDelayMs);
     return await fn();
   } finally {
+    ready = waitForDebugReady();
     dispatchDebugCapture({ phase: "end" });
-    await waitForDebugReady();
+    await ready;
   }
 }
 

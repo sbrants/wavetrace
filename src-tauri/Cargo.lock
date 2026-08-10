@@ -6125,7 +6125,7 @@ dependencies = [
 
 [[package]]
 name = "wavetrace"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -6133,7 +6133,6 @@ dependencies = [
  "dirs",
  "icu_locale_core",
  "image",
- "pollster",
  "rfd",
  "rusqlite",
  "serde",
@@ -6149,6 +6148,7 @@ dependencies = [
  "ureq",
  "uuid",
  "windows 0.62.2",
+ "windows-future 0.3.2",
  "xcap",
  "zip 2.4.2",
 ]

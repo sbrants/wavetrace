@@ -92,6 +92,12 @@ export default function App() {
         return;
       }
       if (detail.phase === "switch" && detail.tab) {
+        // setTab is a no-op when already on that tab, so the [tab] effect
+        // never fires — signal ready immediately in that case.
+        if (detail.tab === tabRef.current) {
+          notifyReady();
+          return;
+        }
         debugAwaitingTabRenderRef.current = true;
         setTab(detail.tab);
         return;
@@ -99,7 +105,7 @@ export default function App() {
       if (detail.phase === "end") {
         const restore = debugReturnTabRef.current;
         debugReturnTabRef.current = null;
-        if (restore) {
+        if (restore && restore !== tabRef.current) {
           debugAwaitingTabRenderRef.current = true;
           setTab(restore);
         } else {

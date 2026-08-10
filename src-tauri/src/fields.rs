@@ -119,6 +119,7 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
         }
         Err(e) => {
             eprintln!("OCR error: {e}");
+            crate::db::append_app_log(&format!("OCR error: {e}"));
             let full_ms = full_started.elapsed().as_millis() as u64;
             let gc = if should_continue() {
                 ocr::ocr_golden_combo_band(frame)
