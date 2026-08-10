@@ -94,9 +94,11 @@ const GC_BAND_MAX_WIDTH: u32 = 1000;
 /// How far below Exit Battle the toast may still be spawning / rising.
 /// Keep short: a tall band ingested Wave Skip / enemy-health OCR (`A 446`) as fake carets.
 const GC_TOAST_BELOW_EXIT: f32 = 0.18;
-/// Default toast travel band when Exit Battle was not located.
-const GC_TOAST_Y: f32 = 0.14;
-const GC_TOAST_H: f32 = 0.22;
+/// Assumed Exit Battle bottom when OCR has not locked it (menu folded, cold start, or
+/// the Exit line was misread). Live locks on the usual emulator layout sit ~0.35; the
+/// old fallback band at y=0.14 covered [0.14, 0.36] and missed the toast zone under
+/// Exit ([~0.35, ~0.53]), so unanchored GC polls had ~0% hits.
+const GC_TOAST_DEFAULT_EXIT: f32 = 0.35;
 /// Skip GC OCR when the yellow mask has almost no ink (empty corridor).
 /// Live toast hits were ≥~860 ink; raising from 400 skips sparse FX crumbs.
 const GC_YELLOW_MIN_INK_PIXELS: u32 = 800;
@@ -240,14 +242,13 @@ fn is_gc_band_poison_line(line: &str) -> bool {
 }
 
 fn toast_corridor(exit_bottom_norm: Option<f32>) -> (f32, f32) {
-    if let Some(bottom) = exit_bottom_norm {
-        // Cover from Exit down through the rise path (toast moves upward toward Exit).
-        let y = bottom.clamp(0.08, 0.40);
-        let h = GC_TOAST_BELOW_EXIT.min(0.55 - y).max(0.16);
-        (y, h)
-    } else {
-        (GC_TOAST_Y, GC_TOAST_H)
-    }
+    // Cover from Exit down through the rise path (toast moves upward toward Exit).
+    // No lock → same geometry around [`GC_TOAST_DEFAULT_EXIT`] so a folded menu or a
+    // cold start still aims at the toast, not at empty HUD above it.
+    let bottom = exit_bottom_norm.unwrap_or(GC_TOAST_DEFAULT_EXIT);
+    let y = bottom.clamp(0.08, 0.40);
+    let h = GC_TOAST_BELOW_EXIT.min(0.55 - y).max(0.16);
+    (y, h)
 }
 
 /// Write raw crop + yellow-isolated + color-upscaled GC toast previews for debugging.
@@ -1010,10 +1011,26 @@ mod tests {
     }
 
     #[test]
-    fn gc_toast_corridor_default_without_exit() {
+    fn gc_toast_corridor_default_without_exit_matches_typical_lock() {
         let (y, h) = toast_corridor(None);
-        assert_eq!(y, GC_TOAST_Y);
-        assert_eq!(h, GC_TOAST_H);
+        let (y_locked, h_locked) = toast_corridor(Some(GC_TOAST_DEFAULT_EXIT));
+        assert_eq!((y, h), (y_locked, h_locked));
+        // Must reach the live toast zone under Exit (~0.35), not the old [0.14, 0.36] band.
+        assert!((y - 0.35).abs() < 1e-6);
+        assert!(y + h >= 0.50);
+    }
+
+    #[test]
+    fn gc_toast_corridor_default_overlaps_live_exit_lock() {
+        // Live monitor: Exit Battle bottom ≈ 0.350. Unanchored fallback must overlap
+        // the anchored corridor so a missing Exit line does not zero GC recall.
+        let (y_a, h_a) = toast_corridor(Some(0.35036495));
+        let (y_d, h_d) = toast_corridor(None);
+        let a0 = y_a;
+        let a1 = y_a + h_a;
+        let d0 = y_d;
+        let d1 = y_d + h_d;
+        assert!(a0 < d1 && d0 < a1, "default [{d0},{d1}] vs anchored [{a0},{a1}]");
     }
 
     #[test]

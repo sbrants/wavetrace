@@ -206,6 +206,9 @@ pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
 
 pub fn open() -> rusqlite::Result<Connection> {
     let conn = Connection::open(database_path())?;
+    // Scanner, UI, and tests can open the DB concurrently; without a busy timeout
+    // a second connection fails immediately with "database is locked".
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     migrate(&conn)?;
     Ok(conn)
 }
