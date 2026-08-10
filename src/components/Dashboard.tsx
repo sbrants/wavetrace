@@ -27,6 +27,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [chartWaveSkips, setChartWaveSkips] = useState<WaveSkipRow[]>([]);
   const [chartNormalJumps, setChartNormalJumps] = useState<number[]>([]);
   const [showWaveJumps, setShowWaveJumps] = useState(true);
+  const [showCoinPerMinute, setShowCoinPerMinute] = useState(true);
   const [showGcActivations, setShowGcActivations] = useState(true);
   const chartRef = useRef<HTMLDivElement>(null);
   const lastFetchAtRef = useRef(0);
@@ -144,6 +145,20 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             </span>
           </div>
           <div className="chart-card-actions">
+            {chartData.length > 0 && (
+              <label
+                className="checkbox-inline"
+                title="Show coin/min series on the chart"
+              >
+                <input
+                  type="checkbox"
+                  checked={showCoinPerMinute}
+                  onChange={(e) => setShowCoinPerMinute(e.target.checked)}
+                  aria-label="Show coin/min on dashboard chart"
+                />
+                Coin/min
+              </label>
+            )}
             {hasJumpsOnChart && (
               <label
                 className="checkbox-inline"
@@ -188,6 +203,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             data={chartData}
             waveSkips={skipMarkers}
             showWaveJumps={showWaveJumps}
+            showCoinPerMinute={showCoinPerMinute}
             showGoldenComboActivations={showGcActivations}
             height={320}
           />

@@ -238,6 +238,8 @@ type SingleProps = {
   waveSkipColor?: string;
   /** When false, hide wave-jump markers (default true). */
   showWaveJumps?: boolean;
+  /** When false, hide the coin/min series (default true). */
+  showCoinPerMinute?: boolean;
   /** When false, hide Golden Combo activation series (default true). */
   showGoldenComboActivations?: boolean;
   height?: number;
@@ -255,6 +257,8 @@ type CompareProps = {
   data: CompareChartRow[];
   lines: ChartLineConfig[];
   waveSkipsByLine?: WaveSkipMarker[][];
+  /** When false, hide coin/min series for each run (default true). */
+  showCoinPerMinute?: boolean;
   /** When true, plot `gc_N` activation series on a right axis. */
   showGoldenComboActivations?: boolean;
   height?: number;
@@ -372,6 +376,7 @@ function SingleRunChart({
   waveSkips = [],
   waveSkipColor = SKIP_LINE_COLOR,
   showWaveJumps = true,
+  showCoinPerMinute = true,
   showGoldenComboActivations = true,
   height,
   onPointClick,
@@ -537,6 +542,8 @@ function SingleRunChart({
   const xDomain = waveDomain(data, visibleSkips);
   const rightAxes = (hasSkips ? 1 : 0) + (hasGc ? 1 : 0);
   const rightMargin = rightAxes === 0 ? 12 : rightAxes === 1 ? 44 : 80;
+  // Keep a hidden coin axis so marquee selection / reference areas still map.
+  const coinAxisHidden = !showCoinPerMinute;
 
   return (
     <ResponsiveContainer
@@ -574,6 +581,7 @@ function SingleRunChart({
           stroke={COIN_LINE_COLOR}
           tickFormatter={(v: number) => formatCoin(v)}
           width={70}
+          hide={coinAxisHidden}
         />
         {hasSkips && (
           <YAxis
@@ -633,6 +641,7 @@ function SingleRunChart({
         {(hasSkips || hasGc) && <Legend />}
         {selectionBox && (
           <ReferenceArea
+            yAxisId="coin"
             x1={selectionBox.waveMin}
             x2={selectionBox.waveMax}
             y1={selectionBox.coinMin}
@@ -644,68 +653,70 @@ function SingleRunChart({
           />
         )}
         {/* Coin under GC/skip so their select-mode hit targets stay on top. */}
-        <Line
-          yAxisId="coin"
-          type="monotone"
-          dataKey="coin"
-          name="Coin/min"
-          stroke={COIN_LINE_COLOR}
-          strokeWidth={2}
-          connectNulls
-          isAnimationActive={false}
-          dot={(dotProps) => {
-            const { cx, cy, payload } = dotProps;
-            const row = payload as SingleChartRow | CoinChartPoint;
-            if (cx == null || cy == null || row.coin == null) {
-              return <g key={row.wave} />;
+        {showCoinPerMinute && (
+          <Line
+            yAxisId="coin"
+            type="monotone"
+            dataKey="coin"
+            name="Coin/min"
+            stroke={COIN_LINE_COLOR}
+            strokeWidth={2}
+            connectNulls
+            isAnimationActive={false}
+            dot={(dotProps) => {
+              const { cx, cy, payload } = dotProps;
+              const row = payload as SingleChartRow | CoinChartPoint;
+              if (cx == null || cy == null || row.coin == null) {
+                return <g key={row.wave} />;
+              }
+              const wave = row.wave;
+              const selected = selectedSet.has(wave);
+              const showDots = !!onPointClick || selectable;
+              if (!showDots && !selected) {
+                return <g key={wave} />;
+              }
+              return (
+                <g
+                  key={wave}
+                  style={{ cursor: showDots ? "pointer" : undefined }}
+                  onMouseDown={(e) => {
+                    if (!showDots) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                  }}
+                  onClick={(e) => {
+                    if (!showDots) return;
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                    onPointClick?.(wave);
+                  }}
+                >
+                  <circle cx={cx} cy={cy} r={14} fill="transparent" />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={selected ? 7 : 4}
+                    fill={selected ? "#e8b339" : "#16203a"}
+                    stroke={selected ? "#fff" : COIN_LINE_COLOR}
+                    strokeWidth={2}
+                    style={{ pointerEvents: "none" }}
+                  />
+                </g>
+              );
+            }}
+            activeDot={
+              onPointClick || selectable
+                ? {
+                    r: 7,
+                    fill: "#e8b339",
+                    stroke: "#fff",
+                    strokeWidth: 2,
+                    cursor: "pointer",
+                  }
+                : false
             }
-            const wave = row.wave;
-            const selected = selectedSet.has(wave);
-            const showDots = !!onPointClick || selectable;
-            if (!showDots && !selected) {
-              return <g key={wave} />;
-            }
-            return (
-              <g
-                key={wave}
-                style={{ cursor: showDots ? "pointer" : undefined }}
-                onMouseDown={(e) => {
-                  if (!showDots) return;
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onClick={(e) => {
-                  if (!showDots) return;
-                  e.stopPropagation();
-                  e.nativeEvent.stopImmediatePropagation();
-                  onPointClick?.(wave);
-                }}
-              >
-                <circle cx={cx} cy={cy} r={14} fill="transparent" />
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={selected ? 7 : 4}
-                  fill={selected ? "#e8b339" : "#16203a"}
-                  stroke={selected ? "#fff" : COIN_LINE_COLOR}
-                  strokeWidth={2}
-                  style={{ pointerEvents: "none" }}
-                />
-              </g>
-            );
-          }}
-          activeDot={
-            onPointClick || selectable
-              ? {
-                  r: 7,
-                  fill: "#e8b339",
-                  stroke: "#fff",
-                  strokeWidth: 2,
-                  cursor: "pointer",
-                }
-              : false
-          }
-        />
+          />
+        )}
         {hasSkips && (
           <Line
             yAxisId="skip"
@@ -758,7 +769,8 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
   }
 
   const smoothWindow = props.smoothWindow ?? 0;
-  const leadLag = props.leadLagBand ?? null;
+  const showCoinPerMinute = props.showCoinPerMinute !== false;
+  const leadLag = showCoinPerMinute ? props.leadLagBand ?? null : null;
   const leadLagPolygons =
     leadLag != null
       ? buildLeadLagPolygons(
@@ -827,6 +839,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           stroke={COIN_LINE_COLOR}
           tickFormatter={(v: number) => formatCoin(v)}
           width={70}
+          hide={!showCoinPerMinute}
         />
         {hasSkips && (
           <YAxis
@@ -919,7 +932,9 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
           }}
           contentStyle={{ background: "#16203a", border: "1px solid #2a3550" }}
         />
-        {(props.lines.length > 1 || hasSkips || hasGc) && <Legend />}
+        {((showCoinPerMinute && props.lines.length > 1) ||
+          hasSkips ||
+          hasGc) && <Legend />}
         {leadLagPolygons.length > 0 && (
           <Customized
             component={(customProps: {
@@ -968,19 +983,20 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               isAnimationActive={false}
             />
           ))}
-        {props.lines.map((line) => (
-          <Line
-            key={line.dataKey}
-            yAxisId="coin"
-            type="monotone"
-            dataKey={line.dataKey}
-            name={line.name}
-            stroke={line.stroke}
-            dot={false}
-            strokeWidth={2}
-            connectNulls
-          />
-        ))}
+        {showCoinPerMinute &&
+          props.lines.map((line) => (
+            <Line
+              key={line.dataKey}
+              yAxisId="coin"
+              type="monotone"
+              dataKey={line.dataKey}
+              name={line.name}
+              stroke={line.stroke}
+              dot={false}
+              strokeWidth={2}
+              connectNulls
+            />
+          ))}
       </Chart>
     </ResponsiveContainer>
   );
