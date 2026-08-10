@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.1] — 2026-08-10
+
+### Fixed
+
+- **Startup freeze** — History `list_runs` and other mount-time DB/ADB work run off the UI thread; run averages use one snapshots aggregate instead of per-run correlated scans (could hitch after Golden Combo landed on large DBs).
+
+---
+
 ## [0.3.0] — 2026-08-09
 
 ### Added

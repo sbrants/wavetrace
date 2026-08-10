@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.3.0"
+version = "0.3.1"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 license = "MIT"

@@ -30,14 +30,27 @@ fn conn() -> Result<rusqlite::Connection, String> {
     db::open().map_err(|e| e.to_string())
 }
 
+/// Run DB / ADB / capture work off the UI thread (Tauri sync commands block the main thread).
+async fn run_blocking<T, F>(label: &'static str, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("{label} task failed: {e}"))?
+}
+
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     crate::tray::exit_app(&app);
 }
 
 #[tauri::command]
-pub fn list_windows() -> Vec<capture::WindowInfo> {
-    capture::list_windows()
+pub async fn list_windows() -> Vec<capture::WindowInfo> {
+    run_blocking("list_windows", || Ok(capture::list_windows()))
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -161,8 +174,8 @@ fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_settings() -> Result<Settings, String> {
-    Ok(settings::load(&conn()?))
+pub async fn get_settings() -> Result<Settings, String> {
+    run_blocking("get_settings", || Ok(settings::load(&conn()?))).await
 }
 
 #[tauri::command]
@@ -262,8 +275,16 @@ pub fn complete_wave_milestone_ntfy(
 }
 
 #[tauri::command]
-pub fn has_resumable_run(state: State<AppState>) -> Result<bool, String> {
-    state.scanner.has_resumable_run()
+pub async fn has_resumable_run(state: State<'_, AppState>) -> Result<bool, String> {
+    if state.scanner.machine.lock().unwrap().has_active_run() {
+        return Ok(true);
+    }
+    run_blocking("has_resumable_run", || {
+        Ok(db::latest_open_run(&conn()?)
+            .map_err(|e| e.to_string())?
+            .is_some())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -286,8 +307,11 @@ pub fn scanner_running(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn list_runs(filter: RunFilter) -> Result<Vec<RunRow>, String> {
-    db::list_runs(&conn()?, &filter).map_err(|e| e.to_string())
+pub async fn list_runs(filter: RunFilter) -> Result<Vec<RunRow>, String> {
+    run_blocking("list_runs", move || {
+        db::list_runs(&conn()?, &filter).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -392,8 +416,11 @@ pub fn clear_snapshot_golden_combo(snapshot_ids: Vec<String>) -> Result<usize, S
 }
 
 #[tauri::command]
-pub fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
-    db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
+pub async fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
+    run_blocking("run_snapshots", move || {
+        db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[derive(Debug, Serialize)]
@@ -430,8 +457,11 @@ fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
 }
 
 #[tauri::command]
-pub fn current_run_dashboard(state: State<AppState>) -> Result<DashboardRunView, String> {
-    match state.scanner.current_run_id.lock().unwrap().clone() {
+pub async fn current_run_dashboard(
+    state: State<'_, AppState>,
+) -> Result<DashboardRunView, String> {
+    let id = state.scanner.current_run_id.lock().unwrap().clone();
+    run_blocking("current_run_dashboard", move || match id {
         Some(id) => dashboard_run_view(&id),
         None => Ok(DashboardRunView {
             snapshot_total: 0,
@@ -441,17 +471,21 @@ pub fn current_run_dashboard(state: State<AppState>) -> Result<DashboardRunView,
             chart_normal_jumps: Vec::new(),
             avg_golden_combo_caret: None,
         }),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn run_dashboard_data(run_id: String) -> Result<DashboardRunView, String> {
-    dashboard_run_view(&run_id)
+pub async fn run_dashboard_data(run_id: String) -> Result<DashboardRunView, String> {
+    run_blocking("run_dashboard_data", move || dashboard_run_view(&run_id)).await
 }
 
 #[tauri::command]
-pub fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
-    db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())
+pub async fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
+    run_blocking("run_wave_skips", move || {
+        db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Export all snapshots (with run metadata) for browser download.
@@ -528,25 +562,45 @@ pub struct AppDataInfo {
 }
 
 #[tauri::command]
-pub fn get_app_data_info() -> AppDataInfo {
-    let app_data = db::app_data_dir();
-    AppDataInfo {
-        app_data_dir: app_data.to_string_lossy().into_owned(),
-        logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
-        backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
-        database_path: db::database_path().to_string_lossy().into_owned(),
-        app_log_path: db::app_log_path().to_string_lossy().into_owned(),
-        install_kind: db::detect_install_kind(&app_data).to_string(),
-    }
+pub async fn get_app_data_info() -> AppDataInfo {
+    run_blocking("get_app_data_info", || {
+        let app_data = db::app_data_dir();
+        Ok(AppDataInfo {
+            app_data_dir: app_data.to_string_lossy().into_owned(),
+            logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
+            backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
+            database_path: db::database_path().to_string_lossy().into_owned(),
+            app_log_path: db::app_log_path().to_string_lossy().into_owned(),
+            install_kind: db::detect_install_kind(&app_data).to_string(),
+        })
+    })
+    .await
+    .unwrap_or_else(|_| AppDataInfo {
+        app_data_dir: String::new(),
+        logs_dir: String::new(),
+        backups_dir: String::new(),
+        database_path: String::new(),
+        app_log_path: String::new(),
+        install_kind: String::new(),
+    })
 }
 
 #[tauri::command]
-pub fn game_save_status() -> crate::adb_save::GameSaveStatus {
-    let custom_port = conn()
-        .ok()
-        .map(|c| settings::load(&c).save_pull_adb_port)
-        .flatten();
-    crate::adb_save::probe_game_save(custom_port, true)
+pub async fn game_save_status() -> crate::adb_save::GameSaveStatus {
+    run_blocking("game_save_status", || {
+        let custom_port = conn()
+            .ok()
+            .map(|c| settings::load(&c).save_pull_adb_port)
+            .flatten();
+        Ok(crate::adb_save::probe_game_save(custom_port, true))
+    })
+    .await
+    .unwrap_or_else(|e| crate::adb_save::GameSaveStatus {
+        ready: false,
+        adb_path: None,
+        device_serial: None,
+        detail: e,
+    })
 }
 
 #[tauri::command]
