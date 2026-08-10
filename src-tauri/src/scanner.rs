@@ -1,6 +1,6 @@
 //! Scanner thread: capture -> OCR -> classify -> state machine -> DB + events.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,98 @@ use crate::{capture, db, fields, settings};
 
 /// GC-only band ticks between each full HUD poll (capture → yellow toast, no full-frame OCR).
 const GC_ONLY_TICKS_BETWEEN_FULL: u32 = 2;
+
+/// How long to wait for one window capture before giving up on it. Normal captures take
+/// ~50ms; the call occasionally stops returning at all, which used to wedge the scanner.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A poll step taking longer than this means the scanner is wedged, not just slow: a
+/// whole poll normally costs ~200ms.
+const STAGE_STALL_AFTER: Duration = Duration::from_secs(10);
+/// How often the watchdog restates an ongoing stall.
+const STAGE_STALL_REPEAT: Duration = Duration::from_secs(30);
+/// Watchdog poll interval.
+const WATCHDOG_TICK: Duration = Duration::from_secs(2);
+
+/// Where the poll loop currently is. Published so a watchdog on another thread can name
+/// the step the scanner is wedged in — a step that never returns logs nothing at all,
+/// which is indistinguishable in a log from the app not running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Stage {
+    Sleeping = 0,
+    Capturing = 1,
+    OcrFull = 2,
+    OcrGoldenCombo = 3,
+    StateMachine = 4,
+    Persisting = 5,
+    Notifying = 6,
+    Emitting = 7,
+}
+
+impl Stage {
+    fn from_u8(v: u8) -> Stage {
+        match v {
+            1 => Stage::Capturing,
+            2 => Stage::OcrFull,
+            3 => Stage::OcrGoldenCombo,
+            4 => Stage::StateMachine,
+            5 => Stage::Persisting,
+            6 => Stage::Notifying,
+            7 => Stage::Emitting,
+            _ => Stage::Sleeping,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Stage::Sleeping => "sleeping",
+            Stage::Capturing => "capturing",
+            Stage::OcrFull => "ocr_full_frame",
+            Stage::OcrGoldenCombo => "ocr_golden_combo",
+            Stage::StateMachine => "state_machine",
+            Stage::Persisting => "writing_to_database",
+            Stage::Notifying => "notifications",
+            Stage::Emitting => "emitting_ui_event",
+        }
+    }
+}
+
+/// Shared, lock-free view of the poll loop's current step and when it started.
+struct StageTracker {
+    stage: AtomicU8,
+    /// Milliseconds since `epoch`, so the watchdog never has to take a lock that the
+    /// wedged thread might be holding.
+    entered_ms: AtomicU64,
+    epoch: Instant,
+}
+
+impl StageTracker {
+    fn new() -> Self {
+        Self {
+            stage: AtomicU8::new(Stage::Sleeping as u8),
+            entered_ms: AtomicU64::new(0),
+            epoch: Instant::now(),
+        }
+    }
+
+    fn since_epoch(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
+    fn enter(&self, stage: Stage) {
+        self.entered_ms.store(self.since_epoch(), Ordering::SeqCst);
+        self.stage.store(stage as u8, Ordering::SeqCst);
+    }
+
+    /// Current step and how long it has been running.
+    fn current(&self) -> (Stage, Duration) {
+        let stage = Stage::from_u8(self.stage.load(Ordering::SeqCst));
+        let entered = self.entered_ms.load(Ordering::SeqCst);
+        let elapsed = self.since_epoch().saturating_sub(entered);
+        (stage, Duration::from_millis(elapsed))
+    }
+}
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,146 +224,182 @@ impl Scanner {
         let app_slot = self.app.clone();
         let cached_live = self.cached_live.clone();
 
-        std::thread::spawn(move || {
-            let log_path = db::app_data_dir().join("logs");
-            std::fs::create_dir_all(&log_path).ok();
-            emit(&app, "starting", &machine, &current_run_id, &cached_live);
+        let stages = Arc::new(StageTracker::new());
+        spawn_stall_watchdog(stages.clone(), running.clone());
 
-            let mut exit_y_cache: Option<f32> = None;
-            let mut gc_only_remaining: u32 = 0;
+        std::thread::Builder::new()
+            .name("wavetrace-scanner".into())
+            .spawn(move || {
+                let log_path = db::app_data_dir().join("logs");
+                std::fs::create_dir_all(&log_path).ok();
+                emit(&app, "starting", &machine, &current_run_id, &cached_live);
 
-            while running.load(Ordering::SeqCst) {
-                let tick = Instant::now();
+                let mut exit_y_cache: Option<f32> = None;
+                let mut gc_only_remaining: u32 = 0;
+                let mut outage = CaptureOutage::default();
+                let mut capturer = capture::TimeboxedCapture::new();
 
-                if !running.load(Ordering::SeqCst) {
-                    break;
-                }
-                let do_gc_only = gc_only_remaining > 0;
-                let capture_started = Instant::now();
-                let frame = capture::capture_target(&target);
-                let capture_ms = capture_started.elapsed().as_millis();
-                let status = match frame {
-                    None => {
-                        // Prefer a full HUD poll once the window returns.
-                        gc_only_remaining = 0;
-                        emit(
-                            &app,
-                            "window_not_found",
-                            &machine,
-                            &current_run_id,
-                            &cached_live,
-                        );
-                        sleep_remainder(tick, cfg.poll_interval_ms);
-                        continue;
+                while running.load(Ordering::SeqCst) {
+                    let tick = Instant::now();
+
+                    if !running.load(Ordering::SeqCst) {
+                        break;
                     }
-                    Some(full) if do_gc_only => {
-                        let should_continue = || running.load(Ordering::SeqCst);
-                        let fields = fields::ocr_gc_only_cancellable(
-                            &full,
-                            exit_y_cache,
-                            &should_continue,
-                        );
-                        if !should_continue() {
-                            break;
+                    let do_gc_only = gc_only_remaining > 0;
+                    let capture_started = Instant::now();
+                    stages.enter(Stage::Capturing);
+                    let frame = capturer.capture(&target, CAPTURE_TIMEOUT);
+                    let capture_ms = capture_started.elapsed().as_millis();
+                    let full = match frame {
+                        Err(failure) => {
+                            // Prefer a full HUD poll once the window returns.
+                            gc_only_remaining = 0;
+                            let status = match failure {
+                                capture::CaptureFailure::Minimized => "window_minimized",
+                                capture::CaptureFailure::TimedOut { .. } => "capture_stalled",
+                                _ => "window_not_found",
+                            };
+                            outage.record_failure(
+                                &failure,
+                                &target,
+                                capturer.abandoned_workers(),
+                                &log_path,
+                            );
+                            stages.enter(Stage::Emitting);
+                            emit(&app, status, &machine, &current_run_id, &cached_live);
+                            stages.enter(Stage::Sleeping);
+                            sleep_remainder(tick, cfg.poll_interval_ms);
+                            continue;
                         }
-                        let gc = fields::golden_combo_from_gc_only(&fields);
-                        log_line(
-                            &log_path,
-                            &format!(
-                                "poll kind=gc {}x{} capture_ms={} ocr_ms={} full_ms={} \
+                        Ok(full) => {
+                            outage.record_success(&log_path);
+                            full
+                        }
+                    };
+                    let status = {
+                        if do_gc_only {
+                            let should_continue = || running.load(Ordering::SeqCst);
+                            stages.enter(Stage::OcrGoldenCombo);
+                            let fields = fields::ocr_gc_only_cancellable(
+                                &full,
+                                exit_y_cache,
+                                &should_continue,
+                            );
+                            if !should_continue() {
+                                break;
+                            }
+                            let gc = fields::golden_combo_from_gc_only(&fields);
+                            log_line(
+                                &log_path,
+                                &format!(
+                                    "poll kind=gc {}x{} capture_ms={} ocr_ms={} full_ms={} \
                                  gc_ms={} gc_y={} gc_c={} gc_ink={} gc_skip={} \
                                  exit_y={:?} gc_band={:?} gc={:?}",
-                                full.width(),
-                                full.height(),
-                                capture_ms,
-                                fields.ocr_ms,
-                                fields.full_ms,
-                                fields.gc_ms,
-                                fields.gc_yellow_ms,
-                                fields.gc_color_ms,
-                                fields.gc_ink,
-                                fields.gc_skip,
-                                fields.exit_battle_y,
-                                fields.gc_band_lines,
-                                gc,
-                            ),
-                        );
-                        {
-                            let mut sm = machine.lock().unwrap();
-                            sm.poll_golden_combo_only(gc);
-                        }
-                        gc_only_remaining = gc_only_remaining.saturating_sub(1);
-                        "scanning"
-                    }
-                    Some(full) => {
-                        let should_continue = || running.load(Ordering::SeqCst);
-                        let fields = fields::ocr_all_fields_cancellable(&full, &should_continue);
-                        if !should_continue() {
-                            break;
-                        }
-                        let input = fields::poll_input_from_fields(&fields, &full);
-                        log_line(
-                            &log_path,
-                            &format!(
-                                "poll kind=full {}x{} capture_ms={} ocr_ms={} full_ms={} \
+                                    full.width(),
+                                    full.height(),
+                                    capture_ms,
+                                    fields.ocr_ms,
+                                    fields.full_ms,
+                                    fields.gc_ms,
+                                    fields.gc_yellow_ms,
+                                    fields.gc_color_ms,
+                                    fields.gc_ink,
+                                    fields.gc_skip,
+                                    fields.exit_battle_y,
+                                    fields.gc_band_lines,
+                                    gc,
+                                ),
+                            );
+                            {
+                                stages.enter(Stage::StateMachine);
+                                let mut sm = machine.lock().unwrap();
+                                sm.poll_golden_combo_only(gc);
+                            }
+                            gc_only_remaining = gc_only_remaining.saturating_sub(1);
+                            "scanning"
+                        } else {
+                            let should_continue = || running.load(Ordering::SeqCst);
+                            stages.enter(Stage::OcrFull);
+                            let fields =
+                                fields::ocr_all_fields_cancellable(&full, &should_continue);
+                            if !should_continue() {
+                                break;
+                            }
+                            let input = fields::poll_input_from_fields(&fields, &full);
+                            log_line(
+                                &log_path,
+                                &format!(
+                                    "poll kind=full {}x{} capture_ms={} ocr_ms={} full_ms={} \
                                  gc_ms={} gc_y={} gc_c={} gc_ink={} gc_skip={} \
                                  tier={:?} wave={:?} coin={:?} skip={:?} \
                                  exit_y={:?} gc_band={:?} lines={:?}",
-                                full.width(),
-                                full.height(),
-                                capture_ms,
-                                fields.ocr_ms,
-                                fields.full_ms,
-                                fields.gc_ms,
-                                fields.gc_yellow_ms,
-                                fields.gc_color_ms,
-                                fields.gc_ink,
-                                fields.gc_skip,
-                                input.tier,
-                                input.wave,
-                                input.coin,
-                                input.wave_skip_overlay,
-                                fields.exit_battle_y,
-                                fields.gc_band_lines,
-                                fields.all_lines,
-                            ),
-                        );
-                        let frame_ctx = crate::notifications::frame_context_from_poll(&input);
-                        let (actions, live) = {
-                            let mut sm = machine.lock().unwrap();
-                            let actions = sm.poll(input);
-                            let live = sm.live_state();
-                            (actions, live)
-                        };
-                        if !actions.is_empty() {
-                            apply_actions(&conn, &current_run_id, &actions, &log_path);
-                            notify_scanner_actions(&app, &actions, Some(&full), frame_ctx);
-                        }
-                        if let Some(notify) = app.try_state::<crate::notifications::NotifyState>()
-                        {
-                            notify.on_poll(
-                                &app,
-                                &fields.all_lines,
-                                &live,
-                                Some(&full),
-                                frame_ctx,
+                                    full.width(),
+                                    full.height(),
+                                    capture_ms,
+                                    fields.ocr_ms,
+                                    fields.full_ms,
+                                    fields.gc_ms,
+                                    fields.gc_yellow_ms,
+                                    fields.gc_color_ms,
+                                    fields.gc_ink,
+                                    fields.gc_skip,
+                                    input.tier,
+                                    input.wave,
+                                    input.coin,
+                                    input.wave_skip_overlay,
+                                    fields.exit_battle_y,
+                                    fields.gc_band_lines,
+                                    fields.all_lines,
+                                ),
                             );
+                            let frame_ctx = crate::notifications::frame_context_from_poll(&input);
+                            stages.enter(Stage::StateMachine);
+                            let (actions, live) = {
+                                let mut sm = machine.lock().unwrap();
+                                let actions = sm.poll(input);
+                                let live = sm.live_state();
+                                (actions, live)
+                            };
+                            if !actions.is_empty() {
+                                stages.enter(Stage::Persisting);
+                                apply_actions(&conn, &current_run_id, &actions, &log_path);
+                                stages.enter(Stage::Notifying);
+                                notify_scanner_actions(&app, &actions, Some(&full), frame_ctx);
+                            }
+                            if let Some(notify) =
+                                app.try_state::<crate::notifications::NotifyState>()
+                            {
+                                stages.enter(Stage::Notifying);
+                                notify.on_poll(
+                                    &app,
+                                    &fields.all_lines,
+                                    &live,
+                                    Some(&full),
+                                    frame_ctx,
+                                );
+                            }
+                            if fields.exit_battle_y.is_some() {
+                                exit_y_cache = fields.exit_battle_y;
+                            }
+                            gc_only_remaining = GC_ONLY_TICKS_BETWEEN_FULL;
+                            "scanning"
                         }
-                        if fields.exit_battle_y.is_some() {
-                            exit_y_cache = fields.exit_battle_y;
-                        }
-                        gc_only_remaining = GC_ONLY_TICKS_BETWEEN_FULL;
-                        "scanning"
-                    }
-                };
-                emit(&app, status, &machine, &current_run_id, &cached_live);
-                sleep_remainder(tick, cfg.poll_interval_ms);
-            }
-            emit(&app, "stopped", &machine, &current_run_id, &cached_live);
-            if let Ok(mut guard) = app_slot.lock() {
-                *guard = None;
-            }
-        });
+                    };
+                    stages.enter(Stage::Emitting);
+                    emit(&app, status, &machine, &current_run_id, &cached_live);
+                    stages.enter(Stage::Sleeping);
+                    sleep_remainder(tick, cfg.poll_interval_ms);
+                }
+                emit(&app, "stopped", &machine, &current_run_id, &cached_live);
+                db::append_app_log("scanner thread exiting");
+                if let Ok(mut guard) = app_slot.lock() {
+                    *guard = None;
+                }
+            })
+            .map_err(|e| {
+                self.running.store(false, Ordering::SeqCst);
+                format!("could not start the scanner thread: {e}")
+            })?;
         Ok(())
     }
 
@@ -402,6 +530,125 @@ fn log_line(_dir: &std::path::Path, msg: &str) {
     db::append_app_log(msg);
 }
 
+/// Watches the poll loop from a second thread and reports any step that stops coming
+/// back. A wedged step produces no log output of its own, so without this the log for a
+/// scanner that hangs looks exactly like the log for an app that was closed.
+fn spawn_stall_watchdog(stages: Arc<StageTracker>, running: Arc<AtomicBool>) {
+    let _ = std::thread::Builder::new()
+        .name("wavetrace-scanner-watchdog".into())
+        .spawn(move || {
+            let mut reported: Option<(Stage, Instant)> = None;
+            while running.load(Ordering::SeqCst) {
+                std::thread::sleep(WATCHDOG_TICK);
+                let (stage, elapsed) = stages.current();
+                if elapsed < STAGE_STALL_AFTER {
+                    if let Some((stalled_stage, _)) = reported.take() {
+                        db::append_app_log(&format!(
+                            "scanner recovered from stall in {}",
+                            stalled_stage.label()
+                        ));
+                    }
+                    continue;
+                }
+                let due = match reported {
+                    Some((prev, at)) => prev != stage || at.elapsed() >= STAGE_STALL_REPEAT,
+                    None => true,
+                };
+                if due {
+                    db::append_app_log(&format!(
+                        "scanner STALLED in {} for {:.1}s — no poll can complete until it returns",
+                        stage.label(),
+                        elapsed.as_secs_f64(),
+                    ));
+                    reported = Some((stage, Instant::now()));
+                }
+            }
+        });
+}
+
+/// How often to restate an ongoing capture outage in the log.
+const CAPTURE_OUTAGE_HEARTBEAT: Duration = Duration::from_secs(60);
+
+/// Tracks a run of polls that produced no frame. Without this the loop simply skips
+/// the poll and logs nothing, so an hours-long outage is invisible in the log — it
+/// looks identical to the app not running at all.
+#[derive(Default)]
+struct CaptureOutage {
+    started: Option<Instant>,
+    last_logged: Option<Instant>,
+    missed_polls: u64,
+    reason: Option<&'static str>,
+}
+
+impl CaptureOutage {
+    fn record_failure(
+        &mut self,
+        failure: &capture::CaptureFailure,
+        target: &settings::TargetWindow,
+        abandoned_threads: u32,
+        log_path: &std::path::Path,
+    ) {
+        self.missed_polls += 1;
+        let reason = failure.tag();
+        let reason_changed = self.reason != Some(reason);
+        self.reason = Some(reason);
+        let now = Instant::now();
+        let started = *self.started.get_or_insert(now);
+        let due = self
+            .last_logged
+            .is_none_or(|at| now.duration_since(at) >= CAPTURE_OUTAGE_HEARTBEAT);
+        if !due && !reason_changed {
+            return;
+        }
+        self.last_logged = Some(now);
+
+        let detail = match failure {
+            capture::CaptureFailure::EnumerateFailed { error } => format!(" error={error:?}"),
+            capture::CaptureFailure::TimedOut { after_ms } => {
+                format!(
+                    " gave_up_after_ms={after_ms} abandoned_capture_threads={abandoned_threads}"
+                )
+            }
+            _ => String::new(),
+        };
+        // Ask the OS directly: xcap's window list drops minimized, cloaked (e.g. moved
+        // to another virtual desktop) and zero-size windows alike, so this is the only
+        // way to tell those apart afterwards from a log.
+        let os_state = crate::window_probe::describe_matching_windows(&target.title_substring)
+            .map(|s| format!(" os_windows=[{s}]"))
+            .unwrap_or_default();
+        log_line(
+            log_path,
+            &format!(
+                "capture unavailable reason={reason} for={:.1}s missed_polls={} \
+                 target={:?} app={:?}{detail}{os_state}",
+                now.duration_since(started).as_secs_f64(),
+                self.missed_polls,
+                target.title_substring,
+                target.process_name,
+            ),
+        );
+    }
+
+    fn record_success(&mut self, log_path: &std::path::Path) {
+        let Some(started) = self.started.take() else {
+            return;
+        };
+        log_line(
+            log_path,
+            &format!(
+                "capture restored after {:.1}s reason={} missed_polls={}",
+                started.elapsed().as_secs_f64(),
+                self.reason.unwrap_or("unknown"),
+                self.missed_polls,
+            ),
+        );
+        self.last_logged = None;
+        self.missed_polls = 0;
+        self.reason = None;
+    }
+}
+
 fn emit(
     app: &AppHandle,
     status: &str,
@@ -431,6 +678,36 @@ pub fn notify_scanner_actions(
 ) {
     if let Some(notify) = app.try_state::<crate::notifications::NotifyState>() {
         notify.on_actions(app, actions, capture, frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Stage, StageTracker};
+
+    #[test]
+    fn stage_survives_the_atomic_round_trip() {
+        for stage in [
+            Stage::Sleeping,
+            Stage::Capturing,
+            Stage::OcrFull,
+            Stage::OcrGoldenCombo,
+            Stage::StateMachine,
+            Stage::Persisting,
+            Stage::Notifying,
+            Stage::Emitting,
+        ] {
+            assert_eq!(Stage::from_u8(stage as u8), stage);
+        }
+    }
+
+    #[test]
+    fn tracker_reports_the_stage_it_entered() {
+        let tracker = StageTracker::new();
+        tracker.enter(Stage::Capturing);
+        let (stage, elapsed) = tracker.current();
+        assert_eq!(stage, Stage::Capturing);
+        assert!(elapsed.as_secs() < 1);
     }
 }
 

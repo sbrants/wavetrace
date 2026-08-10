@@ -238,6 +238,8 @@ textarea:focus-visible,
 }
 
 .status-window_not_found,
+.status-window_minimized,
+.status-capture_stalled,
 .status-ocr_error {
   color: #e8b339;
 }
@@ -1194,6 +1196,18 @@ select {
   padding: 10px 20px;
   background: #1a2d4d;
   border-bottom: 1px solid var(--border);
+}
+
+.capture-outage-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: #f4d79a;
+  background: #3a2b12;
+  border-bottom: 1px solid #6b4f1d;
 }
 
 .update-banner-actions {

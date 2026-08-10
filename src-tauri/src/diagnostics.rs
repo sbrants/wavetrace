@@ -35,6 +35,12 @@ pub struct TargetWindowProbe {
     pub line_count: usize,
     pub sample_lines: Vec<String>,
     pub coin_lines: Vec<String>,
+    /// Why the capture produced no frame, when it didn't.
+    pub capture_failure: Option<String>,
+    /// Raw OS state of any window matching the target title. The list we capture from
+    /// hides minimized, cloaked and zero-size windows alike, so this is what tells a
+    /// minimized emulator apart from one on another virtual desktop or a locked screen.
+    pub os_windows: Option<String>,
 }
 
 pub struct TargetWindowProbeBundle {
@@ -111,6 +117,8 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
                 line_count: 0,
                 sample_lines: Vec::new(),
                 coin_lines: Vec::new(),
+                capture_failure: None,
+                os_windows: None,
             },
             preview_png: None,
             all_lines: Vec::new(),
@@ -118,33 +126,40 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
     };
 
     let capture_started = Instant::now();
-    let frame = capture::capture_target(&target);
+    let frame = capture::capture_target_detailed(&target);
     let capture_ms = capture_started.elapsed().as_millis() as u64;
 
-    let Some(img) = frame else {
-        return Ok(TargetWindowProbeBundle {
-            probe: TargetWindowProbe {
-                configured_target,
-                resolved_target: Some(target),
-                resolve_error,
-                window_found: false,
-                capture_ms,
-                ocr_ms: 0,
-                width: 0,
-                height: 0,
-                tier: None,
-                wave: None,
-                coin_per_minute: None,
-                coin_status: "window_not_found".into(),
-                mode: "unknown".into(),
-                dissonance: None,
-                line_count: 0,
-                sample_lines: Vec::new(),
-                coin_lines: Vec::new(),
-            },
-            preview_png: None,
-            all_lines: Vec::new(),
-        });
+    let img = match frame {
+        Ok(img) => img,
+        Err(failure) => {
+            return Ok(TargetWindowProbeBundle {
+                probe: TargetWindowProbe {
+                    configured_target,
+                    resolved_target: Some(target.clone()),
+                    resolve_error,
+                    window_found: false,
+                    capture_ms,
+                    ocr_ms: 0,
+                    width: 0,
+                    height: 0,
+                    tier: None,
+                    wave: None,
+                    coin_per_minute: None,
+                    coin_status: "window_not_found".into(),
+                    mode: "unknown".into(),
+                    dissonance: None,
+                    line_count: 0,
+                    sample_lines: Vec::new(),
+                    coin_lines: Vec::new(),
+                    capture_failure: Some(failure.tag().to_string()),
+                    os_windows: crate::window_probe::describe_matching_windows(
+                        &target.title_substring,
+                    ),
+                },
+                preview_png: None,
+                all_lines: Vec::new(),
+            });
+        }
     };
 
     let ocr_started = Instant::now();
@@ -189,6 +204,8 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
             line_count,
             sample_lines,
             coin_lines,
+            capture_failure: None,
+            os_windows: None,
         },
         preview_png,
         all_lines: fields.all_lines,

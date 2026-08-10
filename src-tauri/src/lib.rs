@@ -20,15 +20,46 @@ pub mod settings;
 pub mod shutdown_hook;
 pub mod state_machine;
 pub mod tray;
+pub mod window_probe;
 
 use commands::AppState;
 use notifications::NotifyState;
 use tauri::Manager;
 
+/// Route panics into the app log. A panicking background thread (e.g. the scanner)
+/// otherwise dies silently: its message goes to stderr, which a windowed build has
+/// nowhere to show, so the symptom reaching us is only "it stopped collecting data".
+fn log_panics() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unnamed").to_string();
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        // A panic while logging the panic would abort the process, so absorb it.
+        let _ = std::panic::catch_unwind(|| {
+            db::append_app_log(&format!(
+                "PANIC in thread {thread_name} at {location}: {message}"
+            ));
+        });
+        default_hook(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ensure the database and its directory exist before anything else runs.
     db::open().expect("failed to open database");
+    log_panics();
+    db::append_app_log("app starting");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())

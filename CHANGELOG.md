@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.4] — 2026-08-10
+
+### Added
+
+- **App version on every log line** — a support log routinely spans several builds (an update mid-session, or a tester going back to an older version); lines now carry `v0.3.4` so it's clear which build produced them.
+- **"Not capturing" banner** — while a run is scanning but the game window can't be captured, the app says so instead of leaving the last read tier/wave/coin on screen looking live, and reports how long it has been that way. A minimized game window and an unresponsive screen capture each get their own status.
+- **Panics reach the log** — a panicking background thread wrote to stderr, which a windowed build discards, so a scanner thread that died left no trace at all and the only symptom was "it stopped collecting data".
+- **Stall watchdog** — a second thread reports which step of the poll loop stopped returning (capturing, OCR, state machine, database, notifications, UI event) instead of leaving a log that is indistinguishable from the app not running.
+
+### Fixed
+
+- **Scanner wedged by a hung screen capture** — window capture now runs on a helper thread with a 5s deadline, so a capture call that never returns no longer stops the scanner for good. Previously polling stopped dead seconds after starting a run while the app kept reporting "scanning", and only pressing New run again brought it back.
+- **Silent capture outages** — polls that produced no frame were skipped without a log line, so an outage of any length was indistinguishable in the log from the app not running. The scanner now logs why capture is unavailable (window missing, minimized, enumeration failure, capture failure), restates it every minute, logs recovery with the outage duration, and records the raw OS state (visible/minimized/cloaked/rect) of any window matching the target title. Debug packages carry the same detail in `target-window.json`.
+- **App screenshots in debug packages** — the window list used for game capture excludes our own process, so the app window was never in it and a title search matched anything mentioning "WaveTrace" (a File Explorer window open on the install folder, a browser on the releases page) — that unrelated window got captured instead. The app window is now located through its own on-screen rect.
+
+---
+
 ## [0.3.3] — 2026-08-10
 
 ### Added

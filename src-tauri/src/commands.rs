@@ -247,11 +247,11 @@ pub fn complete_wave_milestone_ntfy(
         let captured = (0..5).find_map(|attempt| {
             let delay_ms = 400 + attempt * 400;
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            capture::capture_own_app_window_relaxed()
+            capture::capture_own_app_window(&app)
                 .ok()
                 .and_then(|img| {
                     db::append_app_log(&format!(
-                        "wave milestone ui capture: xcap {}x{} (attempt {})",
+                        "wave milestone ui capture: screen crop {}x{} (attempt {})",
                         img.width(),
                         img.height(),
                         attempt + 1
@@ -260,7 +260,7 @@ pub fn complete_wave_milestone_ntfy(
                 })
         });
         if captured.is_none() {
-            db::append_app_log("wave milestone ui capture: FAILED (webview + xcap)");
+            db::append_app_log("wave milestone ui capture: FAILED (webview + screen crop)");
         }
         captured
     };
@@ -714,9 +714,7 @@ pub fn append_app_log(source: String, message: String) -> Result<(), String> {
 pub fn capture_app_window(app: AppHandle) -> Result<String, String> {
     crate::tray::show_main_window(&app);
     std::thread::sleep(std::time::Duration::from_millis(200));
-    // Relaxed: accept monitor-crop fallback when the window is obscured by the
-    // game (common while generating a debug package mid-run).
-    let img = capture::capture_own_app_window_relaxed()?;
+    let img = capture::capture_own_app_window(&app)?;
     capture::encode_png_base64(&img)
 }
 
