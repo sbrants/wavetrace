@@ -386,13 +386,20 @@ pub fn insert_wave_skip(
 }
 
 pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<RunRow>> {
+    // One snapshots pass (GROUP BY run_id) instead of three correlated subqueries per run.
     let mut sql = String::from(
         "SELECT r.id, r.started_at, r.ended_at, r.run_type, r.peak_tier, r.final_wave,
-                (SELECT AVG(coin_per_minute) FROM snapshots s WHERE s.run_id = r.id),
-                (SELECT AVG(golden_combo_caret) FROM snapshots s WHERE s.run_id = r.id AND golden_combo_caret IS NOT NULL),
-                (SELECT COUNT(*) FROM snapshots s WHERE s.run_id = r.id),
-                r.comment
-         FROM runs r WHERE 1=1",
+                agg.avg_coin, agg.avg_gc, COALESCE(agg.snap_count, 0), r.comment
+         FROM runs r
+         LEFT JOIN (
+           SELECT run_id,
+                  AVG(coin_per_minute) AS avg_coin,
+                  AVG(golden_combo_caret) AS avg_gc,
+                  COUNT(*) AS snap_count
+           FROM snapshots
+           GROUP BY run_id
+         ) agg ON agg.run_id = r.id
+         WHERE 1=1",
     );
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(rt) = &filter.run_type {
@@ -1195,6 +1202,42 @@ mod tests {
         let runs = list_runs(&conn, &RunFilter::default()).unwrap();
         assert_eq!(runs[0].run_type, "dissonance_utility");
         assert!(set_run_type(&conn, &id, "invalid").is_err());
+    }
+
+    #[test]
+    fn list_runs_includes_avg_golden_combo_caret() {
+        let conn = open_in_memory().unwrap();
+        let id = start_run(&conn, "farming").unwrap();
+        insert_snapshot(
+            &conn,
+            &id,
+            1,
+            Some(10),
+            Some(100.0),
+            Some(0.03),
+            Some(100),
+            Some(0.1),
+        )
+        .unwrap();
+        insert_snapshot(
+            &conn,
+            &id,
+            2,
+            Some(10),
+            Some(200.0),
+            Some(0.03),
+            Some(200),
+            Some(0.1),
+        )
+        .unwrap();
+        // Null caret must not pull the average down.
+        insert_snapshot(&conn, &id, 3, Some(10), Some(300.0), None, None, None).unwrap();
+        end_run(&conn, &id, Some(3), Some(10)).unwrap();
+
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs[0].snapshot_count, 3);
+        assert_eq!(runs[0].avg_coin_per_minute, Some(200.0));
+        assert_eq!(runs[0].avg_golden_combo_caret, Some(150.0));
     }
 
     #[test]
