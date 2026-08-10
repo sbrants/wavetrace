@@ -6,6 +6,7 @@ import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
 import AppUpdater from "./components/AppUpdater";
+import CaptureOutageBanner from "./components/CaptureOutageBanner";
 import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { registerTabControl, type AppTab } from "./tabCapture";
@@ -26,6 +27,10 @@ function scannerStatusLabel(
       return "Scanner starting";
     case "window_not_found":
       return "Game window not found";
+    case "window_minimized":
+      return "Game window minimized";
+    case "capture_stalled":
+      return "Screen capture not responding";
     case "ocr_error":
       return "Scanner OCR error";
     case "stopped":
@@ -336,6 +341,7 @@ export default function App() {
       </header>
 
       <AppUpdater autoCheck variant="banner" />
+      <CaptureOutageBanner running={running} status={scannerEvent?.status} />
 
       <main>
         <div hidden={tab !== "dashboard"}>

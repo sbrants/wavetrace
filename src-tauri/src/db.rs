@@ -151,6 +151,11 @@ fn maybe_rotate_app_log_with_limits(
     let _ = std::fs::rename(&path, &first);
 }
 
+/// Stamped on every log line: a support log often spans several app versions (an
+/// update, or a tester going back to an older build), and without this there is no way
+/// to tell which build produced a given line.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub fn append_app_log(msg: &str) {
     use std::io::Write;
 
@@ -164,7 +169,7 @@ pub fn append_app_log(msg: &str) {
         .append(true)
         .open(&path)
     {
-        writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339()).ok();
+        writeln!(f, "{} v{APP_VERSION} {msg}", chrono::Utc::now().to_rfc3339()).ok();
     }
 }
 
