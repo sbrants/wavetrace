@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.2] — 2026-08-10
+
+### Fixed
+
+- **Empty OCR after Stop → New run** — WinRT/`OcrEngine` were process-global, so a restarted scanner thread skipped `RoInitialize` and reused a dead thread’s engine. Capture/preview still looked correct while every poll returned `lines=[]` and **Coin rate unavailable**.
+- **Debug package from Settings** — switching back to the Settings tab no longer hangs screenshot capture (`Timed out waiting for the UI to switch tabs`); window capture is more tolerant when the game is in front.
+- **Scanner stall on hung OCR** — Windows OCR recognize calls time out and cancel on the scanner thread instead of blocking forever.
+
+---
+
 ## [0.3.1] — 2026-08-10
 
 ### Fixed

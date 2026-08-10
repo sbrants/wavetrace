@@ -714,7 +714,9 @@ pub fn append_app_log(source: String, message: String) -> Result<(), String> {
 pub fn capture_app_window(app: AppHandle) -> Result<String, String> {
     crate::tray::show_main_window(&app);
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let img = capture::capture_own_app_window()?;
+    // Relaxed: accept monitor-crop fallback when the window is obscured by the
+    // game (common while generating a debug package mid-run).
+    let img = capture::capture_own_app_window_relaxed()?;
     capture::encode_png_base64(&img)
 }
 

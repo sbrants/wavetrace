@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.3.1"
+version = "0.3.2"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 license = "MIT"
@@ -32,7 +32,6 @@ uuid = { version = "1.23.3", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
-pollster = "0.4"
 windows = { version = "0.62", features = [
     "Foundation",
     "Foundation_Collections",
@@ -43,6 +42,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+windows-future = "0.3"
 xcap = { version = "0.9.6", features = ["wgc"] }
 
 [target.'cfg(not(windows))'.dependencies]

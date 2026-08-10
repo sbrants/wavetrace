@@ -1,10 +1,14 @@
 //! Full-frame OCR: Windows.Media.Ocr on Windows, Tesseract elsewhere.
 
 #[cfg(windows)]
+use std::cell::{Cell, RefCell};
+#[cfg(windows)]
 use std::ptr;
 #[cfg(windows)]
 use std::slice;
 use std::sync::{Mutex, OnceLock};
+#[cfg(windows)]
+use std::time::Duration;
 use std::time::Instant;
 
 use image::{imageops, RgbaImage};
@@ -16,16 +20,14 @@ use windows::{
     Media::Ocr::{OcrEngine, OcrResult},
     Win32::System::WinRT::{IMemoryBufferByteAccess, RoInitialize, RO_INIT_MULTITHREADED},
 };
-
 #[cfg(windows)]
-use pollster::block_on;
+use windows_future::AsyncStatus;
 
+/// Give up on a hung WinRT RecognizeAsync so the scanner thread can keep polling.
 #[cfg(windows)]
-static WINRT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
+const OCR_RECOGNIZE_TIMEOUT: Duration = Duration::from_secs(8);
 
-#[cfg(windows)]
-static OCR_ENGINE: OnceLock<Result<OcrEngine, String>> = OnceLock::new();
-
+/// Serialize OCR across scanner + Settings probe (engines are per-thread).
 #[cfg(windows)]
 static OCR_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -619,23 +621,50 @@ fn run_tesseract(
 
 #[cfg(windows)]
 fn init_winrt() -> Result<(), String> {
-    WINRT_INIT
-        .get_or_init(|| unsafe {
-            RoInitialize(RO_INIT_MULTITHREADED).map_err(|e| format!("RoInitialize failed: {e}"))
-        })
-        .clone()
+    // RoInitialize is per-thread. A process-wide OnceLock skipped init on the next
+    // scanner thread after Stop→New run, so OCR returned empty lines forever while
+    // capture/preview still looked fine.
+    thread_local! {
+        static READY: Cell<bool> = const { Cell::new(false) };
+    }
+    READY.with(|ready| {
+        if ready.get() {
+            return Ok(());
+        }
+        unsafe {
+            if let Err(e) = RoInitialize(RO_INIT_MULTITHREADED) {
+                // RPC_E_CHANGED_MODE: this thread already has a different apartment.
+                const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
+                if e.code().0 != RPC_E_CHANGED_MODE {
+                    return Err(format!("RoInitialize failed: {e}"));
+                }
+            }
+        }
+        ready.set(true);
+        Ok(())
+    })
 }
 
 #[cfg(windows)]
-fn ocr_engine() -> Result<&'static OcrEngine, String> {
-    OCR_ENGINE
-        .get_or_init(|| {
-            init_winrt()?;
-            OcrEngine::TryCreateFromUserProfileLanguages()
-                .map_err(|e| format!("Windows OCR engine unavailable: {e}"))
-        })
-        .as_ref()
-        .map_err(|e| e.clone())
+fn with_ocr_engine<T>(f: impl FnOnce(&OcrEngine) -> Result<T, String>) -> Result<T, String> {
+    thread_local! {
+        static ENGINE: RefCell<Option<Result<OcrEngine, String>>> =
+            const { RefCell::new(None) };
+    }
+    ENGINE.with(|slot| {
+        if slot.borrow().is_none() {
+            let created = (|| {
+                init_winrt()?;
+                OcrEngine::TryCreateFromUserProfileLanguages()
+                    .map_err(|e| format!("Windows OCR engine unavailable: {e}"))
+            })();
+            *slot.borrow_mut() = Some(created);
+        }
+        match slot.borrow().as_ref().expect("engine slot set") {
+            Ok(engine) => f(engine),
+            Err(e) => Err(e.clone()),
+        }
+    })
 }
 
 #[cfg(windows)]
@@ -645,14 +674,44 @@ fn recognize_rgba8(img: &RgbaImage) -> Result<OcrResult, String> {
         .lock()
         .map_err(|e| format!("OCR mutex poisoned: {e}"))?;
     init_winrt()?;
-    let engine = ocr_engine()?;
     let bitmap = rgba_to_software_bitmap(img)?;
-    block_on(async {
-        engine
+    with_ocr_engine(|engine| {
+        let op = engine
             .RecognizeAsync(&bitmap)
-            .map_err(|e| format!("Windows OCR RecognizeAsync failed: {e}"))?
-            .await
-            .map_err(|e| format!("Windows OCR recognition failed: {e}"))
+            .map_err(|e| format!("Windows OCR RecognizeAsync failed: {e}"))?;
+        // Stay on this thread (WinRT apartment). Poll status so we can Cancel on hang.
+        let deadline = Instant::now() + OCR_RECOGNIZE_TIMEOUT;
+        loop {
+            match op
+                .Status()
+                .map_err(|e| format!("Windows OCR status failed: {e}"))?
+            {
+                AsyncStatus::Completed => {
+                    return op
+                        .GetResults()
+                        .map_err(|e| format!("Windows OCR recognition failed: {e}"));
+                }
+                AsyncStatus::Error => {
+                    return Err("Windows OCR recognition failed".into());
+                }
+                AsyncStatus::Canceled => {
+                    return Err("Windows OCR recognition canceled".into());
+                }
+                AsyncStatus::Started => {
+                    if Instant::now() >= deadline {
+                        let _ = op.Cancel();
+                        return Err(format!(
+                            "Windows OCR timed out after {}s",
+                            OCR_RECOGNIZE_TIMEOUT.as_secs()
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                other => {
+                    return Err(format!("Windows OCR unexpected status: {other:?}"));
+                }
+            }
+        }
     })
 }
 
