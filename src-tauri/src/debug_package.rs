@@ -389,8 +389,14 @@ pub fn create_debug_package(input: &DebugPackageBuildInput) -> Result<DebugPacka
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::state_machine::LiveState;
+
+    /// Both tests hit the real app DB; parallel `cargo test` used to fail with
+    /// "database is locked" on Linux CI before `db::open` got a busy timeout.
+    static DEBUG_PKG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn tiny_png_b64() -> String {
         base64::engine::general_purpose::STANDARD.encode([
@@ -414,6 +420,7 @@ mod tests {
 
     #[test]
     fn debug_package_contains_manifest_log_and_screenshots() {
+        let _guard = DEBUG_PKG_TEST_LOCK.lock().unwrap();
         let shots = vec![
             DebugScreenshotInput {
                 label: "dashboard".into(),
@@ -443,6 +450,7 @@ mod tests {
 
     #[test]
     fn debug_package_without_screenshots_still_builds() {
+        let _guard = DEBUG_PKG_TEST_LOCK.lock().unwrap();
         let (bytes, _) = build_debug_package_zip(&sample_input(vec![])).expect("zip");
         let cursor = Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).expect("archive");

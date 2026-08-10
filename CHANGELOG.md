@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Golden Combo miss when Exit Battle isn't on screen** — the fallback toast corridor sat high on the HUD (`y≈0.14`) while live Exit Battle locks sit ~0.35, so the band barely touched the toast and unanchored GC polls (cold start, folded menu with no prior lock, Exit line misread) had ~0% hits. The fallback now uses the same geometry as a typical Exit lock.
+- **Flaky debug-package test on Linux CI** — parallel tests opening the app database could fail with `database is locked`; connections now wait up to 5s and the debug-package tests serialize.
 
 ---
 
