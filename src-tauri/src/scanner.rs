@@ -232,6 +232,14 @@ impl Scanner {
             .spawn(move || {
                 let log_path = db::app_data_dir().join("logs");
                 std::fs::create_dir_all(&log_path).ok();
+                let _exit = ScannerExitGuard {
+                    running: running.clone(),
+                    app: app.clone(),
+                    machine: machine.clone(),
+                    current_run_id: current_run_id.clone(),
+                    cached_live: cached_live.clone(),
+                    app_slot,
+                };
                 emit(&app, "starting", &machine, &current_run_id, &cached_live);
 
                 let mut exit_y_cache: Option<f32> = None;
@@ -280,11 +288,19 @@ impl Scanner {
                         if do_gc_only {
                             let should_continue = || running.load(Ordering::SeqCst);
                             stages.enter(Stage::OcrGoldenCombo);
-                            let fields = fields::ocr_gc_only_cancellable(
-                                &full,
-                                exit_y_cache,
-                                &should_continue,
-                            );
+                            let fields = catch_frame_panic("golden combo band OCR", || {
+                                fields::ocr_gc_only_cancellable(
+                                    &full,
+                                    exit_y_cache,
+                                    &should_continue,
+                                )
+                            });
+                            let Some(fields) = fields else {
+                                gc_only_remaining = gc_only_remaining.saturating_sub(1);
+                                stages.enter(Stage::Sleeping);
+                                sleep_remainder(tick, cfg.poll_interval_ms);
+                                continue;
+                            };
                             if !should_continue() {
                                 break;
                             }
@@ -320,8 +336,16 @@ impl Scanner {
                         } else {
                             let should_continue = || running.load(Ordering::SeqCst);
                             stages.enter(Stage::OcrFull);
-                            let fields =
-                                fields::ocr_all_fields_cancellable(&full, &should_continue);
+                            let fields = catch_frame_panic("full frame OCR", || {
+                                fields::ocr_all_fields_cancellable(&full, &should_continue)
+                            });
+                            let Some(fields) = fields else {
+                                // Retry as a full poll: nothing was read from this frame.
+                                gc_only_remaining = 0;
+                                stages.enter(Stage::Sleeping);
+                                sleep_remainder(tick, cfg.poll_interval_ms);
+                                continue;
+                            };
                             if !should_continue() {
                                 break;
                             }
@@ -389,11 +413,6 @@ impl Scanner {
                     emit(&app, status, &machine, &current_run_id, &cached_live);
                     stages.enter(Stage::Sleeping);
                     sleep_remainder(tick, cfg.poll_interval_ms);
-                }
-                emit(&app, "stopped", &machine, &current_run_id, &cached_live);
-                db::append_app_log("scanner thread exiting");
-                if let Ok(mut guard) = app_slot.lock() {
-                    *guard = None;
                 }
             })
             .map_err(|e| {
@@ -528,6 +547,51 @@ pub fn apply_actions(
 
 fn log_line(_dir: &std::path::Path, msg: &str) {
     db::append_app_log(msg);
+}
+
+/// Runs one frame's image processing, turning a panic into a skipped frame. A panic in
+/// here unwound the whole poll loop, which stopped scanning while the UI still reported
+/// "scanning" over the last values it had — silent to everyone but the log.
+fn catch_frame_panic<T>(what: &str, work: impl FnOnce() -> T) -> Option<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(value) => Some(value),
+        // The panic hook already logged the payload and source location.
+        Err(_) => {
+            db::append_app_log(&format!("skipped frame: {what} panicked"));
+            None
+        }
+    }
+}
+
+/// Publishes the stopped state however the poll loop ends, panic included. A scanner
+/// left marked as running keeps the UI claiming it is live and refuses to restart.
+struct ScannerExitGuard {
+    running: Arc<AtomicBool>,
+    app: AppHandle,
+    machine: Arc<Mutex<RunStateMachine>>,
+    current_run_id: Arc<Mutex<Option<String>>>,
+    cached_live: Arc<Mutex<LiveState>>,
+    app_slot: Arc<Mutex<Option<AppHandle>>>,
+}
+
+impl Drop for ScannerExitGuard {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        // This can run while a panic unwinds, where panicking again would abort.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            emit(
+                &self.app,
+                "stopped",
+                &self.machine,
+                &self.current_run_id,
+                &self.cached_live,
+            );
+            db::append_app_log("scanner thread exiting");
+            if let Ok(mut guard) = self.app_slot.lock() {
+                *guard = None;
+            }
+        }));
+    }
 }
 
 /// Watches the poll loop from a second thread and reports any step that stops coming

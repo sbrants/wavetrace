@@ -311,10 +311,13 @@ fn upscale_rgba(img: &RgbaImage, upscale: u32, max_width: u32) -> RgbaImage {
     if upscale <= 1 {
         return img.clone();
     }
+    // Cap the upscale but never downscale: a crop already wider than the cap is OCR'd
+    // as-is. `clamp(width, max_width)` panics for those, since min would exceed max.
     let target_w = img
         .width()
         .saturating_mul(upscale)
-        .clamp(img.width(), max_width);
+        .min(max_width)
+        .max(img.width());
     if target_w <= img.width() {
         return img.clone();
     }
@@ -408,10 +411,13 @@ fn gray_to_rgba(gray: &image::GrayImage) -> RgbaImage {
 }
 
 fn upscale_gray(gray: image::GrayImage) -> image::GrayImage {
+    // See `upscale_rgba`: cap the upscale without ever downscaling, and without
+    // panicking on crops that are already wider than the cap.
     let target_w = gray
         .width()
         .saturating_mul(GC_BAND_UPSCALE)
-        .clamp(gray.width(), GC_BAND_MAX_WIDTH);
+        .min(GC_BAND_MAX_WIDTH)
+        .max(gray.width());
     if target_w <= gray.width() {
         return gray;
     }
@@ -894,6 +900,45 @@ mod tests {
         let out = prepare_gc_band_yellow_rgba(&img);
         assert!(out.width() >= img.width() * 2);
         assert_eq!(out.get_pixel(0, 0)[3], 255);
+    }
+
+    /// A 1920px-wide target window makes the band crop wider than `GC_BAND_MAX_WIDTH`,
+    /// which used to panic the scanner thread mid-run.
+    #[test]
+    fn prepare_gc_band_yellow_leaves_crops_wider_than_the_cap_alone() {
+        let wide = (GC_BAND_MAX_WIDTH as f32 * 1.8).round() as u32;
+        let img = RgbaImage::from_pixel(wide, 20, Rgba([220, 200, 40, 255]));
+        let out = prepare_gc_band_yellow_rgba(&img);
+        assert_eq!(out.width(), wide);
+        assert_eq!(out.height(), 20);
+    }
+
+    /// The whole band path on a 1920px-wide frame with toast-sized ink: the size the
+    /// tester's emulator window reports, which panicked as soon as the ink gate passed.
+    #[test]
+    fn golden_combo_band_survives_a_wide_target_window() {
+        let mut img = RgbaImage::from_pixel(1920, 2100, Rgba([12, 14, 18, 255]));
+        for y in 300..330 {
+            for x in 400..500 {
+                img.put_pixel(x, y, Rgba([220, 200, 40, 255]));
+            }
+        }
+        let result = ocr_golden_combo_band_anchored(&img, Some(0.10));
+        assert_eq!(result.skip, "-", "ink gate should have run the band OCR");
+        assert!(result.ink_pixels >= GC_YELLOW_MIN_INK_PIXELS);
+        assert!(result.ink_pixels <= GC_YELLOW_MAX_INK_PIXELS);
+    }
+
+    #[test]
+    fn upscale_rgba_caps_growth_and_never_shrinks() {
+        let narrow = RgbaImage::from_pixel(100, 10, Rgba([1, 2, 3, 255]));
+        assert_eq!(upscale_rgba(&narrow, 2, 1000).width(), 200);
+
+        let at_cap = RgbaImage::from_pixel(600, 10, Rgba([1, 2, 3, 255]));
+        assert_eq!(upscale_rgba(&at_cap, 2, 1000).width(), 1000);
+
+        let over_cap = RgbaImage::from_pixel(1728, 10, Rgba([1, 2, 3, 255]));
+        assert_eq!(upscale_rgba(&over_cap, 2, 1000).width(), 1728);
     }
 
     #[test]

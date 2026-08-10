@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.5] — 2026-08-10
+
+### Fixed
+
+- **Scanning stopped seconds into a run on wide game windows** — the Golden Combo band is upscaled for OCR up to a 1000px cap, and capping it crashed instead for any crop already wider than that, i.e. every target window wider than ~1100px (a 1920px-wide emulator gives a 1728px band). The crash hit as soon as the toast corridor held a plausible amount of yellow, killing the scanner thread mid-run: polling stopped, the app kept reporting "scanning" over the last values it read, and pressing New run bought another few seconds. Wide bands are now OCR'd at their own size.
+- **A crashing frame no longer stops the run** — a panic while processing one frame is logged and that frame is skipped, instead of unwinding the poll loop. If the scanner thread does end for any reason, the app now reports it as stopped rather than leaving a scanner that looks live and refuses to restart.
+- **Settings OCR probe could take the app down** — a panic during the one-shot probe unwound into the Tauri event loop, which aborts the process (the app vanished and restarted); it is now reported as a failed probe.
+
+---
+
 ## [0.3.4] — 2026-08-10
 
 ### Added

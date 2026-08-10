@@ -212,9 +212,11 @@ fn merge_golden_combo_from_fields(fields: &FieldOcr) -> parser::GoldenComboReadi
     from_band.merge_with(from_frame)
 }
 
-/// One-shot OCR for Settings diagnostics (same as a normal poll).
+/// One-shot OCR for Settings diagnostics (same as a normal poll). A panic in here
+/// unwinds into the Tauri event loop, which aborts the whole app, so report it instead.
 pub fn ocr_probe_fields(frame: &RgbaImage) -> Result<FieldOcr, String> {
-    Ok(ocr_all_fields(frame))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ocr_all_fields(frame)))
+        .map_err(|_| "OCR failed on this frame — see the app log for details.".to_string())
 }
 
 #[cfg(test)]
