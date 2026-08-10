@@ -86,8 +86,10 @@ export default function History() {
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
   const [compareShowSkips, setCompareShowSkips] = useState(false);
+  const [compareShowCoin, setCompareShowCoin] = useState(true);
   const [compareShowGc, setCompareShowGc] = useState(false);
   const [showWaveJumps, setShowWaveJumps] = useState(true);
+  const [showCoinPerMinute, setShowCoinPerMinute] = useState(true);
   const [showGcActivations, setShowGcActivations] = useState(true);
   const [coinOutlierBelow, setCoinOutlierBelow] = useState("");
   const [coinOutlierAbove, setCoinOutlierAbove] = useState("");
@@ -1312,6 +1314,18 @@ export default function History() {
               )}
             </h3>
             <div className="chart-card-actions">
+              <label
+                className="checkbox-inline"
+                title="Show coin/min series on the chart"
+              >
+                <input
+                  type="checkbox"
+                  checked={compareShowCoin}
+                  onChange={(e) => setCompareShowCoin(e.target.checked)}
+                  aria-label="Show coin/min on compare chart"
+                />
+                Coin/min
+              </label>
               {hasCompareSkips && (
                 <label
                   className="checkbox-inline"
@@ -1363,14 +1377,16 @@ export default function History() {
                 title={
                   compareRuns.length !== 2
                     ? "Lead/lag band is available when comparing exactly 2 runs"
-                    : "Green when the newer run is higher; red when lower"
+                    : !compareShowCoin
+                      ? "Lead/lag band needs coin/min visible"
+                      : "Green when the newer run is higher; red when lower"
                 }
               >
                 <input
                   type="checkbox"
                   checked={compareLeadLagBand}
                   onChange={(e) => setCompareLeadLagBand(e.target.checked)}
-                  disabled={compareRuns.length !== 2}
+                  disabled={compareRuns.length !== 2 || !compareShowCoin}
                   aria-label="Show lead/lag band between two runs"
                 />
                 Lead/lag band
@@ -1429,19 +1445,23 @@ export default function History() {
             waveSkipsByLine={
               compareShowSkips ? compareSkipMarkers : undefined
             }
+            showCoinPerMinute={compareShowCoin}
             showGoldenComboActivations={compareShowGc}
             height={320}
             smoothWindow={compareSmoothWindow}
-            leadLagBand={compareLeadLag}
+            leadLagBand={compareShowCoin ? compareLeadLag : null}
           />
           {compareSmoothWindow > 1 && (
             <p className="compare-chart-hint muted">
               Smoothing is visual only; summary stats use raw snapshot values.
-              {compareLeadLag != null &&
+              {compareShowCoin &&
+                compareLeadLag != null &&
                 " Green: newer run ahead · red: newer run behind."}
             </p>
           )}
-          {compareSmoothWindow <= 1 && compareLeadLag != null && (
+          {compareSmoothWindow <= 1 &&
+            compareShowCoin &&
+            compareLeadLag != null && (
             <p className="compare-chart-hint muted">
               Lead/lag band: green when the newer run (by start time) is higher,
               red when lower.
@@ -1475,6 +1495,20 @@ export default function History() {
                 )}
               </h3>
               <div className="chart-card-actions">
+                {chartData.length > 0 && (
+                  <label
+                    className="checkbox-inline"
+                    title="Show coin/min series on the chart"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showCoinPerMinute}
+                      onChange={(e) => setShowCoinPerMinute(e.target.checked)}
+                      aria-label="Show coin/min on history chart"
+                    />
+                    Coin/min
+                  </label>
+                )}
                 {hasJumpsOnChart && (
                   <label
                     className="checkbox-inline"
@@ -1531,8 +1565,13 @@ export default function History() {
               waveSkips={skipMarkers}
               height={300}
               showWaveJumps={showWaveJumps}
+              showCoinPerMinute={showCoinPerMinute}
               showGoldenComboActivations={showGcActivations}
-              selectedWaves={chartSelectMode ? selectedWaves : undefined}
+              selectedWaves={
+                chartSelectMode && showCoinPerMinute
+                  ? selectedWaves
+                  : undefined
+              }
               selectedSkipIds={
                 chartSelectMode && showWaveJumps
                   ? [...selectedWaveSkipIds]
@@ -1543,7 +1582,11 @@ export default function History() {
                   ? selectedGcWaves
                   : undefined
               }
-              onPointClick={chartSelectMode ? toggleSnapshotWave : undefined}
+              onPointClick={
+                chartSelectMode && showCoinPerMinute
+                  ? toggleSnapshotWave
+                  : undefined
+              }
               onSkipClick={
                 chartSelectMode && showWaveJumps
                   ? (id) => toggleWaveSkipId(id)
@@ -1552,7 +1595,11 @@ export default function History() {
               onGcClick={
                 chartSelectMode && showGcActivations ? toggleGcWave : undefined
               }
-              onSelectWaves={chartSelectMode ? selectSnapshotWaves : undefined}
+              onSelectWaves={
+                chartSelectMode && showCoinPerMinute
+                  ? selectSnapshotWaves
+                  : undefined
+              }
             />
           </div>
 

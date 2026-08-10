@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.3] — 2026-08-10
+
+### Added
+
+- **Chart Coin/min toggle** — Dashboard, History, and compare charts can hide the coin/min series the same way as wave jumps and GC activations (lead/lag band follows coin visibility).
+
+---
+
 ## [0.3.2] — 2026-08-10
 
 ### Fixed
