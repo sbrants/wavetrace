@@ -6,6 +6,7 @@ import Dashboard from "./components/Dashboard";
 import History from "./components/History";
 import SettingsPage from "./components/SettingsPage";
 import AppUpdater from "./components/AppUpdater";
+import AccountSelector from "./components/AccountSelector";
 import CaptureOutageBanner from "./components/CaptureOutageBanner";
 import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -230,6 +231,10 @@ export default function App() {
     <div className="app">
       <header>
         <h1>WaveTrace</h1>
+        <AccountSelector
+          scannerRunning={running}
+          onManage={() => setTab("settings")}
+        />
         <nav>
           {(["dashboard", "history", "settings"] as Tab[]).map((t) => (
             <button
@@ -351,7 +356,7 @@ export default function App() {
           <History />
         </div>
         <div hidden={tab !== "settings"}>
-          <SettingsPage />
+          <SettingsPage scannerRunning={running} />
         </div>
       </main>
       <ToastStack />

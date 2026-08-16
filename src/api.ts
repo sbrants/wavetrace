@@ -219,6 +219,20 @@ export interface AppDataInfo {
   database_path: string;
   app_log_path: string;
   install_kind: string;
+  account_id: string;
+  account_name: string;
+}
+
+export interface Account {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface AccountList {
+  accounts: Account[];
+  current_id: string;
+  colors: string[];
 }
 
 export const api = {
@@ -238,6 +252,18 @@ export const api = {
   gameSaveStatus: () => invoke<GameSaveStatus>("game_save_status"),
   pullGameSave: () => invoke<GameSavePullResult>("pull_game_save"),
   pickSavePullDir: () => invoke<string | null>("pick_save_pull_dir"),
+  listAccounts: () => invoke<AccountList>("list_accounts"),
+  createAccount: (name: string, color?: string | null) =>
+    invoke<Account>("create_account", { name, color: color ?? null }),
+  updateAccount: (id: string, name?: string | null, color?: string | null) =>
+    invoke<Account>("update_account", {
+      id,
+      name: name ?? null,
+      color: color ?? null,
+    }),
+  deleteAccount: (id: string) => invoke<void>("delete_account", { id }),
+  switchAccount: (id: string) => invoke<void>("switch_account", { id }),
+  openAccountWindow: (id: string) => invoke<void>("open_account_window", { id }),
   sendTestNtfy: () => invoke<void>("send_test_ntfy"),
   getNtfyStatus: () => invoke<NtfyStatusInfo>("get_ntfy_status"),
   clearNtfyRateLimit: () => invoke<void>("clear_ntfy_rate_limit"),

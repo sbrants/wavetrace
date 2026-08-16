@@ -90,7 +90,7 @@ fn adb_binary_name() -> &'static str {
 }
 
 fn app_platform_tools_root() -> PathBuf {
-    db::app_data_dir().join("platform-tools")
+    db::app_data_root().join("platform-tools")
 }
 
 fn app_platform_tools_adb() -> PathBuf {
