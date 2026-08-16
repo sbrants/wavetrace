@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.7] — 2026-08-16
+
+### Added
+
+- **Accounts** — add, color, rename, delete, and switch Tower logins. Each account has its own settings, target window, and run history. The header shows the active account's color (window title, top bar, and icon stripe match). **New window** starts a second WaveTrace instance so two accounts can be monitored at once; the same account cannot be open twice.
+
+---
+
 ## [0.3.6] — 2026-08-10
 
 ### Fixed

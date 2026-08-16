@@ -11,6 +11,7 @@
   --text: #dce6f5;
   --muted: #8da2c0;
   --accent: #4cc2ff;
+  --account-color: #4cc2ff;
   --warning-bg: #4a3517;
   --warning-border: #b8860b;
 }
@@ -70,6 +71,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  border-top: 4px solid var(--account-color);
 }
 
 header {
@@ -83,7 +85,125 @@ header {
 
 header h1 {
   font-size: 18px;
-  color: var(--accent);
+  color: var(--account-color);
+}
+
+.account-selector {
+  position: relative;
+}
+
+.account-selector-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.account-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.account-selector-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 280px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.account-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.account-menu-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: none;
+  padding: 8px 10px;
+}
+
+.account-menu-item.current {
+  font-weight: 600;
+}
+
+.account-this {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.account-open-other {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.account-menu-manage {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  text-align: left;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--muted);
+}
+
+.account-settings-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-settings-row input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+}
+
+.account-add-row input[type="text"] {
+  flex: 1;
+  min-width: 160px;
+}
+
+input[type="color"] {
+  width: 36px;
+  height: 32px;
+  padding: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
 }
 
 a.header-support {

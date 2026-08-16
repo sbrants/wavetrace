@@ -196,6 +196,14 @@ pub fn exit_app(app: &AppHandle) {
     app.exit(0);
 }
 
+pub fn refresh_account_branding(app: &AppHandle) {
+    let _ = crate::app_icon::apply_branding_to(app);
+    if let Some(tray) = app.try_state::<TrayController>() {
+        let prefix = crate::app_icon::tooltip_prefix();
+        let _ = tray.tray.set_tooltip(Some(&format!("{prefix}WaveTrace")));
+    }
+}
+
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();

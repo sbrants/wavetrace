@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod adb_save;
 pub mod app_icon;
 pub mod backup;
@@ -54,12 +55,37 @@ fn log_panics() {
     }));
 }
 
+fn show_startup_error(message: &str) {
+    eprintln!("WaveTrace: {message}");
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+        unsafe {
+            let _ = MessageBoxW(
+                None,
+                &HSTRING::from(message),
+                &HSTRING::from("WaveTrace"),
+                MB_OK | MB_ICONERROR,
+            );
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(e) = accounts::init() {
+        show_startup_error(&e);
+        std::process::exit(1);
+    }
     // Ensure the database and its directory exist before anything else runs.
     db::open().expect("failed to open database");
     log_panics();
-    db::append_app_log("app starting");
+    let account = accounts::current_account();
+    db::append_app_log(&format!(
+        "app starting account={} ({})",
+        account.id, account.name
+    ));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
@@ -141,6 +167,12 @@ pub fn run() {
             commands::game_save_status,
             commands::pull_game_save,
             commands::pick_save_pull_dir,
+            commands::list_accounts,
+            commands::create_account,
+            commands::update_account,
+            commands::delete_account,
+            commands::switch_account,
+            commands::open_account_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

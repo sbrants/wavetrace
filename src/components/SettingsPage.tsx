@@ -11,6 +11,7 @@ import {
   WindowInfo,
 } from "../api";
 import { downloadBase64File } from "../exportDownload";
+import AccountsSettings from "./AccountsSettings";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
 import ChangelogPanel from "./ChangelogPanel";
@@ -68,7 +69,11 @@ function withDefaultWindow(settings: Settings, windows: WindowInfo[]): Settings 
   };
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({
+  scannerRunning = false,
+}: {
+  scannerRunning?: boolean;
+}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [windows, setWindows] = useState<WindowInfo[]>([]);
   const [screenAccess, setScreenAccess] =
@@ -312,6 +317,7 @@ export default function SettingsPage() {
 
   return (
     <div className="settings">
+      <AccountsSettings scannerRunning={scannerRunning} />
       <section>
         <h3>Target window</h3>
         {screenAccess === "denied" && (

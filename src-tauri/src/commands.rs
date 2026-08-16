@@ -9,7 +9,7 @@ use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
 use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
-use crate::{capture, settings};
+use crate::{accounts, capture, settings};
 use serde::{Deserialize, Serialize};
 
 pub struct AppState {
@@ -559,19 +559,24 @@ pub struct AppDataInfo {
     pub database_path: String,
     pub app_log_path: String,
     pub install_kind: String,
+    pub account_id: String,
+    pub account_name: String,
 }
 
 #[tauri::command]
 pub async fn get_app_data_info() -> AppDataInfo {
     run_blocking("get_app_data_info", || {
         let app_data = db::app_data_dir();
+        let account = crate::accounts::current_account();
         Ok(AppDataInfo {
             app_data_dir: app_data.to_string_lossy().into_owned(),
             logs_dir: app_data.join("logs").to_string_lossy().into_owned(),
             backups_dir: app_data.join("backups").to_string_lossy().into_owned(),
             database_path: db::database_path().to_string_lossy().into_owned(),
             app_log_path: db::app_log_path().to_string_lossy().into_owned(),
-            install_kind: db::detect_install_kind(&app_data).to_string(),
+            install_kind: db::detect_install_kind(&db::app_data_root()).to_string(),
+            account_id: account.id,
+            account_name: account.name,
         })
     })
     .await
@@ -582,6 +587,8 @@ pub async fn get_app_data_info() -> AppDataInfo {
         database_path: String::new(),
         app_log_path: String::new(),
         install_kind: String::new(),
+        account_id: String::new(),
+        account_name: String::new(),
     })
 }
 
@@ -615,6 +622,72 @@ pub fn pull_game_save() -> Result<crate::adb_save::GameSavePullResult, String> {
 #[tauri::command]
 pub fn pick_save_pull_dir() -> Result<Option<String>, String> {
     crate::adb_save::pick_output_dir()
+}
+
+#[derive(Serialize)]
+pub struct AccountList {
+    pub accounts: Vec<accounts::Account>,
+    pub current_id: String,
+    pub colors: Vec<String>,
+}
+
+fn current_account_id() -> String {
+    accounts::current_id().unwrap_or_else(|| accounts::DEFAULT_ACCOUNT_ID.into())
+}
+
+#[tauri::command]
+pub fn list_accounts() -> AccountList {
+    AccountList {
+        accounts: accounts::list_accounts(),
+        current_id: current_account_id(),
+        colors: accounts::COLOR_PALETTE
+            .iter()
+            .map(|c| (*c).to_string())
+            .collect(),
+    }
+}
+
+#[tauri::command]
+pub fn create_account(name: String, color: Option<String>) -> Result<accounts::Account, String> {
+    accounts::create_account(&name, color.as_deref())
+}
+
+#[tauri::command]
+pub fn update_account(
+    app: AppHandle,
+    id: String,
+    name: Option<String>,
+    color: Option<String>,
+) -> Result<accounts::Account, String> {
+    let updated = accounts::update_account(&id, name.as_deref(), color.as_deref())?;
+    if current_account_id() == id {
+        crate::app_icon::apply_branding_to(&app).ok();
+        crate::tray::refresh_account_branding(&app);
+    }
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn delete_account(id: String) -> Result<(), String> {
+    accounts::delete_account(&id)
+}
+
+#[tauri::command]
+pub fn switch_account(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+    if current_account_id() == id {
+        return Ok(());
+    }
+    if state.scanner.is_running() {
+        return Err("Stop the scanner before switching accounts in this window.".into());
+    }
+    accounts::spawn_and_replace(&id)?;
+    crate::tray::exit_app(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_account_window(id: String) -> Result<(), String> {
+    accounts::spawn_instance(&id)
 }
 
 #[derive(Serialize)]

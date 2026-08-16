@@ -55,23 +55,14 @@ pub struct RunFilter {
     pub date_to: Option<String>,
 }
 
+/// Shared WaveTrace folder (account registry, ADB tools, Default account data).
+pub fn app_data_root() -> PathBuf {
+    crate::accounts::data_root()
+}
+
+/// Data directory for the account this process is using (Default = the shared root).
 pub fn app_data_dir() -> PathBuf {
-    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    let new_dir = base.join("wavetrace");
-    if !new_dir.exists() {
-        for legacy in ["wavewatch", "towerrun"] {
-            let old_dir = base.join(legacy);
-            if old_dir.exists() {
-                if std::fs::rename(&old_dir, &new_dir).is_err() {
-                    std::fs::create_dir_all(&old_dir).ok();
-                    return old_dir;
-                }
-                break;
-            }
-        }
-    }
-    std::fs::create_dir_all(&new_dir).ok();
-    new_dir
+    crate::accounts::active_data_dir()
 }
 
 pub fn database_path() -> PathBuf {

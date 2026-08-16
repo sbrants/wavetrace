@@ -144,7 +144,19 @@ const MIN_CAPTURE_AREA: u32 = 200_000;
 fn is_our_app_window(title: &str, app_name: &str) -> bool {
     let t = title.trim().to_lowercase();
     let a = app_name.to_lowercase();
-    a.contains("wavetrace") || a.contains("wavewatch") || t == "wavetrace" || t == "wavewatch"
+    a.contains("wavetrace")
+        || a.contains("wavewatch")
+        || is_our_window_title(&t)
+}
+
+fn is_our_window_title(t: &str) -> bool {
+    t == "wavetrace"
+        || t == "wavewatch"
+        || t == "wavetrace (dev)"
+        || t == "wavewatch (dev)"
+        || t.starts_with("wavetrace — ")
+        || t.starts_with("wavetrace (dev) — ")
+        || t.starts_with("wavewatch — ")
 }
 
 fn is_browser_window(app_name: &str, title: &str) -> bool {
@@ -652,6 +664,8 @@ mod tests {
     fn our_app_window_ignores_windows_that_merely_mention_the_name() {
         assert!(is_our_app_window("WaveTrace", "wavetrace"));
         assert!(is_our_app_window("WaveTrace", ""));
+        assert!(is_our_app_window("WaveTrace — Farm", ""));
+        assert!(is_our_app_window("WaveTrace (Dev) — Default", ""));
         assert!(!is_our_app_window(
             "Meringue.WaveTrace_0.3.2.0_x64 - File Explorer",
             "Windows Explorer"

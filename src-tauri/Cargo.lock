@@ -6125,7 +6125,7 @@ dependencies = [
 
 [[package]]
 name = "wavetrace"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -6133,6 +6133,7 @@ dependencies = [
  "dirs",
  "icu_locale_core",
  "image",
+ "libc",
  "rfd",
  "rusqlite",
  "serde",

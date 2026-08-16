@@ -325,12 +325,14 @@ pub fn build_debug_package_zip(input: &DebugPackageBuildInput) -> Result<(Vec<u8
     };
 
     let system_info = format!(
-        "WaveTrace {}\nOS: {} {}\nInstall: {}\nCreated: {}\nApp data: {}\nDatabase: {}\nLog: {}\nScanner running: {}\nCurrent run: {}\n",
+        "WaveTrace {}\nOS: {} {}\nInstall: {}\nCreated: {}\nAccount: {} ({})\nApp data: {}\nDatabase: {}\nLog: {}\nScanner running: {}\nCurrent run: {}\n",
         manifest.app_version,
         manifest.os,
         manifest.arch,
         install_kind,
         manifest.created_at,
+        crate::accounts::current_account().name,
+        crate::accounts::current_id().unwrap_or_default(),
         paths.app_data_dir,
         paths.database_path,
         paths.app_log_path,
