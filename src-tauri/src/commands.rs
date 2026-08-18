@@ -112,6 +112,9 @@ pub fn open_scanner_logs_folder() -> Result<(), String> {
     })
 }
 
+// Only called from cfg(windows) code, but kept unconditional so
+// `reveal_tests` below can exercise its quoting logic on every platform.
+#[allow(dead_code)]
 fn windows_explorer_powershell(path_display: &str, is_file: bool) -> String {
     let path_str = path_display.replace('\'', "''");
     if is_file {

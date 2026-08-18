@@ -179,14 +179,14 @@ pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
         if path.contains("/Containers/") {
             return "mac_sandbox";
         }
-        return "mac_direct";
+        "mac_direct"
     }
     #[cfg(target_os = "linux")]
     {
         if path.contains("/.var/app/") {
             return "linux_flatpak";
         }
-        return "linux_direct";
+        "linux_direct"
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {

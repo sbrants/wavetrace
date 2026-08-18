@@ -6,7 +6,9 @@ use std::cell::{Cell, RefCell};
 use std::ptr;
 #[cfg(windows)]
 use std::slice;
-use std::sync::{Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::Mutex;
+use std::sync::OnceLock;
 #[cfg(windows)]
 use std::time::Duration;
 use std::time::Instant;
@@ -37,6 +39,9 @@ static TESSDATA_INIT: OnceLock<()> = OnceLock::new();
 #[cfg(not(windows))]
 fn ensure_tesseract_paths() {
     TESSDATA_INIT.get_or_init(|| {
+        // Needless on Linux (nothing follows), but the macOS branch below must
+        // not overwrite a TESSDATA_PREFIX the user already set.
+        #[allow(clippy::needless_return)]
         if std::env::var_os("TESSDATA_PREFIX").is_some() {
             return;
         }
