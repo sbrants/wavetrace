@@ -82,8 +82,17 @@ const LEGACY_LOG_BASENAME: &str = "scanner.log";
 
 pub fn app_log_path() -> PathBuf {
     let logs_dir = app_data_dir().join("logs");
-    migrate_legacy_app_log(&logs_dir);
+    ensure_legacy_app_log_migrated(&logs_dir);
     logs_dir.join(APP_LOG_BASENAME)
+}
+
+/// Runs the legacy-log rename once per process. `append_app_log` calls this on every
+/// scanner tick (as often as once a second for hours), so re-checking a dozen paths on
+/// disk every time — for a migration that only ever needs to happen once — was pure
+/// waste on the hot path.
+fn ensure_legacy_app_log_migrated(logs_dir: &std::path::Path) {
+    static MIGRATED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    MIGRATED.get_or_init(|| migrate_legacy_app_log(logs_dir));
 }
 
 /// Renames `scanner.log` (+ rotated segments) to `wavetrace.log` on first access.
@@ -151,7 +160,7 @@ pub fn append_app_log(msg: &str) {
     use std::io::Write;
 
     let logs_dir = app_data_dir().join("logs");
-    migrate_legacy_app_log(&logs_dir);
+    ensure_legacy_app_log_migrated(&logs_dir);
     let _ = std::fs::create_dir_all(&logs_dir);
     maybe_rotate_app_log(&logs_dir);
     let path = logs_dir.join(APP_LOG_BASENAME);
@@ -924,16 +933,6 @@ pub fn downsample_wave_skip_rows(
     downsample_slice(rows, max_points)
 }
 
-pub fn run_snapshots_for_chart(
-    conn: &Connection,
-    run_id: &str,
-    max_points: usize,
-) -> rusqlite::Result<(usize, Vec<SnapshotRow>)> {
-    let all = run_snapshots(conn, run_id)?;
-    let total = all.len();
-    Ok((total, downsample_snapshot_rows(&all, max_points)))
-}
-
 pub fn run_wave_skips_for_chart(
     conn: &Connection,
     run_id: &str,
@@ -944,23 +943,32 @@ pub fn run_wave_skips_for_chart(
     Ok((total, downsample_wave_skip_rows(&all, max_points)))
 }
 
-/// +1 wave jumps from the full snapshot series, downsampled for the chart axis.
-pub fn chart_normal_jump_waves(
-    conn: &Connection,
-    run_id: &str,
-    max_points: usize,
-) -> rusqlite::Result<Vec<i64>> {
-    let all = run_snapshots(conn, run_id)?;
-    let jumps: Vec<i64> = all
-        .windows(2)
+/// +1 wave jumps from an already-fetched snapshot series (no query of its own).
+fn normal_jump_waves(all: &[SnapshotRow]) -> Vec<i64> {
+    all.windows(2)
         .filter(|w| {
             let prev = w[0].wave;
             let wave = w[1].wave;
             wave > prev && wave - prev == 1
         })
         .map(|w| w[1].wave)
-        .collect();
-    Ok(downsample_slice(&jumps, max_points))
+        .collect()
+}
+
+/// Snapshot total, downsampled chart points, and downsampled +1 wave-jump waves — all
+/// from one query. The dashboard previously fetched the full snapshot series twice
+/// (once per derived value), which got more expensive every wave on a long run.
+pub fn run_snapshot_chart_bundle(
+    conn: &Connection,
+    run_id: &str,
+    max_snapshot_points: usize,
+    max_jump_points: usize,
+) -> rusqlite::Result<(usize, Vec<SnapshotRow>, Vec<i64>)> {
+    let all = run_snapshots(conn, run_id)?;
+    let total = all.len();
+    let chart_snapshots = downsample_snapshot_rows(&all, max_snapshot_points);
+    let chart_normal_jumps = downsample_slice(&normal_jump_waves(&all), max_jump_points);
+    Ok((total, chart_snapshots, chart_normal_jumps))
 }
 
 pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
@@ -1060,6 +1068,25 @@ mod tests {
         assert_eq!(out.len(), CHART_SKIP_LIMIT);
         assert_eq!(out.first().unwrap().at_wave, 0);
         assert_eq!(out.last().unwrap().at_wave, (total as i64 - 1) * 10);
+    }
+
+    #[test]
+    fn normal_jump_waves_keeps_only_consecutive_plus_one_steps() {
+        fn snap(wave: i64) -> SnapshotRow {
+            SnapshotRow {
+                id: format!("s{wave}"),
+                wave,
+                tier: None,
+                coin_per_minute: None,
+                golden_combo_chance: None,
+                golden_combo_caret: None,
+                golden_combo_multiplier: None,
+                recorded_at: "t".into(),
+            }
+        }
+        // 1->2 is a +1 jump; 2->5 is a skip, not a normal jump.
+        let rows = vec![snap(1), snap(2), snap(5)];
+        assert_eq!(normal_jump_waves(&rows), vec![2]);
     }
 
     #[test]

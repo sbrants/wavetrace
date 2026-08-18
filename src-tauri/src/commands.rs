@@ -438,14 +438,15 @@ pub struct DashboardRunView {
 
 fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
     let conn = conn()?;
-    let (snapshot_total, chart_snapshots) =
-        db::run_snapshots_for_chart(&conn, run_id, db::CHART_SNAPSHOT_LIMIT)
-            .map_err(|e| e.to_string())?;
+    let (snapshot_total, chart_snapshots, chart_normal_jumps) = db::run_snapshot_chart_bundle(
+        &conn,
+        run_id,
+        db::CHART_SNAPSHOT_LIMIT,
+        db::CHART_SKIP_LIMIT,
+    )
+    .map_err(|e| e.to_string())?;
     let (skip_total, chart_wave_skips) =
         db::run_wave_skips_for_chart(&conn, run_id, db::CHART_SKIP_LIMIT)
-            .map_err(|e| e.to_string())?;
-    let chart_normal_jumps =
-        db::chart_normal_jump_waves(&conn, run_id, db::CHART_SKIP_LIMIT)
             .map_err(|e| e.to_string())?;
     let avg_golden_combo_caret =
         db::avg_golden_combo_caret(&conn, run_id).map_err(|e| e.to_string())?;
