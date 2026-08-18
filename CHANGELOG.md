@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.8] — 2026-08-18
+
+### Fixed
+
+- **Scanner log write overhead** — every poll tick (about once a second, for as long as a run lasts) re-ran a one-time log-file migration check involving a dozen-plus disk lookups, instead of running it once per app launch. Long farming sessions were doing this needless work continuously in the background.
+- **Dashboard/History chart refresh cost grew with run length** — refreshing the live chart during an active run re-read the entire snapshot history from the database twice (once for the chart points, again just to find +1 wave-jump markers), so the cost of every refresh grew the longer a run went on. It's now read once per refresh.
+
+---
+
 ## [0.3.7] — 2026-08-16
 
 ### Added
