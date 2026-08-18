@@ -172,7 +172,7 @@ pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
         if path.contains("\\Packages\\") && path.contains("\\LocalCache\\Roaming") {
             return "microsoft_store";
         }
-        return "windows_direct";
+        "windows_direct"
     }
     #[cfg(target_os = "macos")]
     {
@@ -866,11 +866,14 @@ pub fn avg_golden_combo_caret(
     )
 }
 
+/// (golden_combo_chance, golden_combo_caret, golden_combo_multiplier)
+type GoldenComboSnapshot = (Option<f64>, i64, Option<f64>);
+
 /// Most recent snapshot that has a Golden Combo caret (highest wave, then latest row).
 pub fn latest_golden_combo(
     conn: &Connection,
     run_id: &str,
-) -> rusqlite::Result<Option<(Option<f64>, i64, Option<f64>)>> {
+) -> rusqlite::Result<Option<GoldenComboSnapshot>> {
     let mut stmt = conn.prepare(
         "SELECT golden_combo_chance, golden_combo_caret, golden_combo_multiplier
          FROM snapshots
@@ -1176,7 +1179,7 @@ mod tests {
         let conn = open_in_memory().unwrap();
         let id = start_run(&conn, "farming").unwrap();
         insert_snapshot(&conn, &id, 1, Some(10), Some(100.0), None, None, None).unwrap();
-        delete_runs(&conn, &[id.clone()]).unwrap();
+        delete_runs(&conn, std::slice::from_ref(&id)).unwrap();
         assert!(list_runs(&conn, &RunFilter::default()).unwrap().is_empty());
         assert!(run_snapshots(&conn, &id).unwrap().is_empty());
     }

@@ -372,6 +372,7 @@ fn lock_file(path: &Path) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .share_mode(0)
         .open(path)
         .map_err(|e| {
@@ -477,11 +478,10 @@ pub fn slugify(name: &str) -> String {
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() {
             out.push(ch.to_ascii_lowercase());
-        } else if ch == ' ' || ch == '-' || ch == '_' {
-            if !out.ends_with('-') && !out.is_empty() {
+        } else if (ch == ' ' || ch == '-' || ch == '_')
+            && !out.ends_with('-') && !out.is_empty() {
                 out.push('-');
             }
-        }
     }
     let slug = out.trim_matches('-').to_string();
     if slug.is_empty() {

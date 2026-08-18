@@ -597,8 +597,7 @@ pub async fn game_save_status() -> crate::adb_save::GameSaveStatus {
     run_blocking("game_save_status", || {
         let custom_port = conn()
             .ok()
-            .map(|c| settings::load(&c).save_pull_adb_port)
-            .flatten();
+            .and_then(|c| settings::load(&c).save_pull_adb_port);
         Ok(crate::adb_save::probe_game_save(custom_port, true))
     })
     .await

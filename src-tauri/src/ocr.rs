@@ -196,8 +196,7 @@ pub fn ocr_golden_combo_band_anchored(
 
     let mut color_ms = 0u64;
     let yellow_blank = lines.iter().all(|l| l.trim().is_empty());
-    let toast_ink =
-        ink_pixels >= GC_COLOR_MIN_INK_PIXELS && ink_pixels <= GC_COLOR_MAX_INK_PIXELS;
+    let toast_ink = (GC_COLOR_MIN_INK_PIXELS..=GC_COLOR_MAX_INK_PIXELS).contains(&ink_pixels);
     if yellow_blank && toast_ink {
         let color_started = Instant::now();
         let color = upscale_rgba(&crop, GC_BAND_UPSCALE, GC_BAND_MAX_WIDTH);
@@ -333,7 +332,7 @@ fn ocr_prepared_rgba(img: &RgbaImage) -> Result<Vec<String>, String> {
     #[cfg(windows)]
     {
         let result = recognize_rgba8(img)?;
-        return lines_from_result(&result);
+        lines_from_result(&result)
     }
     #[cfg(not(windows))]
     {
@@ -753,10 +752,7 @@ fn located_lines_from_result(result: &OcrResult, image_height: u32) -> Result<Ve
             continue;
         }
 
-        let (y_norm, bottom_norm) = match line_bounds_norm(&line, h) {
-            Ok(b) => b,
-            Err(_) => (None, None),
-        };
+        let (y_norm, bottom_norm) = line_bounds_norm(&line, h).unwrap_or_default();
         out.push(LocatedLine {
             text: trimmed.to_string(),
             y_norm,
@@ -1003,8 +999,8 @@ mod tests {
     fn gc_toast_corridor_covers_rise_path_below_exit() {
         let img = RgbaImage::new(975, 2077);
         let (y, h) = toast_corridor(Some(0.27));
-        assert!(y >= 0.20 && y <= 0.30);
-        assert!(h >= 0.16 && h <= 0.22);
+        assert!((0.20..=0.30).contains(&y));
+        assert!((0.16..=0.22).contains(&h));
         let crop = crop_norm_region(&img, GC_BAND_X, y, GC_BAND_W, h);
         assert_eq!(crop.width(), (975.0 * GC_BAND_W).round() as u32);
         assert!(crop.height() > 300);

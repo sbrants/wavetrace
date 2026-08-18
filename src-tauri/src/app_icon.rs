@@ -133,7 +133,7 @@ mod tests {
     fn account_bar_paints_bottom_row() {
         let mut rgba = vec![0u8; 32 * 32 * 4];
         paint_account_bar(&mut rgba, 32, 32, [255, 0, 0, 255]);
-        let i = (31 * 32 + 0) * 4;
+        let i = (31 * 32) * 4;
         assert_eq!(&rgba[i..i + 3], &[255, 0, 0]);
     }
 

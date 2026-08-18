@@ -19,7 +19,10 @@ fn crop_norm(img: &RgbaImage, x: f32, y: f32, w: f32, h: f32) -> RgbaImage {
 }
 
 fn is_dissonance_hud_icon_pixel(r: u8, g: u8, b: u8) -> bool {
-    r >= 88 && r <= 128 && g >= 30 && g <= 70 && b >= 120 && b <= 175 && r > g + 35
+    (88..=128).contains(&r)
+        && (30..=70).contains(&g)
+        && (120..=175).contains(&b)
+        && r > g + 35
 }
 
 fn find_icon_bbox(region: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
@@ -82,7 +85,7 @@ fn find_icon_bbox(region: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
                 }
             }
 
-            if count < 80 || count > 2500 {
+            if !(80..=2500).contains(&count) {
                 continue;
             }
             let w = max_x - min_x + 1;

@@ -790,7 +790,7 @@ fn merge_caret_count(prev: Option<u32>, newer: Option<u32>) -> Option<u32> {
                 return Some(n);
             }
             // Last read wins (including a lower toast than a prior OCR miss).
-            if n >= 800 && n < 900 && p < 700 {
+            if (800..900).contains(&n) && p < 700 {
                 return Some(demangle_leading_eight_cold(n));
             }
             Some(n)

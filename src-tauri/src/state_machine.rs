@@ -582,12 +582,12 @@ impl RunStateMachine {
             last_skip_multiplier: self
                 .run
                 .is_some()
-                .then(|| self.last_skip_multiplier)
+                .then_some(self.last_skip_multiplier)
                 .flatten(),
             last_wave_delta: self
                 .run
                 .is_some()
-                .then(|| self.last_wave_delta)
+                .then_some(self.last_wave_delta)
                 .flatten(),
             golden_combo_chance: self.run.as_ref().and_then(|r| {
                 consensus_gc_chance(r).or(r.last_golden_combo.chance_percent)

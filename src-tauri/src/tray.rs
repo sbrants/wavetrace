@@ -57,7 +57,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip(&format!("{}WaveTrace — stopped", app_icon::tooltip_prefix()))
+        .tooltip(format!("{}WaveTrace — stopped", app_icon::tooltip_prefix()))
         .on_menu_event(move |app, event| {
             on_menu_event(app, event.id.as_ref());
         })

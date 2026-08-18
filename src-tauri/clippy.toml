@@ -1,0 +1,3 @@
+# insert_snapshot() takes one arg per DB column; a params struct would be
+# pure ceremony for a single call site.
+too-many-arguments-threshold = 8

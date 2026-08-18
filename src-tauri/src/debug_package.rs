@@ -462,9 +462,11 @@ mod tests {
 
     #[test]
     fn redact_settings_hides_ntfy_topic() {
-        let mut settings = Settings::default();
-        settings.notify_ntfy_enabled = true;
-        settings.notify_ntfy_topic = "my-secret-topic".into();
+        let settings = Settings {
+            notify_ntfy_enabled: true,
+            notify_ntfy_topic: "my-secret-topic".into(),
+            ..Default::default()
+        };
         let redacted = redact_settings(settings);
         assert_eq!(redacted.notify_ntfy_topic, "[redacted]");
         assert!(redacted.notify_ntfy_enabled);

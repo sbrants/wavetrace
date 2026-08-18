@@ -745,6 +745,14 @@ pub fn notify_scanner_actions(
     }
 }
 
+fn sleep_remainder(tick: Instant, interval_ms: u64) {
+    let elapsed = tick.elapsed();
+    let interval = Duration::from_millis(interval_ms);
+    if elapsed < interval {
+        std::thread::sleep(interval - elapsed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Stage, StageTracker};
@@ -772,13 +780,5 @@ mod tests {
         let (stage, elapsed) = tracker.current();
         assert_eq!(stage, Stage::Capturing);
         assert!(elapsed.as_secs() < 1);
-    }
-}
-
-fn sleep_remainder(tick: Instant, interval_ms: u64) {
-    let elapsed = tick.elapsed();
-    let interval = Duration::from_millis(interval_ms);
-    if elapsed < interval {
-        std::thread::sleep(interval - elapsed);
     }
 }
