@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.9] — 2026-08-19
+
+### Fixed
+
+- **History compare graph flipping between run selections** — clicking "Compare selected" after changing which runs were checked (e.g. comparing runs 1–3, then unchecking one and comparing again) could show a stale comparison: each click fetches chart data independently, and if an earlier click's fetch happened to resolve after a later click's, it silently overwrote the newer result. Only the most recently issued comparison can now update the chart.
+
+---
+
 ## [0.3.8] — 2026-08-18
 
 ### Fixed
