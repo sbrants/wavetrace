@@ -120,6 +120,9 @@ export default function History() {
   const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const liveRefreshAtRef = useRef(0);
+  /** Guards compareSelected()/refreshCompare() against out-of-order responses:
+   * only the most recently issued call is allowed to update compare state. */
+  const compareRequestRef = useRef(0);
 
   useEffect(() => {
     const active = compareRuns.length >= 2;
@@ -302,6 +305,7 @@ export default function History() {
     if (checked.size < 2) return;
     const ids = [...checked];
     const runsToCompare = sorted.filter((r) => ids.includes(r.id));
+    const requestId = ++compareRequestRef.current;
     setCompareLoading(true);
     try {
       const entries = await Promise.all(
@@ -310,6 +314,10 @@ export default function History() {
           return [id, view] as const;
         })
       );
+      // A newer compareSelected()/refreshCompare() call started while this one
+      // was in flight (e.g. re-selecting runs and clicking Compare again before
+      // the first fetch finished) — its result already won, so drop this one.
+      if (compareRequestRef.current !== requestId) return;
       setCompareSnapshots(
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
@@ -321,9 +329,13 @@ export default function History() {
       );
       setCompareRuns(runsToCompare);
     } catch (e) {
-      reportUiError(e, "History");
+      if (compareRequestRef.current === requestId) {
+        reportUiError(e, "History");
+      }
     } finally {
-      setCompareLoading(false);
+      if (compareRequestRef.current === requestId) {
+        setCompareLoading(false);
+      }
     }
   };
 
@@ -334,6 +346,7 @@ export default function History() {
   const refreshCompare = useCallback(async () => {
     const ids = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
     if (ids.length < 2) return;
+    const requestId = ++compareRequestRef.current;
     try {
       const activeFilter = listFilter();
       const [entries, updatedRuns] = await Promise.all([
@@ -345,6 +358,9 @@ export default function History() {
         ),
         api.listRuns(activeFilter),
       ]);
+      // Superseded by a newer refresh or a fresh compareSelected() — don't
+      // clobber whatever that one already rendered.
+      if (compareRequestRef.current !== requestId) return;
       setCompareSnapshots(
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
