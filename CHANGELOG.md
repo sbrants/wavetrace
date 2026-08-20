@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.10] — 2026-08-20
+
+### Added
+
+- **Desktop notifications get the wave-milestone image too** — the game window + Dashboard chart (or History run comparison) that phone alerts already attach now shows on the desktop notification as well, via a new **Attach game screenshot to desktop notifications** toggle in Settings (on by default).
+
+### Fixed
+
+- **Wave-milestone screenshots stealing focus** — capturing the Dashboard/History chart for a wave-milestone alert needed the window unminimized (a minimized window's viewport collapses to 0×0), but it also called `SetForegroundWindow`, yanking focus and bringing WaveTrace to the front over whatever you were doing. It now only restores visibility, not focus.
+- **"Account already open" looked like a crash** — opening a second window bound to an account that's already running still shows the same message, but no longer exits with a failure code — it's an expected condition, not a startup error.
+- **Settings → Preview window needed a save first** — a freshly created account (or any unsaved window selection) had nothing saved to preview against and errored, even though the form already showed an auto-detected window. Preview now uses whatever's currently selected on screen, saved or not.
+
+---
+
 ## [0.3.9] — 2026-08-19
 
 ### Fixed
