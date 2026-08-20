@@ -224,6 +224,11 @@ pub fn focus_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
+pub fn prepare_main_window_for_capture(app: AppHandle) {
+    crate::tray::restore_main_window_for_capture(&app);
+}
+
+#[tauri::command]
 pub fn complete_wave_milestone_ntfy(
     app: AppHandle,
     ui_png_base64: Option<String>,
@@ -268,7 +273,7 @@ pub fn complete_wave_milestone_ntfy(
         captured
     };
 
-    crate::notifications::publish_ntfy_wave_milestone_blocking(
+    crate::notifications::complete_wave_milestone_blocking(
         &app,
         pending.title,
         pending.body,
@@ -868,17 +873,25 @@ fn probe_ocr_blocking() -> Result<OcrProbeResult, String> {
     })
 }
 
-/// Capture the configured window and return it as a base64 PNG for Settings preview.
+/// Capture the target window and return it as a base64 PNG for Settings preview.
+///
+/// `target` is whatever is currently selected in the Settings form, which may
+/// not be saved yet — using it (rather than only the saved config) lets
+/// Preview work immediately after picking a window, before hitting Save.
 #[tauri::command]
-pub async fn preview_capture() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(preview_capture_blocking)
+pub async fn preview_capture(target: Option<settings::TargetWindow>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_capture_blocking(target))
         .await
         .map_err(|e| format!("preview task failed: {e}"))?
 }
 
-fn preview_capture_blocking() -> Result<String, String> {
-    let cfg = settings::load(&conn()?);
-    let target = cfg.target_window.ok_or("No target window configured")?;
+fn preview_capture_blocking(target: Option<settings::TargetWindow>) -> Result<String, String> {
+    let target = match target {
+        Some(t) => t,
+        None => settings::load(&conn()?)
+            .target_window
+            .ok_or("No target window configured")?,
+    };
     let img = capture::capture_target(&target)
         .ok_or("Window not found or minimized")?;
     let bytes = crate::diagnostics::encode_preview_png(&img)

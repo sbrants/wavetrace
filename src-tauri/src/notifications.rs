@@ -5,10 +5,12 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use image::{GenericImage, RgbaImage};
+use notify_rust::Notification as OsNotification;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
+use crate::accounts;
 use crate::commands::AppState;
 
 use crate::parser::CoinReading;
@@ -466,6 +468,10 @@ fn ntfy_attach_capture(cfg: &Settings) -> bool {
     cfg.notify_ntfy_enabled && cfg.notify_ntfy_attach_capture
 }
 
+fn desktop_attach_capture(cfg: &Settings) -> bool {
+    cfg.notify_desktop_enabled && cfg.notify_desktop_attach_capture
+}
+
 /// Event mission description from in-run popup ("EVENT MISSION COMPLETED" + next line).
 pub fn parse_event_mission_complete(lines: &[String]) -> Option<String> {
     for (i, line) in lines.iter().enumerate() {
@@ -583,6 +589,109 @@ fn crossed_wave_milestones(wave: u32, every: u32, last_notified: u32) -> Vec<u32
     vec![highest]
 }
 
+/// Show a title/body-only OS notification (no image).
+fn show_plain_desktop_notification(app: &AppHandle, title: &str, body: &str) {
+    if let Some(state) = app.try_state::<NotifyState>() {
+        state.ensure_permission(app);
+    }
+    let _ = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show();
+}
+
+/// Toasts render small — no need to ship a full-resolution screenshot.
+const DESKTOP_NOTIFY_IMAGE_MAX_WIDTH: u32 = 480;
+
+fn encode_png_bytes(img: &RgbaImage) -> Result<Vec<u8>, String> {
+    use std::io::Cursor;
+    let mut buf = Vec::new();
+    image::DynamicImage::ImageRgba8(img.clone())
+        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| format!("png encode failed: {e}"))?;
+    Ok(buf)
+}
+
+/// Stable per-account path so repeated milestones overwrite the same scratch file
+/// instead of littering the temp dir; each account is a separate process/lock so
+/// there's no cross-process contention over it.
+fn desktop_notify_image_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "wavetrace-notify-{}.png",
+        accounts::current_account().id
+    ))
+}
+
+/// Show a wave-milestone OS notification with the composited game+chart image attached.
+///
+/// Bypasses `tauri-plugin-notification`: its desktop backend only forwards
+/// title/body/icon/sound to the OS and silently drops any image/attachment set on
+/// the builder. `notify_rust::Notification::image_path` is used directly instead —
+/// Windows (WinRT toast image), macOS (`content_image`), and Linux/BSD (XDG
+/// `image-path` hint) all support it, but all three need a file path rather than
+/// raw bytes, hence writing the composite to a temp file first.
+fn show_desktop_notification_with_image(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    image: &RgbaImage,
+) -> Result<(), String> {
+    if let Some(state) = app.try_state::<NotifyState>() {
+        state.ensure_permission(app);
+    }
+
+    let scaled = if image.width() > DESKTOP_NOTIFY_IMAGE_MAX_WIDTH {
+        scale_rgba_to_width(image, DESKTOP_NOTIFY_IMAGE_MAX_WIDTH)
+    } else {
+        image.clone()
+    };
+    let png = encode_png_bytes(&scaled)?;
+    let path = desktop_notify_image_path();
+    std::fs::write(&path, &png).map_err(|e| format!("could not write notification image: {e}"))?;
+
+    let mut notification = OsNotification::new();
+    notification.summary(title).body(body).auto_icon();
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    notification.image_path(&path.display().to_string());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    notification.image_path(&format!("file://{}", path.display()));
+
+    #[cfg(windows)]
+    {
+        use std::path::MAIN_SEPARATOR as SEP;
+        // Only claim the app's identity when running the installed build — a dev
+        // build's exe lives under target/debug or target/release, and setting
+        // System.AppUserModel.ID there points at an identity Windows doesn't
+        // recognize, which silently drops the toast instead of showing it.
+        if let Ok(exe) = tauri::utils::platform::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let curr_dir = exe_dir.display().to_string();
+                if !(curr_dir.ends_with(format!("{SEP}target{SEP}debug").as_str())
+                    || curr_dir.ends_with(format!("{SEP}target{SEP}release").as_str()))
+                {
+                    notification.app_id(&app.config().identifier);
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = notify_rust::set_application(if tauri::is_dev() {
+            "com.apple.Terminal"
+        } else {
+            &app.config().identifier
+        });
+    }
+
+    notification
+        .show()
+        .map_err(|e| format!("notification show failed: {e}"))?;
+    Ok(())
+}
+
 fn show_wave_milestone(
     app: &AppHandle,
     title: &str,
@@ -590,23 +699,9 @@ fn show_wave_milestone(
     cfg: &Settings,
     capture: Option<&RgbaImage>,
 ) {
-    if cfg.notify_desktop_enabled {
-        if let Some(state) = app.try_state::<NotifyState>() {
-            state.ensure_permission(app);
-        }
-        let _ = app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show();
-    }
+    let want_image = ntfy_attach_capture(cfg) || desktop_attach_capture(cfg);
 
-    if !cfg.notify_ntfy_enabled {
-        return;
-    }
-
-    if ntfy_attach_capture(cfg) {
+    if want_image {
         if let Some(frame) = capture {
             match crate::capture::encode_png_base64(frame) {
                 Ok(game_png_base64) => {
@@ -625,15 +720,15 @@ fn show_wave_milestone(
                         prefer_compare,
                     };
                     crate::db::append_app_log(&format!(
-                        "wave milestone ntfy: queued (prefer_compare={prefer_compare})"
+                        "wave milestone capture: queued (prefer_compare={prefer_compare})"
                     ));
                     if let Err(e) = app.emit("wave-milestone-ntfy", payload) {
-                        eprintln!("wave milestone ntfy emit failed: {e}");
+                        eprintln!("wave milestone capture emit failed: {e}");
                         if let Some(state) = app.try_state::<AppState>() {
                             if let Some(pending) =
                                 state.pending_wave_milestone_ntfy.lock().unwrap().take()
                             {
-                                let _ = publish_ntfy_wave_milestone_blocking(
+                                let _ = complete_wave_milestone_blocking(
                                     app,
                                     pending.title,
                                     pending.body,
@@ -650,16 +745,12 @@ fn show_wave_milestone(
         }
     }
 
-    publish_ntfy_async(
-        app,
-        title,
-        body,
-        if ntfy_attach_capture(cfg) {
-            capture.cloned()
-        } else {
-            None
-        },
-    );
+    // Neither channel wants an image (or none was available/encodable) — show plain
+    // notifications immediately instead of waiting on a webview round trip nobody needs.
+    if cfg.notify_desktop_enabled {
+        show_plain_desktop_notification(app, title, body);
+    }
+    publish_ntfy_async(app, title, body, None);
 }
 
 fn show(
@@ -893,8 +984,39 @@ fn composite_vertical_rgba(top: &RgbaImage, bottom: &RgbaImage) -> RgbaImage {
     out
 }
 
-/// Composite game + dashboard/comparison screenshots and publish to ntfy (sync).
-pub fn publish_ntfy_wave_milestone_blocking(
+/// Decode the game capture and, if present, composite the dashboard/comparison
+/// chart screenshot below it into a single image for wave-milestone alerts.
+fn build_wave_milestone_composite(
+    game_png_base64: &str,
+    ui_png_base64: Option<&str>,
+) -> Result<RgbaImage, String> {
+    let game = decode_png_rgba(game_png_base64)?;
+    Ok(match ui_png_base64.filter(|s| !s.trim().is_empty()) {
+        Some(ui_b64) => {
+            let ui = decode_png_rgba(ui_b64)?;
+            crate::db::append_app_log(&format!(
+                "wave milestone capture: compositing game + ui ({}x{} + {}x{})",
+                game.width(),
+                game.height(),
+                ui.width(),
+                ui.height()
+            ));
+            composite_vertical_rgba(&game, &ui)
+        }
+        None => {
+            eprintln!(
+                "wave milestone capture: no dashboard/compare screenshot — using game capture only"
+            );
+            game
+        }
+    })
+}
+
+/// After the webview captures the dashboard/compare chart (or that capture failed or
+/// wasn't needed), finish the wave-milestone flow: publish to ntfy and/or show the
+/// desktop toast, each attaching the composited game+chart image when its own
+/// "attach capture" setting is on (sync).
+pub fn complete_wave_milestone_blocking(
     app: &AppHandle,
     title: String,
     body: String,
@@ -902,39 +1024,45 @@ pub fn publish_ntfy_wave_milestone_blocking(
     ui_png_base64: Option<String>,
 ) -> Result<(), String> {
     let cfg = load_settings();
+    let composite = if ntfy_attach_capture(&cfg) || desktop_attach_capture(&cfg) {
+        match build_wave_milestone_composite(&game_png_base64, ui_png_base64.as_deref()) {
+            Ok(img) => Some(img),
+            Err(e) => {
+                eprintln!("wave milestone composite failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if cfg.notify_desktop_enabled {
+        match composite.as_ref().filter(|_| desktop_attach_capture(&cfg)) {
+            Some(img) => {
+                if let Err(e) = show_desktop_notification_with_image(app, &title, &body, img) {
+                    eprintln!("wave milestone desktop image notification failed: {e}");
+                    show_plain_desktop_notification(app, &title, &body);
+                }
+            }
+            None => show_plain_desktop_notification(app, &title, &body),
+        }
+    }
+
     if !cfg.notify_ntfy_enabled {
         return Ok(());
     }
     let topic = cfg.notify_ntfy_topic.clone();
     let result: Result<(), NtfyPublishError> = (|| {
-        let game = decode_png_rgba(&game_png_base64).map_err(|detail| NtfyPublishError {
-            status: None,
-            detail,
-        })?;
-        let rgba = if let Some(ui_b64) = ui_png_base64.filter(|s| !s.trim().is_empty()) {
-            let ui = decode_png_rgba(&ui_b64).map_err(|detail| NtfyPublishError {
-                status: None,
-                detail,
-            })?;
-            crate::db::append_app_log(&format!(
-                "wave milestone ntfy: compositing game + ui ({}x{} + {}x{})",
-                game.width(),
-                game.height(),
-                ui.width(),
-                ui.height()
-            ));
-            composite_vertical_rgba(&game, &ui)
-        } else {
-            eprintln!(
-                "wave milestone ntfy: no dashboard/compare screenshot — sending game capture only"
-            );
-            game
-        };
-        let att = prepare_ntfy_capture(&rgba).map_err(|e| NtfyPublishError {
-            status: None,
-            detail: e,
-        })?;
-        publish_ntfy_with_attachment(&topic, &title, &body, &att)
+        match composite.as_ref().filter(|_| ntfy_attach_capture(&cfg)) {
+            Some(img) => {
+                let att = prepare_ntfy_capture(img).map_err(|e| NtfyPublishError {
+                    status: None,
+                    detail: e,
+                })?;
+                publish_ntfy_with_attachment(&topic, &title, &body, &att)
+            }
+            None => publish_ntfy_inner(&topic, &title, &body, None),
+        }
     })();
     match result {
         Ok(()) => Ok(()),

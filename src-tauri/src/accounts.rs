@@ -24,6 +24,27 @@ pub const COLOR_PALETTE: &[&str] = &[
 static ACTIVE_ID: Mutex<Option<String>> = Mutex::new(None);
 static INSTANCE_LOCK: Mutex<Option<File>> = Mutex::new(None);
 
+/// Startup failure. `AlreadyOpen` means another window already holds this
+/// account's lock — an expected condition, not a real error, so callers
+/// should exit(0) after telling the user rather than treating it as a crash.
+#[derive(Debug)]
+pub enum AccountInitError {
+    AlreadyOpen(String),
+    Other(String),
+}
+
+impl AccountInitError {
+    pub fn message(&self) -> &str {
+        match self {
+            AccountInitError::AlreadyOpen(m) | AccountInitError::Other(m) => m,
+        }
+    }
+
+    pub fn is_already_open(&self) -> bool {
+        matches!(self, AccountInitError::AlreadyOpen(_))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Account {
     pub id: String,
@@ -112,27 +133,30 @@ pub fn current_account() -> Account {
 }
 
 /// Bind this process to an account (CLI / last-used) and take its instance lock.
-pub fn init() -> Result<Account, String> {
+pub fn init() -> Result<Account, AccountInitError> {
     let root = data_root();
     let registry = load_or_init_registry(&root);
     let requested = requested_account_id();
-    let id = resolve_requested_id(&registry, requested.as_deref())?;
+    let id = resolve_requested_id(&registry, requested.as_deref())
+        .map_err(AccountInitError::Other)?;
     let account = registry
         .accounts
         .iter()
         .find(|a| a.id == id)
         .cloned()
-        .ok_or_else(|| format!("Unknown account '{id}'."))?;
+        .ok_or_else(|| AccountInitError::Other(format!("Unknown account '{id}'.")))?;
 
     let dir = account_data_dir(&root, &id);
-    fs::create_dir_all(&dir).map_err(|e| format!("Could not create account folder: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        AccountInitError::Other(format!("Could not create account folder: {e}"))
+    })?;
     acquire_lock(&dir)?;
 
     if requested.is_none() {
         write_last_used(&root, &id);
     }
 
-    *ACTIVE_ID.lock().map_err(|e| e.to_string())? = Some(id);
+    *ACTIVE_ID.lock().map_err(|e| AccountInitError::Other(e.to_string()))? = Some(id);
     Ok(account)
 }
 
@@ -358,15 +382,17 @@ fn write_last_used(root: &Path, id: &str) {
     let _ = fs::write(root.join(ACTIVE_FILE), id);
 }
 
-fn acquire_lock(dir: &Path) -> Result<(), String> {
+fn acquire_lock(dir: &Path) -> Result<(), AccountInitError> {
     let path = dir.join(LOCK_FILE);
     let file = lock_file(&path)?;
-    *INSTANCE_LOCK.lock().map_err(|e| e.to_string())? = Some(file);
+    *INSTANCE_LOCK
+        .lock()
+        .map_err(|e| AccountInitError::Other(e.to_string()))? = Some(file);
     Ok(())
 }
 
 #[cfg(windows)]
-fn lock_file(path: &Path) -> Result<File, String> {
+fn lock_file(path: &Path) -> Result<File, AccountInitError> {
     use std::os::windows::fs::OpenOptionsExt;
     OpenOptions::new()
         .read(true)
@@ -377,15 +403,17 @@ fn lock_file(path: &Path) -> Result<File, String> {
         .open(path)
         .map_err(|e| {
             if e.raw_os_error() == Some(32) {
-                "This account is already open in another WaveTrace window.".into()
+                AccountInitError::AlreadyOpen(
+                    "This account is already open in another WaveTrace window.".into(),
+                )
             } else {
-                format!("Could not claim this account: {e}")
+                AccountInitError::Other(format!("Could not claim this account: {e}"))
             }
         })
 }
 
 #[cfg(unix)]
-fn lock_file(path: &Path) -> Result<File, String> {
+fn lock_file(path: &Path) -> Result<File, AccountInitError> {
     use std::os::unix::io::AsRawFd;
     let file = OpenOptions::new()
         .read(true)
@@ -393,21 +421,23 @@ fn lock_file(path: &Path) -> Result<File, String> {
         .create(true)
         .truncate(false)
         .open(path)
-        .map_err(|e| format!("Could not claim this account: {e}"))?;
+        .map_err(|e| AccountInitError::Other(format!("Could not claim this account: {e}")))?;
     let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if rc != 0 {
-        return Err("This account is already open in another WaveTrace window.".into());
+        return Err(AccountInitError::AlreadyOpen(
+            "This account is already open in another WaveTrace window.".into(),
+        ));
     }
     Ok(file)
 }
 
 #[cfg(not(any(windows, unix)))]
-fn lock_file(path: &Path) -> Result<File, String> {
+fn lock_file(path: &Path) -> Result<File, AccountInitError> {
     OpenOptions::new()
         .write(true)
         .create(true)
         .open(path)
-        .map_err(|e| format!("Could not claim this account: {e}"))
+        .map_err(|e| AccountInitError::Other(format!("Could not claim this account: {e}")))
 }
 
 pub fn parse_hex_color(color: &str) -> Option<[u8; 4]> {

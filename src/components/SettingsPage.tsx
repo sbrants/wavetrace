@@ -240,7 +240,7 @@ export default function SettingsPage({
 
   const showPreview = async () => {
     try {
-      setPreview(await api.previewCapture());
+      setPreview(await api.previewCapture(settings?.target_window ?? null));
     } catch (e) {
       reportUiError(e, "Settings.previewCapture");
     }
@@ -816,6 +816,16 @@ export default function SettingsPage({
             checked={settings.notify_desktop_enabled}
             onChange={(checked) =>
               setSettings({ ...settings, notify_desktop_enabled: checked })
+            }
+          />
+          <NotificationOption
+            id="notify-desktop-attach"
+            label="Attach game screenshot to desktop notifications"
+            description="Image on wave-milestone desktop notifications. Same game window plus dashboard chart (or run comparison when enabled in History) as the phone alert."
+            checked={settings.notify_desktop_attach_capture}
+            disabled={!settings.notify_desktop_enabled}
+            onChange={(checked) =>
+              setSettings({ ...settings, notify_desktop_attach_capture: checked })
             }
           />
           <NotificationOption

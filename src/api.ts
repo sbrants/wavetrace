@@ -49,6 +49,7 @@ export interface Settings {
   notify_run_ended: boolean;
   notify_window_lost: boolean;
   notify_desktop_enabled: boolean;
+  notify_desktop_attach_capture: boolean;
   notify_research_complete: boolean;
   notify_event_mission_complete: boolean;
   notify_system_shutdown: boolean;
@@ -270,6 +271,8 @@ export const api = {
   setCompareCaptureActive: (active: boolean) =>
     invoke<void>("set_compare_capture_active", { active }),
   focusMainWindow: () => invoke<void>("focus_main_window"),
+  prepareMainWindowForCapture: () =>
+    invoke<void>("prepare_main_window_for_capture"),
   completeWaveMilestoneNtfy: (uiPngBase64: string | null) =>
     invoke<void>("complete_wave_milestone_ntfy", { uiPngBase64 }),
   hasResumableRun: () => invoke<boolean>("has_resumable_run"),
@@ -328,7 +331,8 @@ export const api = {
   generateDebugPackage: (screenshots: DebugScreenshot[]) =>
     invoke<DebugPackageExport>("generate_debug_package", { screenshots }),
   getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
-  previewCapture: () => invoke<string>("preview_capture"),
+  previewCapture: (target?: Settings["target_window"]) =>
+    invoke<string>("preview_capture", { target: target ?? null }),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   onScannerUpdate: (cb: (e: ScannerEvent) => void): Promise<UnlistenFn> =>
     listen<ScannerEvent>("scanner-update", (event) => cb(event.payload)),

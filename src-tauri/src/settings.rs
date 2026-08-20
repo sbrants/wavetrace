@@ -29,6 +29,10 @@ pub struct Settings {
     /// Show alerts in the OS notification center.
     #[serde(default = "default_true")]
     pub notify_desktop_enabled: bool,
+    /// Attach the game + dashboard/compare capture to wave-milestone desktop
+    /// notifications as an image, same as `notify_ntfy_attach_capture` does for ntfy.
+    #[serde(default = "default_true")]
+    pub notify_desktop_attach_capture: bool,
     /// Alert when lab research completes (OCR: "Research Complete:").
     #[serde(default = "default_true")]
     pub notify_research_complete: bool,
@@ -93,6 +97,7 @@ impl Default for Settings {
             notify_run_ended: true,
             notify_window_lost: true,
             notify_desktop_enabled: true,
+            notify_desktop_attach_capture: true,
             notify_research_complete: true,
             notify_event_mission_complete: true,
             notify_coin_unavailable_after_secs: None,
@@ -156,6 +161,11 @@ pub fn load(conn: &Connection) -> Settings {
     if let Ok(Some(v)) = db::get_setting(conn, "notify_desktop_enabled") {
         if let Ok(on) = v.parse() {
             s.notify_desktop_enabled = on;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "notify_desktop_attach_capture") {
+        if let Ok(on) = v.parse() {
+            s.notify_desktop_attach_capture = on;
         }
     }
     if let Ok(Some(v)) = db::get_setting(conn, "notify_research_complete") {
@@ -303,6 +313,11 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         conn,
         "notify_desktop_enabled",
         &s.notify_desktop_enabled.to_string(),
+    )?;
+    db::set_setting(
+        conn,
+        "notify_desktop_attach_capture",
+        &s.notify_desktop_attach_capture.to_string(),
     )?;
     db::set_setting(
         conn,
@@ -480,6 +495,18 @@ mod tests {
         assert!(loaded.notify_ntfy_enabled);
         assert!(!loaded.notify_ntfy_attach_capture);
         assert_eq!(loaded.notify_ntfy_topic, "wavetrace-test");
+    }
+
+    #[test]
+    fn save_and_load_desktop_attach_capture_setting() {
+        let conn = db::open_in_memory().expect("db");
+        let s = Settings {
+            notify_desktop_attach_capture: false,
+            ..Settings::default()
+        };
+        save(&conn, &s).expect("save");
+        let loaded = load(&conn);
+        assert!(!loaded.notify_desktop_attach_capture);
     }
 
     #[test]

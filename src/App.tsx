@@ -12,7 +12,8 @@ import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { registerTabControl, type AppTab } from "./tabCapture";
 import ExternalLink from "./ExternalLink";
-import { DISCORD_SUPPORT_URL, DiscordIcon } from "./support";
+import { DiscordIcon } from "./support";
+import { DISCORD_SUPPORT_URL } from "./discordSupportUrl";
 
 type Tab = "dashboard" | "history" | "settings";
 

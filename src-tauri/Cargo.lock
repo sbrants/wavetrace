@@ -6140,6 +6140,7 @@ dependencies = [
  "icu_locale_core",
  "image",
  "libc",
+ "notify-rust",
  "rfd",
  "rusqlite",
  "serde",

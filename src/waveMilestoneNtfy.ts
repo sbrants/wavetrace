@@ -29,7 +29,7 @@ function shouldUseCompare(payload: WaveMilestoneNtfyPayload): boolean {
 }
 
 async function prepareUiForCapture(useCompare: boolean): Promise<AppTab> {
-  await api.focusMainWindow();
+  await api.prepareMainWindowForCapture();
   await sleep(600);
 
   const tab = useCompare ? "history" : "dashboard";

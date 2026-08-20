@@ -75,8 +75,8 @@ fn show_startup_error(message: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(e) = accounts::init() {
-        show_startup_error(&e);
-        std::process::exit(1);
+        show_startup_error(e.message());
+        std::process::exit(if e.is_already_open() { 0 } else { 1 });
     }
     // Ensure the database and its directory exist before anything else runs.
     db::open().expect("failed to open database");
@@ -135,6 +135,7 @@ pub fn run() {
             commands::clear_ntfy_rate_limit,
             commands::set_compare_capture_active,
             commands::focus_main_window,
+            commands::prepare_main_window_for_capture,
             commands::complete_wave_milestone_ntfy,
             commands::has_resumable_run,
             commands::start_scanner,

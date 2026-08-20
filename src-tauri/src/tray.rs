@@ -211,3 +211,16 @@ pub fn show_main_window(app: &AppHandle) {
         let _ = window.set_focus();
     }
 }
+
+/// Restore the window from minimized/hidden without stealing OS focus.
+///
+/// A minimized window's webview viewport collapses to 0x0 on Windows, which
+/// would break chart layout during capture, but bringing the window to the
+/// foreground (`set_focus`) is not needed for the DOM-based chart capture
+/// and would just interrupt whatever the user is doing in another app.
+pub fn restore_main_window_for_capture(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+    }
+}
