@@ -64,6 +64,8 @@ export interface Settings {
   save_pull_enabled: boolean;
   /** Optional extra emulator ADB port (e.g. 62001). */
   save_pull_adb_port: number | null;
+  /** Preferred device: stable fingerprint (aid:.../avd:...) when readable, else a raw serial; empty = try all. */
+  save_pull_device_id: string;
   /** Append date/time to filename; off overwrites playerInfo.dat. */
   save_pull_timestamp_filename: boolean;
   /** Output folder; empty = Downloads. */
@@ -72,6 +74,13 @@ export interface Settings {
   save_pull_auto: boolean;
   /** Auto-pull interval seconds (min 15). */
   save_pull_auto_interval_secs: number;
+}
+
+export interface AdbDeviceInfo {
+  serial: string;
+  /** Stable fingerprint (aid:.../avd:...); null when unreadable. */
+  deviceId: string | null;
+  label: string;
 }
 
 export interface GameSaveStatus {
@@ -253,6 +262,7 @@ export const api = {
   gameSaveStatus: () => invoke<GameSaveStatus>("game_save_status"),
   pullGameSave: () => invoke<GameSavePullResult>("pull_game_save"),
   pickSavePullDir: () => invoke<string | null>("pick_save_pull_dir"),
+  listGameSaveDevices: () => invoke<AdbDeviceInfo[]>("list_game_save_devices"),
   listAccounts: () => invoke<AccountList>("list_accounts"),
   createAccount: (name: string, color?: string | null) =>
     invoke<Account>("create_account", { name, color: color ?? null }),

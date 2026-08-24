@@ -43,6 +43,19 @@ static LAST_WRITTEN_HASH: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AdbDeviceInfo {
+    /// Current `adb devices` serial (e.g. `127.0.0.1:7555`); the port can change across
+    /// sessions for some emulators depending on start order.
+    pub serial: String,
+    /// Stable per-instance fingerprint (`aid:<android_id>` or `avd:<name>`), independent of
+    /// port/start order. `None` when we couldn't read one (e.g. shell access blocked).
+    pub device_id: Option<String>,
+    /// Human-readable label for the Settings picker.
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GameSaveStatus {
     pub ready: bool,
     pub adb_path: Option<String>,
@@ -65,6 +78,10 @@ pub struct GameSavePullResult {
 #[derive(Debug, Clone)]
 pub struct PullWriteOptions {
     pub custom_port: Option<u32>,
+    /// Device preference picked in Settings: either a stable fingerprint (`aid:`/`avd:`
+    /// prefixed) or, as a fallback when no fingerprint was available, a raw serial. Tried
+    /// first when present.
+    pub preferred_device: Option<String>,
     pub output_dir: PathBuf,
     pub timestamp_filename: bool,
     pub skip_if_same_hash: bool,
@@ -74,10 +91,64 @@ impl PullWriteOptions {
     pub fn from_settings(s: &Settings) -> Self {
         Self {
             custom_port: s.save_pull_adb_port,
+            preferred_device: preferred_device_from_settings(s),
             output_dir: resolve_output_dir(&s.save_pull_dir),
             timestamp_filename: s.save_pull_timestamp_filename,
             skip_if_same_hash: true,
         }
+    }
+}
+
+fn preferred_device_from_settings(s: &Settings) -> Option<String> {
+    let trimmed = s.save_pull_device_id.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn is_device_fingerprint(preferred: &str) -> bool {
+    preferred.starts_with("aid:") || preferred.starts_with("avd:")
+}
+
+/// Read a stable per-instance identifier: Android ID first (works on virtually any Android
+/// system, survives port/start-order changes), falling back to the AVD name for the stock
+/// Android Emulator (`emulator-<port>` serials) when Android ID is unavailable.
+fn device_fingerprint(adb: &Path, serial: &str) -> Option<String> {
+    if let Ok(out) = run_adb_text(
+        adb,
+        Some(serial),
+        &["shell", "settings", "get", "secure", "android_id"],
+        Duration::from_millis(ADB_PATH_PROBE_TIMEOUT_MS),
+    ) {
+        let id = out.trim();
+        if !id.is_empty() && !id.eq_ignore_ascii_case("null") {
+            return Some(format!("aid:{id}"));
+        }
+    }
+    if serial.starts_with("emulator-") {
+        if let Ok(out) = run_adb_text(
+            adb,
+            Some(serial),
+            &["emu", "avd", "name"],
+            Duration::from_millis(ADB_PATH_PROBE_TIMEOUT_MS),
+        ) {
+            let name = out
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.eq_ignore_ascii_case("OK"));
+            if let Some(name) = name {
+                return Some(format!("avd:{name}"));
+            }
+        }
+    }
+    None
+}
+
+fn device_label(serial: &str, fingerprint: Option<&str>) -> String {
+    match fingerprint {
+        Some(f) if f.starts_with("aid:") => {
+            format!("{serial} — Android ID {}", &f[4..])
+        }
+        Some(f) if f.starts_with("avd:") => format!("{serial} — AVD {}", &f[4..]),
+        _ => format!("{serial} (port only — may change if start order changes)"),
     }
 }
 
@@ -492,23 +563,56 @@ fn list_online_serials(adb: &Path) -> Result<Vec<String>, String> {
     Ok(parse_adb_devices(&listing))
 }
 
-fn connect_and_list(adb: &Path, custom_port: Option<u32>) -> Result<(Vec<String>, Vec<String>), String> {
+/// `preferred` is either a stable fingerprint (`aid:`/`avd:` prefixed — matched by querying
+/// each candidate device) or a raw serial (matched directly, and also dialed as a host if it
+/// looks like `ip:port`), same as the existing `custom_port` boost.
+fn connect_and_list(
+    adb: &Path,
+    custom_port: Option<u32>,
+    preferred: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), String> {
     ensure_adb_server(adb);
-    let hosts = build_known_hosts(custom_port);
+    let preferred_is_fingerprint = preferred.map(is_device_fingerprint).unwrap_or(false);
+    let mut hosts = build_known_hosts(custom_port);
+    if let Some(pref) = preferred {
+        if !preferred_is_fingerprint && pref.contains(':') && !hosts.iter().any(|h| h == pref) {
+            hosts.insert(0, pref.to_string());
+        }
+    }
     let mut serials = list_online_serials(adb)?;
-    // Always try known hosts (custom port first) so a cold emulator becomes visible.
-    if serials.is_empty() || custom_port.is_some() {
+    // Always try known hosts (custom port / preferred serial first) so a cold emulator becomes visible.
+    if serials.is_empty() || custom_port.is_some() || preferred.is_some() {
         for host in &hosts {
             connect_host(adb, host);
         }
         serials = list_online_serials(adb)?;
     }
-    let ordered = order_serials_for_pull(&serials, &hosts);
+    let mut priority: Vec<String> = Vec::new();
+    if let Some(pref) = preferred {
+        if !preferred_is_fingerprint {
+            priority.push(pref.to_string());
+        }
+    }
+    priority.extend(hosts.iter().cloned());
+    let mut ordered = order_serials_for_pull(&serials, &priority);
+    if let Some(pref) = preferred.filter(|_| preferred_is_fingerprint) {
+        if let Some(pos) = ordered
+            .iter()
+            .position(|s| device_fingerprint(adb, s).as_deref() == Some(pref))
+        {
+            let matched = ordered.remove(pos);
+            ordered.insert(0, matched);
+        }
+    }
     Ok((ordered, hosts))
 }
 
 /// Probe whether ADB and an emulator device are available.
-pub fn probe_game_save(custom_port: Option<u32>, allow_download: bool) -> GameSaveStatus {
+pub fn probe_game_save(
+    custom_port: Option<u32>,
+    preferred_device: Option<&str>,
+    allow_download: bool,
+) -> GameSaveStatus {
     let adb = match ensure_adb(allow_download) {
         Ok(p) => p,
         Err(e) => {
@@ -520,7 +624,7 @@ pub fn probe_game_save(custom_port: Option<u32>, allow_download: bool) -> GameSa
             };
         }
     };
-    match connect_and_list(&adb, custom_port) {
+    match connect_and_list(&adb, custom_port, preferred_device) {
         Ok((serials, _)) if !serials.is_empty() => GameSaveStatus {
             ready: true,
             adb_path: Some(adb.display().to_string()),
@@ -540,6 +644,29 @@ pub fn probe_game_save(custom_port: Option<u32>, allow_download: bool) -> GameSa
             detail: e,
         },
     }
+}
+
+/// List devices currently reachable via ADB, each with its stable fingerprint (when
+/// readable) and a display label, for the Settings device picker.
+pub fn list_devices(
+    custom_port: Option<u32>,
+    preferred_device: Option<&str>,
+    allow_download: bool,
+) -> Result<Vec<AdbDeviceInfo>, String> {
+    let adb = ensure_adb(allow_download)?;
+    let (serials, _) = connect_and_list(&adb, custom_port, preferred_device)?;
+    Ok(serials
+        .into_iter()
+        .map(|serial| {
+            let fingerprint = device_fingerprint(&adb, &serial);
+            let label = device_label(&serial, fingerprint.as_deref());
+            AdbDeviceInfo {
+                serial,
+                device_id: fingerprint,
+                label,
+            }
+        })
+        .collect())
 }
 
 fn remote_path_exists(adb: &Path, serial: &str, remote_path: &str) -> bool {
@@ -725,7 +852,7 @@ pub fn pull_game_save_with_options(
     opts: &PullWriteOptions,
 ) -> Result<GameSavePullResult, String> {
     let adb = ensure_adb(true)?;
-    let (serials, _) = connect_and_list(&adb, opts.custom_port)?;
+    let (serials, _) = connect_and_list(&adb, opts.custom_port, opts.preferred_device.as_deref())?;
     if serials.is_empty() {
         return Err(
             "No supported emulator detected. Start your emulator with ADB debugging, then try again."

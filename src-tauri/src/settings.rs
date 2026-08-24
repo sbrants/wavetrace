@@ -66,6 +66,11 @@ pub struct Settings {
     /// Optional extra emulator ADB port (e.g. 62001 for MuMu), tried before the known-host list.
     #[serde(default)]
     pub save_pull_adb_port: Option<u32>,
+    /// Preferred device, picked in Settings: a stable fingerprint (`aid:<android_id>` or
+    /// `avd:<name>`) when readable, else a raw `adb devices` serial as fallback. Empty = no
+    /// preference, try all discovered devices.
+    #[serde(default)]
+    pub save_pull_device_id: String,
     /// When true, write `playerInfo-YYYYMMDD-HHMMSS.dat`; when false, overwrite `playerInfo.dat`.
     #[serde(default)]
     pub save_pull_timestamp_filename: bool,
@@ -109,6 +114,7 @@ impl Default for Settings {
             compare_capture_active: false,
             save_pull_enabled: true,
             save_pull_adb_port: None,
+            save_pull_device_id: String::new(),
             save_pull_timestamp_filename: false,
             save_pull_dir: String::new(),
             save_pull_auto: false,
@@ -214,6 +220,9 @@ pub fn load(conn: &Connection) -> Settings {
     }
     if let Ok(Some(v)) = db::get_setting(conn, "save_pull_adb_port") {
         s.save_pull_adb_port = v.parse().ok().filter(|&n| (1_000..65_536).contains(&n));
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "save_pull_device_id") {
+        s.save_pull_device_id = v;
     }
     if let Ok(Some(v)) = db::get_setting(conn, "save_pull_timestamp_filename") {
         if let Ok(on) = v.parse() {
@@ -374,6 +383,7 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
     } else {
         db::set_setting(conn, "save_pull_adb_port", "")?;
     }
+    db::set_setting(conn, "save_pull_device_id", &s.save_pull_device_id)?;
     db::set_setting(
         conn,
         "save_pull_timestamp_filename",
@@ -515,6 +525,7 @@ mod tests {
         let s = Settings {
             save_pull_enabled: false,
             save_pull_adb_port: Some(62001),
+            save_pull_device_id: "aid:3f9a2b1c9d8e7f6a".into(),
             save_pull_timestamp_filename: true,
             save_pull_dir: r"D:\TowerSaves".into(),
             save_pull_auto: true,
@@ -525,6 +536,7 @@ mod tests {
         let loaded = load(&conn);
         assert!(!loaded.save_pull_enabled);
         assert_eq!(loaded.save_pull_adb_port, Some(62001));
+        assert_eq!(loaded.save_pull_device_id, "aid:3f9a2b1c9d8e7f6a");
         assert!(loaded.save_pull_timestamp_filename);
         assert_eq!(loaded.save_pull_dir, r"D:\TowerSaves");
         assert!(loaded.save_pull_auto);

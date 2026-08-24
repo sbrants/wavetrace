@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
+  AdbDeviceInfo,
   AppDataInfo,
   formatCoin,
   GameSaveStatus,
@@ -99,6 +100,8 @@ export default function SettingsPage({
   const [gameSaveStatus, setGameSaveStatus] = useState<GameSaveStatus | null>(
     null
   );
+  const [gameSaveDevices, setGameSaveDevices] = useState<AdbDeviceInfo[]>([]);
+  const [devicesBusy, setDevicesBusy] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -528,6 +531,9 @@ export default function SettingsPage({
           ADB. WaveTrace manages ADB tools automatically. By default the file is
           overwritten as <code>playerInfo.dat</code>; enable timestamps to keep
           dated copies. Auto-pull writes only when the save content changes.
+          With multiple emulators running, use <strong>List devices</strong> to
+          pick one; WaveTrace remembers it and looks for that device first next
+          time the app opens.
         </p>
         <label className="checkbox-inline">
           <input
@@ -658,6 +664,57 @@ export default function SettingsPage({
             }
           >
             Recheck
+          </button>
+        </div>
+        <div className="row">
+          <label htmlFor="save-pull-device">
+            Preferred device
+            <select
+              id="save-pull-device"
+              value={settings.save_pull_device_id}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  save_pull_device_id: e.target.value,
+                })
+              }
+            >
+              <option value="">Auto (try all detected devices)</option>
+              {(() => {
+                const options = [...gameSaveDevices];
+                if (
+                  settings.save_pull_device_id &&
+                  !options.some((d) => (d.deviceId ?? d.serial) === settings.save_pull_device_id)
+                ) {
+                  // Selection isn't in the freshly-listed devices (emulator off, etc.) —
+                  // keep it shown so it doesn't silently vanish from the dropdown.
+                  options.unshift({
+                    serial: settings.save_pull_device_id,
+                    deviceId: settings.save_pull_device_id,
+                    label: `${settings.save_pull_device_id} (last selected — not currently listed)`,
+                  });
+                }
+                return options.map((d) => (
+                  <option key={d.deviceId ?? d.serial} value={d.deviceId ?? d.serial}>
+                    {d.label}
+                  </option>
+                ));
+              })()}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={devicesBusy}
+            onClick={() => {
+              setDevicesBusy(true);
+              api
+                .listGameSaveDevices()
+                .then(setGameSaveDevices)
+                .catch((e) => reportUiError(e, "Settings.listGameSaveDevices"))
+                .finally(() => setDevicesBusy(false));
+            }}
+          >
+            {devicesBusy ? "Listing…" : "List devices"}
           </button>
         </div>
         <p className="muted" role="status" aria-live="polite">

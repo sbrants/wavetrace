@@ -168,6 +168,7 @@ pub fn run() {
             commands::game_save_status,
             commands::pull_game_save,
             commands::pick_save_pull_dir,
+            commands::list_game_save_devices,
             commands::list_accounts,
             commands::create_account,
             commands::update_account,

@@ -604,10 +604,14 @@ pub async fn get_app_data_info() -> AppDataInfo {
 #[tauri::command]
 pub async fn game_save_status() -> crate::adb_save::GameSaveStatus {
     run_blocking("game_save_status", || {
-        let custom_port = conn()
-            .ok()
-            .and_then(|c| settings::load(&c).save_pull_adb_port);
-        Ok(crate::adb_save::probe_game_save(custom_port, true))
+        let s = conn().ok().map(|c| settings::load(&c)).unwrap_or_default();
+        let preferred = (!s.save_pull_device_id.trim().is_empty())
+            .then(|| s.save_pull_device_id.trim().to_string());
+        Ok(crate::adb_save::probe_game_save(
+            s.save_pull_adb_port,
+            preferred.as_deref(),
+            true,
+        ))
     })
     .await
     .unwrap_or_else(|e| crate::adb_save::GameSaveStatus {
@@ -630,6 +634,18 @@ pub fn pull_game_save() -> Result<crate::adb_save::GameSavePullResult, String> {
 #[tauri::command]
 pub fn pick_save_pull_dir() -> Result<Option<String>, String> {
     crate::adb_save::pick_output_dir()
+}
+
+#[tauri::command]
+pub async fn list_game_save_devices() -> Result<Vec<crate::adb_save::AdbDeviceInfo>, String> {
+    run_blocking("list_game_save_devices", || {
+        let s = conn()?;
+        let s = settings::load(&s);
+        let preferred = (!s.save_pull_device_id.trim().is_empty())
+            .then(|| s.save_pull_device_id.trim().to_string());
+        crate::adb_save::list_devices(s.save_pull_adb_port, preferred.as_deref(), true)
+    })
+    .await
 }
 
 #[derive(Serialize)]
