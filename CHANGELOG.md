@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.11] — 2026-08-24
+
+### Added
+
+- **Preferred emulator picker for game save pull** — Settings → Game save can now list devices reachable via ADB and pick one to pull from, instead of relying on the emulator's ADB port alone. Matching prefers a stable per-instance fingerprint (Android ID, or AVD name for the stock Android Emulator) over the raw port, so the right emulator is still found even if you start multiple emulators in a different order than last time.
+
+---
+
 ## [0.3.10] — 2026-08-20
 
 ### Added
