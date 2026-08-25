@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.12] — 2026-08-25
+
+### Fixed
+
+- **"AdbWinApi.dll was not found" system dialog** — A stray or antivirus-stripped `adb.exe` missing its companion DLLs could get picked over a working copy, and Windows would pop a blocking system error dialog every time WaveTrace relaunched it (e.g. the periodic game-save status check). ADB candidates are now validated for their companion DLLs before use, so a broken copy is skipped in favor of a working one or a fresh download, and the OS's default DLL-load error dialog is suppressed so any remaining failure surfaces as a normal in-app error instead.
+
+---
+
 ## [0.3.11] — 2026-08-24
 
 ### Added
