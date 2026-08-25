@@ -103,14 +103,7 @@ impl PullWriteOptions {
     }
 }
 
-/// Preferred device for ADB operations. When the phone is the capture source, save-pull
-/// rides along on the same device rather than needing a separate pick — it's virtually
-/// always the same physical phone.
-pub(crate) fn preferred_device_from_settings(s: &Settings) -> Option<String> {
-    if s.capture_source == settings::CaptureSourceKind::AdbPhone {
-        let trimmed = s.capture_adb_device_id.trim();
-        return (!trimmed.is_empty()).then(|| trimmed.to_string());
-    }
+fn preferred_device_from_settings(s: &Settings) -> Option<String> {
     let trimmed = s.save_pull_device_id.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
@@ -557,32 +550,17 @@ fn run_adb(
     cmd.args(args);
     let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| format!("Failed to start adb: {e}"))?;
-    // Drain stdout/stderr concurrently with the wait-loop below, not after it exits: a
-    // command with output larger than the OS pipe buffer (screencap's PNG bytes, easily
-    // several hundred KB) blocks on write() once the pipe fills, and with nothing reading
-    // it in the meantime the child never exits — try_wait() then spins until the timeout
-    // fires on what looks like a hang but is really a deadlock.
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut out) = stdout_pipe {
-            let _ = out.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let stderr_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut err) = stderr_pipe {
-            let _ = err.read_to_end(&mut buf);
-        }
-        buf
-    });
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = stdout_thread.join().unwrap_or_default();
-                let stderr = stderr_thread.join().unwrap_or_default();
+                let mut stdout = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    out.read_to_end(&mut stdout).ok();
+                }
+                let mut stderr = Vec::new();
+                if let Some(mut err) = child.stderr.take() {
+                    err.read_to_end(&mut stderr).ok();
+                }
                 if !status.success() {
                     let err = String::from_utf8_lossy(&stderr);
                     let out = String::from_utf8_lossy(&stdout);
@@ -665,14 +643,8 @@ fn connect_and_list(
         }
     }
     let mut serials = list_online_serials(adb)?;
-    // Try known hosts (custom port / preferred raw serial first) so a cold emulator becomes
-    // visible. Skipped when we already see devices and are just matching an existing one by
-    // stable fingerprint — a real USB phone (or an already-connected emulator) needs no
-    // `adb connect` dialing, and sweeping ~9 known loopback ports on every single scanner
-    // start was adding several seconds of pure waste (each a real subprocess round trip).
-    let needs_host_dial =
-        serials.is_empty() || custom_port.is_some() || (preferred.is_some() && !preferred_is_fingerprint);
-    if needs_host_dial {
+    // Always try known hosts (custom port / preferred serial first) so a cold emulator becomes visible.
+    if serials.is_empty() || custom_port.is_some() || preferred.is_some() {
         for host in &hosts {
             connect_host(adb, host);
         }
@@ -758,37 +730,6 @@ pub fn list_devices(
             }
         })
         .collect())
-}
-
-/// Resolve the ADB binary and the best-matching device serial to capture frames from,
-/// for the "Phone (ADB)" capture source. Reuses the same device discovery/ordering as
-/// [`list_devices`] and the save-pull feature, just picking the top match instead of
-/// listing every candidate.
-pub fn resolve_capture_device(
-    custom_port: Option<u32>,
-    preferred_device: Option<&str>,
-    allow_download: bool,
-) -> Result<(PathBuf, String, String), String> {
-    let adb = ensure_adb(allow_download)?;
-    let (serials, _) = connect_and_list(&adb, custom_port, preferred_device)?;
-    let serial = serials
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No device found via ADB. Connect a phone with USB debugging enabled and authorized.".to_string())?;
-    let fingerprint = device_fingerprint(&adb, &serial);
-    let label = device_label(&serial, fingerprint.as_deref());
-    Ok((adb, serial, label))
-}
-
-/// Grab a single screenshot from a connected device via `screencap`, as PNG bytes.
-/// Built into the Android shell — no APK install on the device required.
-pub fn capture_screenshot(adb: &Path, serial: &str) -> Result<Vec<u8>, String> {
-    run_adb(
-        adb,
-        Some(serial),
-        &["exec-out", "screencap", "-p"],
-        Duration::from_secs(10),
-    )
 }
 
 fn remote_path_exists(adb: &Path, serial: &str, remote_path: &str) -> bool {
