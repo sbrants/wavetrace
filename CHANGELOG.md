@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.13] — 2026-08-25
+
+### Fixed
+
+- **Console window flashing repeatedly, blocking the app** — A regression in 0.3.12's stricter ADB validation could make WaveTrace fall back to a `where adb` lookup on every 12-second game-save-status poll, and that lookup was missing a flag to keep it hidden — so a console window flashed on screen every few seconds, over and over, making the app unusable for anyone without a working `adb.exe` on hand. Fixed, along with the same missing flag on two other Windows shell-out helpers (open link, reveal in file manager).
+
+---
+
 ## [0.3.12] — 2026-08-25
 
 ### Fixed
