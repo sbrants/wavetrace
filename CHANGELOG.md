@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.14] — 2026-08-25
+
+### Fixed
+
+- **ADB save-pull got permanently stuck on a broken `adb.exe`** — WaveTrace only checked that `adb.exe` and its companion DLLs existed as files before trusting a copy, so a copy left non-functional by antivirus (DLL content quarantined/corrupted in place rather than deleted) or otherwise broken would still be picked and reused indefinitely — even after installing a working `adb` elsewhere (e.g. via `winget install --id Google.PlatformTools`) — since the working tree scan already stopped at the first "usable-looking" candidate. WaveTrace now actually runs `adb version` to confirm a candidate works before trusting it, so a broken copy is correctly skipped in favor of the next candidate or a fresh self-repair download. Also: adb failures with no output now include the process exit code instead of a bare "failed" message, for easier diagnosis.
+
+---
+
 ## [0.3.13] — 2026-08-25
 
 ### Fixed
