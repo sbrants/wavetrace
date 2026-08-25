@@ -262,12 +262,17 @@ fn common_adb_candidates() -> Vec<PathBuf> {
 fn find_adb_on_path() -> Option<PathBuf> {
     let bin = adb_binary_name();
     let which = if cfg!(windows) { "where" } else { "which" };
-    let output = Command::new(which)
-        .arg(bin.trim_end_matches(".exe"))
+    let mut cmd = Command::new(which);
+    cmd.arg(bin.trim_end_matches(".exe"))
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -481,6 +486,9 @@ pub fn emulator_pull_paths() -> Vec<String> {
     paths
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 fn configure_command(cmd: &mut Command) {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -488,7 +496,6 @@ fn configure_command(cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 }
