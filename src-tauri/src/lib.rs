@@ -55,6 +55,21 @@ fn log_panics() {
     }));
 }
 
+/// Stop Windows from showing its blocking "X.dll was not found" / crash dialogs for this
+/// process and any child it spawns (adb.exe in particular: a copy missing a companion DLL,
+/// e.g. from antivirus quarantine, otherwise pops a modal system error box over the app that
+/// only a click can dismiss). Child processes inherit this mode unless they reset it, so the
+/// failure instead surfaces as a normal non-zero exit that our own error handling can report.
+#[cfg(windows)]
+fn suppress_windows_error_dialogs() {
+    use windows::Win32::System::Diagnostics::Debug::{
+        SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
+    };
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    }
+}
+
 fn show_startup_error(message: &str) {
     eprintln!("WaveTrace: {message}");
     #[cfg(windows)]
@@ -74,6 +89,8 @@ fn show_startup_error(message: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    suppress_windows_error_dialogs();
     if let Err(e) = accounts::init() {
         show_startup_error(e.message());
         std::process::exit(if e.is_already_open() { 0 } else { 1 });

@@ -39,6 +39,7 @@ windows = { version = "0.62", features = [
     "Graphics_Imaging",
     "Media_Ocr",
     "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_WinRT",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

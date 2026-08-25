@@ -160,6 +160,23 @@ fn adb_binary_name() -> &'static str {
     }
 }
 
+/// True when `adb` is present and, on Windows, its required companion DLLs are too.
+/// `adb.exe` statically imports `AdbWinApi.dll`; a copy missing it (antivirus quarantine
+/// is a common cause) can't launch at all, so treat it as absent rather than let it get
+/// picked over a working copy or block a fresh download from repairing things.
+fn adb_is_usable(adb: &Path) -> bool {
+    if !adb.is_file() {
+        return false;
+    }
+    if cfg!(windows) {
+        let Some(dir) = adb.parent() else {
+            return true;
+        };
+        return dir.join("AdbWinApi.dll").is_file() && dir.join("AdbWinUsbApi.dll").is_file();
+    }
+    true
+}
+
 fn app_platform_tools_root() -> PathBuf {
     db::app_data_root().join("platform-tools")
 }
@@ -192,7 +209,7 @@ fn resources_platform_tools_adb() -> Option<PathBuf> {
             })
             .unwrap_or_default(),
     ];
-    candidates.into_iter().find(|p| !p.as_os_str().is_empty() && p.is_file())
+    candidates.into_iter().find(|p| !p.as_os_str().is_empty() && adb_is_usable(p))
 }
 
 fn common_adb_candidates() -> Vec<PathBuf> {
@@ -208,7 +225,7 @@ fn common_adb_candidates() -> Vec<PathBuf> {
         out.push(bundled);
     }
     let app_adb = app_platform_tools_adb();
-    if app_adb.is_file() {
+    if adb_is_usable(&app_adb) {
         out.push(app_adb);
     }
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
@@ -266,11 +283,11 @@ fn find_adb_on_path() -> Option<PathBuf> {
 /// Locate an existing adb binary without downloading.
 pub fn find_existing_adb() -> Option<PathBuf> {
     for candidate in common_adb_candidates() {
-        if candidate.is_file() {
+        if adb_is_usable(&candidate) {
             return Some(candidate);
         }
     }
-    find_adb_on_path()
+    find_adb_on_path().filter(|p| adb_is_usable(p))
 }
 
 fn platform_tools_download_url() -> &'static str {
@@ -331,7 +348,7 @@ fn download_platform_tools() -> Result<PathBuf, String> {
         .map_err(|_| "platform-tools download lock poisoned".to_string())?;
     // Another caller may have finished while we waited.
     let existing = app_platform_tools_adb();
-    if existing.is_file() {
+    if adb_is_usable(&existing) {
         return Ok(existing);
     }
 
