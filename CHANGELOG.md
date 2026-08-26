@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0] — 2026-08-26
+
+### Added
+
+- **Phone (ADB) capture source** — Settings → Capture source can now target a phone connected over USB instead of a PC window, so a run played on a real device can be monitored without an emulator. Pick "Phone (ADB)", select the device, and it reads wave, tier, coin rate, and Golden Combo the same way window capture does — no app install needed on the phone. Capture and OCR run concurrently, so the scanner samples the phone about as often as it samples a PC window despite each phone screenshot costing more to pull and read.
+
+### Fixed
+
+- **Golden Combo toasts went unread far more often than they should have, especially deep into a run** — the gate meant to skip battlefield-effects noise before attempting to read a Golden Combo toast was tuned against an easier, less visually loaded screen than what a heavily-upgraded late-game run actually shows. At that point it was silently discarding on the order of a third to nearly half of genuine toast reads before OCR ever ran on them — on the existing PC-window path too, not only the new phone one; it was just masked in aggregate data by a lot of easier, earlier-run samples. Raised, and unified across both capture sources.
+- **Golden Combo's multiplier often recorded as missing even when the chance and activation count were read fine** — the multiplier sits at the end of the toast text, more exposed to a partial OCR miss than the fields before it, and once a wave's snapshot was saved with no successful read, that miss was permanent for that wave — even when a nearby poll just outside that wave's own window had already read it correctly. It's now recovered from that already-successful read when the activation count matches, instead of being lost.
+
+---
+
 ## [0.3.15] — 2026-08-25
 
 ### Fixed

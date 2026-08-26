@@ -7,6 +7,7 @@ const OUTAGE_STATUSES = new Set([
   "window_not_found",
   "window_minimized",
   "capture_stalled",
+  "adb_device_not_found",
 ]);
 
 function describe(status: string | undefined): string {
@@ -15,6 +16,8 @@ function describe(status: string | undefined): string {
       return "The game window is minimized.";
     case "capture_stalled":
       return "Screen capture stopped responding and is being retried.";
+    case "adb_device_not_found":
+      return "The phone isn't reachable via ADB — check the cable and that USB debugging is still authorized.";
     default:
       return "The game window can't be found — it may be minimized, hidden, on another virtual desktop, or the screen may be locked.";
   }
@@ -64,7 +67,7 @@ export default function CaptureOutageBanner({
 
   return (
     <div className="capture-outage-banner" role="status" aria-live="polite">
-      <strong>Not capturing the game window</strong>
+      <strong>Not capturing the game</strong>
       <span>
         {describe(status)} Nothing has been recorded for{" "}
         {formatDuration(elapsed)}, and the values below are from before then.

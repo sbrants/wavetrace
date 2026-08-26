@@ -973,10 +973,21 @@ fn flush_completed_wave(run: &mut ActiveRun, wave: u32, tier: Option<u32>) -> Ve
     // when we have an activation count (^N). Attach the run consensus chance.
     let (golden_combo_chance, golden_combo_caret, golden_combo_multiplier) =
         if let Some(caret) = gc.caret_count {
+            // The multiplier sits at the end of the toast line, where it's more likely
+            // than the caret to be cut off by OCR (no per-poll retry budget left, or the
+            // toast fading) — this wave's own polls can easily flush with none ever seen.
+            // The run-level latch persists across wave boundaries and isn't reset here, so
+            // when its caret matches (proving it's the same activation, not a stale one),
+            // borrow its multiplier instead of losing it to this wave's read gap.
+            let multiplier = gc.multiplier.or_else(|| {
+                (run.last_golden_combo.caret_count == Some(caret))
+                    .then_some(run.last_golden_combo.multiplier)
+                    .flatten()
+            });
             (
                 consensus_gc_chance(run).or(gc.chance_percent),
                 Some(caret),
-                gc.multiplier,
+                multiplier,
             )
         } else {
             (None, None, None)
@@ -2296,6 +2307,51 @@ mod tests {
                     golden_combo_chance: None,
                     golden_combo_caret: None,
                     golden_combo_multiplier: None,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn golden_combo_multiplier_recovered_from_live_latch_when_wave_misses_it() {
+        // A toast's multiplier sits at the end of the line, where OCR is more likely to
+        // drop it than the caret just before it — the multiplier can go unread for an
+        // entire wave's polls even though the caret (same activation) keeps coming through.
+        let mut sm = RunStateMachine::new();
+        let mut hit = p(GameMode::Normal, 15, 1, CoinReading::Rate(100.0));
+        hit.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.12),
+            caret_count: Some(250),
+            multiplier: Some(0.46),
+        };
+        feed2(&mut sm, hit);
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.46));
+
+        // Wave 2: same activation (caret unchanged) still visible, but this poll's OCR
+        // missed the multiplier — the wave-2 accumulator alone would have none.
+        let mut same_activation_no_mult = p(GameMode::Normal, 15, 2, CoinReading::Rate(110.0));
+        same_activation_no_mult.golden_combo = GoldenComboReading {
+            seen: true,
+            chance_percent: Some(0.12),
+            caret_count: Some(250),
+            multiplier: None,
+        };
+        feed2(&mut sm, same_activation_no_mult);
+        // Live latch is unaffected — merge_with keeps the prior multiplier either way.
+        assert_eq!(sm.live_state().golden_combo_multiplier, Some(0.46));
+
+        // Flushing wave 2 should recover 0.46 from the live latch rather than persist
+        // None, since the matching caret proves it's the same activation.
+        let actions = feed2(&mut sm, p(GameMode::Normal, 15, 3, CoinReading::Rate(120.0)));
+        assert!(actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::Snapshot {
+                    wave: 2,
+                    golden_combo_caret: Some(250),
+                    golden_combo_multiplier: Some(0.46),
                     ..
                 }
             )

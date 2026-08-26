@@ -74,6 +74,10 @@ export interface Settings {
   save_pull_auto: boolean;
   /** Auto-pull interval seconds (min 15). */
   save_pull_auto_interval_secs: number;
+  /** Which live source the scanner captures frames from. */
+  capture_source: "window" | "adb_phone";
+  /** Preferred ADB capture device, same format as save_pull_device_id. Empty = auto. */
+  capture_adb_device_id: string;
 }
 
 export interface AdbDeviceInfo {
@@ -343,6 +347,8 @@ export const api = {
   getAppDataInfo: () => invoke<AppDataInfo>("get_app_data_info"),
   previewCapture: (target?: Settings["target_window"]) =>
     invoke<string>("preview_capture", { target: target ?? null }),
+  previewAdbCapture: (port: number | null, deviceId: string | null) =>
+    invoke<string>("preview_adb_capture", { port, deviceId }),
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   onScannerUpdate: (cb: (e: ScannerEvent) => void): Promise<UnlistenFn> =>
     listen<ScannerEvent>("scanner-update", (event) => cb(event.payload)),

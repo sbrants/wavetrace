@@ -1,12 +1,26 @@
 //! Window enumeration and capture via xcap.
 
 use base64::Engine;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use image::RgbaImage;
 use serde::Serialize;
 
+use crate::adb_save;
 use crate::settings::TargetWindow;
+
+/// Where the scanner captures frames from: a desktop window, or a phone/emulator over ADB.
+#[derive(Debug, Clone)]
+pub enum CaptureTarget {
+    Window(TargetWindow),
+    AdbPhone {
+        adb: PathBuf,
+        serial: String,
+        #[allow(dead_code)]
+        label: String,
+    },
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WindowInfo {
@@ -348,6 +362,10 @@ pub enum CaptureFailure {
     CaptureFailed,
     /// The capture call stopped returning and was given up on.
     TimedOut { after_ms: u64 },
+    /// No usable ADB / phone device to capture from (adb missing, or none detected).
+    AdbUnavailable { error: String },
+    /// A phone was reachable but the `screencap` pull or PNG decode failed.
+    AdbCaptureFailed { error: String },
 }
 
 impl CaptureFailure {
@@ -358,6 +376,8 @@ impl CaptureFailure {
             CaptureFailure::NoMatchingWindow => "no_matching_window",
             CaptureFailure::Minimized => "minimized",
             CaptureFailure::CaptureFailed => "capture_failed",
+            CaptureFailure::AdbUnavailable { .. } => "adb_unavailable",
+            CaptureFailure::AdbCaptureFailed { .. } => "adb_capture_failed",
             CaptureFailure::TimedOut { .. } => "timed_out",
         }
     }
@@ -375,7 +395,7 @@ pub struct TimeboxedCapture {
 }
 
 struct Worker {
-    request: std::sync::mpsc::Sender<TargetWindow>,
+    request: std::sync::mpsc::Sender<CaptureTarget>,
     reply: std::sync::mpsc::Receiver<Result<RgbaImage, CaptureFailure>>,
 }
 
@@ -406,7 +426,7 @@ impl TimeboxedCapture {
 
     pub fn capture(
         &mut self,
-        target: &TargetWindow,
+        target: &CaptureTarget,
         timeout: std::time::Duration,
     ) -> Result<RgbaImage, CaptureFailure> {
         if self.worker.is_none() {
@@ -454,7 +474,7 @@ impl TimeboxedCapture {
 
 impl Worker {
     fn spawn() -> Worker {
-        let (request_tx, request_rx) = std::sync::mpsc::channel::<TargetWindow>();
+        let (request_tx, request_rx) = std::sync::mpsc::channel::<CaptureTarget>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<RgbaImage, CaptureFailure>>();
         std::thread::Builder::new()
             .name("wavetrace-capture".into())
@@ -473,19 +493,89 @@ impl Worker {
     }
 }
 
-/// Capture the configured target window. User-picked windows are matched by exact
-/// title (and app name when saved); auto-detected targets use substring heuristics.
-pub fn capture_target(target: &TargetWindow) -> Option<RgbaImage> {
+/// Capture the configured target. User-picked windows are matched by exact title
+/// (and app name when saved); auto-detected window targets use substring heuristics;
+/// an ADB phone target is grabbed via `screencap`.
+pub fn capture_target(target: &CaptureTarget) -> Option<RgbaImage> {
     capture_target_detailed(target).ok()
 }
 
 /// Same as [`capture_target`] but reports why the capture produced no frame.
-pub fn capture_target_detailed(target: &TargetWindow) -> Result<RgbaImage, CaptureFailure> {
+pub fn capture_target_detailed(target: &CaptureTarget) -> Result<RgbaImage, CaptureFailure> {
+    match target {
+        CaptureTarget::Window(tw) => capture_window_detailed(tw),
+        CaptureTarget::AdbPhone { adb, serial, .. } => capture_adb_frame(adb, serial),
+    }
+}
+
+fn capture_window_detailed(target: &TargetWindow) -> Result<RgbaImage, CaptureFailure> {
     if target.user_selected {
         capture_by_exact_title_detailed(&target.title_substring, &target.process_name)
     } else {
         capture_by_title_detailed(&target.title_substring)
     }
+}
+
+/// Grab a single frame from a phone/emulator over ADB via `screencap`'s raw framebuffer
+/// dump. No mirroring app or install on the device is needed — `screencap` ships with the
+/// Android shell. Raw beats `-p` (PNG): PNG's on-device zlib encode costs the device real
+/// CPU time (competing with the game itself for cycles) and is slower end-to-end even
+/// though the raw payload is several times larger over the USB/adb pipe (measured ~600ms
+/// device-side and ~100ms faster round trip on a Pixel 9a).
+fn capture_adb_frame(adb: &Path, serial: &str) -> Result<RgbaImage, CaptureFailure> {
+    let bytes = adb_save::capture_screenshot(adb, serial)
+        .map_err(|error| CaptureFailure::AdbCaptureFailed { error })?;
+    let img =
+        decode_raw_screencap(&bytes).map_err(|error| CaptureFailure::AdbCaptureFailed { error })?;
+    if img.width() * img.height() < MIN_CAPTURE_AREA {
+        return Err(CaptureFailure::CaptureFailed);
+    }
+    Ok(img)
+}
+
+/// Android's `PixelFormat` values `screencap`'s raw header can report. Both lay out each
+/// pixel as 4 bytes R,G,B,X — `Rgbx8888`'s 4th byte is unused padding (its value is
+/// undefined, not necessarily 255) rather than a real alpha channel.
+const HAL_PIXEL_FORMAT_RGBA_8888: u32 = 1;
+const HAL_PIXEL_FORMAT_RGBX_8888: u32 = 2;
+
+/// Decode `screencap`'s raw (no `-p`) output: a little-endian `u32 width, u32 height,
+/// u32 format` header — plus, on newer Android versions, a trailing `u32 colorSpace` —
+/// followed by the raw framebuffer with no row padding. The header version isn't declared
+/// anywhere in the stream, so it's inferred from which header length makes the remaining
+/// byte count line up with `width * height * 4`.
+pub(crate) fn decode_raw_screencap(bytes: &[u8]) -> Result<RgbaImage, String> {
+    if bytes.len() < 12 {
+        return Err(format!("raw screencap output too short: {} bytes", bytes.len()));
+    }
+    let read_u32 = |off: usize| u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+    let width = read_u32(0);
+    let height = read_u32(4);
+    let format = read_u32(8);
+    if !matches!(format, HAL_PIXEL_FORMAT_RGBA_8888 | HAL_PIXEL_FORMAT_RGBX_8888) {
+        return Err(format!("unsupported raw screencap pixel format {format}"));
+    }
+    let pixel_bytes = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
+    let header_len = match bytes.len() - 12 {
+        n if n == pixel_bytes => 12,       // width, height, format
+        n if n == pixel_bytes + 4 => 16,   // + colorSpace
+        _ => {
+            return Err(format!(
+                "raw screencap size mismatch: {} bytes for {width}x{height}",
+                bytes.len()
+            ))
+        }
+    };
+    let mut pixels = bytes[header_len..].to_vec();
+    if format == HAL_PIXEL_FORMAT_RGBX_8888 {
+        for px in pixels.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+    }
+    RgbaImage::from_raw(width, height, pixels)
+        .ok_or_else(|| format!("raw screencap buffer size mismatch for {width}x{height}"))
 }
 
 /// Whether a live window matches a user-selected target (title equality, optional app).
@@ -658,7 +748,60 @@ pub fn encode_png_base64(img: &RgbaImage) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_our_app_window, window_matches_exact_target};
+    use super::{decode_raw_screencap, is_our_app_window, window_matches_exact_target};
+
+    fn raw_screencap_bytes(width: u32, height: u32, format: u32, with_color_space: bool) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&format.to_le_bytes());
+        if with_color_space {
+            bytes.extend_from_slice(&1u32.to_le_bytes());
+        }
+        for i in 0..(width * height) as usize {
+            let v = (i % 255) as u8;
+            bytes.extend_from_slice(&[v, v.wrapping_add(1), v.wrapping_add(2), 0xAB]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn decodes_legacy_header_without_color_space() {
+        let bytes = raw_screencap_bytes(4, 3, super::HAL_PIXEL_FORMAT_RGBA_8888, false);
+        let img = decode_raw_screencap(&bytes).expect("decode");
+        assert_eq!((img.width(), img.height()), (4, 3));
+        assert_eq!(img.get_pixel(0, 0).0, [0, 1, 2, 0xAB]);
+    }
+
+    #[test]
+    fn decodes_header_with_color_space() {
+        let bytes = raw_screencap_bytes(4, 3, super::HAL_PIXEL_FORMAT_RGBA_8888, true);
+        let img = decode_raw_screencap(&bytes).expect("decode");
+        assert_eq!((img.width(), img.height()), (4, 3));
+        assert_eq!(img.get_pixel(0, 0).0, [0, 1, 2, 0xAB]);
+    }
+
+    #[test]
+    fn rgbx_format_forces_opaque_alpha() {
+        let bytes = raw_screencap_bytes(2, 2, super::HAL_PIXEL_FORMAT_RGBX_8888, true);
+        let img = decode_raw_screencap(&bytes).expect("decode");
+        for px in img.pixels() {
+            assert_eq!(px.0[3], 255);
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_pixel_format() {
+        let bytes = raw_screencap_bytes(2, 2, 4 /* RGB_565 */, true);
+        assert!(decode_raw_screencap(&bytes).is_err());
+    }
+
+    #[test]
+    fn rejects_size_mismatch() {
+        let mut bytes = raw_screencap_bytes(4, 3, super::HAL_PIXEL_FORMAT_RGBA_8888, false);
+        bytes.truncate(bytes.len() - 4);
+        assert!(decode_raw_screencap(&bytes).is_err());
+    }
 
     #[test]
     fn our_app_window_ignores_windows_that_merely_mention_the_name() {

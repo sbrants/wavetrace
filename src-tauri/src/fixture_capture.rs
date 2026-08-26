@@ -193,7 +193,7 @@ fn write_png(path: &Path, img: &RgbaImage) -> Result<(), String> {
 }
 
 pub fn capture_once(target: &TargetWindow, label_detected: bool) -> Result<CaptureEntry, String> {
-    let frame = capture::capture_target(target).ok_or_else(|| {
+    let frame = capture::capture_target(&capture::CaptureTarget::Window(target.clone())).ok_or_else(|| {
         format!(
             "Window not found or too small: \"{}\". \
              Pick the emulator window in Settings (needs ~450×900+ pixels).",

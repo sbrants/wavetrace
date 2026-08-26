@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::{capture, db};
+use crate::{adb_save, capture, db};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TargetWindow {
@@ -14,6 +14,34 @@ pub struct TargetWindow {
     /// window by title (and app name when set), not by substring heuristics.
     #[serde(default)]
     pub user_selected: bool,
+}
+
+/// Which live source the scanner captures frames from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSourceKind {
+    /// A window/monitor on the PC desktop (xcap), the original behavior.
+    #[default]
+    Window,
+    /// A phone (or emulator) reachable over ADB, captured via `screencap`.
+    AdbPhone,
+}
+
+impl CaptureSourceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            CaptureSourceKind::Window => "window",
+            CaptureSourceKind::AdbPhone => "adb_phone",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "window" => Some(CaptureSourceKind::Window),
+            "adb_phone" => Some(CaptureSourceKind::AdbPhone),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +111,12 @@ pub struct Settings {
     /// Auto-pull interval in seconds (minimum 15).
     #[serde(default = "default_save_pull_auto_interval")]
     pub save_pull_auto_interval_secs: u32,
+    /// Which live source the scanner captures frames from.
+    #[serde(default)]
+    pub capture_source: CaptureSourceKind,
+    /// Preferred ADB capture device, same format as `save_pull_device_id`. Empty = auto.
+    #[serde(default)]
+    pub capture_adb_device_id: String,
 }
 
 fn default_true() -> bool {
@@ -119,6 +153,8 @@ impl Default for Settings {
             save_pull_dir: String::new(),
             save_pull_auto: false,
             save_pull_auto_interval_secs: default_save_pull_auto_interval(),
+            capture_source: CaptureSourceKind::default(),
+            capture_adb_device_id: String::new(),
         }
     }
 }
@@ -242,6 +278,14 @@ pub fn load(conn: &Connection) -> Settings {
             s.save_pull_auto_interval_secs = n.max(15);
         }
     }
+    if let Ok(Some(v)) = db::get_setting(conn, "capture_source") {
+        if let Some(kind) = CaptureSourceKind::parse(&v) {
+            s.capture_source = kind;
+        }
+    }
+    if let Ok(Some(v)) = db::get_setting(conn, "capture_adb_device_id") {
+        s.capture_adb_device_id = v;
+    }
     s
 }
 
@@ -297,6 +341,24 @@ pub fn resolve_target_window(conn: &Connection) -> Result<TargetWindow, String> 
         "No target window configured. Open Settings, pick the game/emulator window, and Save."
             .into(),
     )
+}
+
+/// Resolve whichever capture source is configured: a desktop window (existing
+/// behavior) or a phone/emulator over ADB.
+pub fn resolve_capture_target(conn: &Connection) -> Result<capture::CaptureTarget, String> {
+    let cfg = load(conn);
+    match cfg.capture_source {
+        CaptureSourceKind::Window => {
+            resolve_target_window(conn).map(capture::CaptureTarget::Window)
+        }
+        CaptureSourceKind::AdbPhone => {
+            let preferred = (!cfg.capture_adb_device_id.trim().is_empty())
+                .then_some(cfg.capture_adb_device_id.as_str());
+            let (adb, serial, label) =
+                adb_save::resolve_capture_device(None, preferred, true)?;
+            Ok(capture::CaptureTarget::AdbPhone { adb, serial, label })
+        }
+    }
 }
 
 pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
@@ -396,6 +458,8 @@ pub fn save(conn: &Connection, s: &Settings) -> rusqlite::Result<()> {
         "save_pull_auto_interval_secs",
         &s.save_pull_auto_interval_secs.max(15).to_string(),
     )?;
+    db::set_setting(conn, "capture_source", s.capture_source.as_str())?;
+    db::set_setting(conn, "capture_adb_device_id", &s.capture_adb_device_id)?;
     Ok(())
 }
 

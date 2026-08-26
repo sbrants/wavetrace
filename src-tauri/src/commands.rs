@@ -301,13 +301,17 @@ pub async fn has_resumable_run(state: State<'_, AppState>) -> Result<bool, Strin
     .await
 }
 
+/// Starting the scanner can resolve the capture target (ADB device discovery in
+/// particular means several real subprocess round trips) before it returns, so this
+/// runs off the command-handling thread rather than risking a frozen-looking UI while
+/// the frontend awaits the promise.
 #[tauri::command]
-pub fn start_scanner(
-    app: AppHandle,
-    state: State<AppState>,
-    mode: ScanStartMode,
-) -> Result<(), String> {
-    state.scanner.start(app, mode)
+pub async fn start_scanner(app: AppHandle, mode: ScanStartMode) -> Result<(), String> {
+    run_blocking("start_scanner", move || {
+        let state = app.state::<AppState>();
+        state.scanner.start(app.clone(), mode)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -611,8 +615,7 @@ pub async fn get_app_data_info() -> AppDataInfo {
 pub async fn game_save_status() -> crate::adb_save::GameSaveStatus {
     run_blocking("game_save_status", || {
         let s = conn().ok().map(|c| settings::load(&c)).unwrap_or_default();
-        let preferred = (!s.save_pull_device_id.trim().is_empty())
-            .then(|| s.save_pull_device_id.trim().to_string());
+        let preferred = crate::adb_save::preferred_device_from_settings(&s);
         Ok(crate::adb_save::probe_game_save(
             s.save_pull_adb_port,
             preferred.as_deref(),
@@ -647,8 +650,7 @@ pub async fn list_game_save_devices() -> Result<Vec<crate::adb_save::AdbDeviceIn
     run_blocking("list_game_save_devices", || {
         let s = conn()?;
         let s = settings::load(&s);
-        let preferred = (!s.save_pull_device_id.trim().is_empty())
-            .then(|| s.save_pull_device_id.trim().to_string());
+        let preferred = crate::adb_save::preferred_device_from_settings(&s);
         crate::adb_save::list_devices(s.save_pull_adb_port, preferred.as_deref(), true)
     })
     .await
@@ -914,8 +916,34 @@ fn preview_capture_blocking(target: Option<settings::TargetWindow>) -> Result<St
             .target_window
             .ok_or("No target window configured")?,
     };
-    let img = capture::capture_target(&target)
+    let img = capture::capture_target(&capture::CaptureTarget::Window(target))
         .ok_or("Window not found or minimized")?;
+    let bytes = crate::diagnostics::encode_preview_png(&img)
+        .ok_or("Failed to encode preview image")?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Capture a single frame from a phone/emulator over ADB and return it as a base64 PNG
+/// for Settings preview, mirroring [`preview_capture`] for the window source.
+#[tauri::command]
+pub async fn preview_adb_capture(
+    port: Option<u32>,
+    device_id: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_adb_capture_blocking(port, device_id))
+        .await
+        .map_err(|e| format!("preview task failed: {e}"))?
+}
+
+fn preview_adb_capture_blocking(port: Option<u32>, device_id: Option<String>) -> Result<String, String> {
+    let preferred = device_id.as_deref().filter(|s| !s.trim().is_empty());
+    let (adb, serial, label) = crate::adb_save::resolve_capture_device(port, preferred, true)?;
+    let img = capture::capture_target_detailed(&capture::CaptureTarget::AdbPhone {
+        adb,
+        serial,
+        label,
+    })
+    .map_err(|failure| format!("{failure:?}"))?;
     let bytes = crate::diagnostics::encode_preview_png(&img)
         .ok_or("Failed to encode preview image")?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))

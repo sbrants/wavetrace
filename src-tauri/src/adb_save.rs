@@ -103,7 +103,14 @@ impl PullWriteOptions {
     }
 }
 
-fn preferred_device_from_settings(s: &Settings) -> Option<String> {
+/// Preferred device for ADB operations. When the phone is the capture source, save-pull
+/// rides along on the same device rather than needing a separate pick — it's virtually
+/// always the same physical phone.
+pub(crate) fn preferred_device_from_settings(s: &Settings) -> Option<String> {
+    if s.capture_source == settings::CaptureSourceKind::AdbPhone {
+        let trimmed = s.capture_adb_device_id.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
     let trimmed = s.save_pull_device_id.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
@@ -548,49 +555,72 @@ fn run_adb(
         cmd.args(["-s", serial]);
     }
     cmd.args(args);
-    let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| format!("Failed to start adb: {e}"))?;
-    loop {
+
+    // Drain stdout/stderr on their own threads as they're produced. The OS pipe buffer
+    // (a few KB on Windows) is far smaller than e.g. a `screencap` PNG (1-2MB), so a
+    // child blocked writing while this function only polled `try_wait()` would deadlock
+    // until the timeout killed it.
+    let mut stdout_pipe = child.stdout.take();
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(out) = stdout_pipe.as_mut() {
+            out.read_to_end(&mut buf).ok();
+        }
+        buf
+    });
+    let mut stderr_pipe = child.stderr.take();
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(err) = stderr_pipe.as_mut() {
+            err.read_to_end(&mut buf).ok();
+        }
+        buf
+    });
+
+    let started = Instant::now();
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    out.read_to_end(&mut stdout).ok();
-                }
-                let mut stderr = Vec::new();
-                if let Some(mut err) = child.stderr.take() {
-                    err.read_to_end(&mut stderr).ok();
-                }
-                if !status.success() {
-                    let err = String::from_utf8_lossy(&stderr);
-                    let out = String::from_utf8_lossy(&stdout);
-                    let detail = if !err.trim().is_empty() {
-                        err.trim().to_string()
-                    } else {
-                        out.trim().to_string()
-                    };
-                    return Err(if detail.is_empty() {
-                        match status.code() {
-                            Some(code) => format!("adb {:?} failed (exit code: {code})", args),
-                            None => format!("adb {:?} failed (terminated by signal)", args),
-                        }
-                    } else {
-                        detail
-                    });
-                }
-                return Ok(stdout);
-            }
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if started.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    stdout_thread.join().ok();
+                    stderr_thread.join().ok();
                     return Err(format!("adb {:?} timed out", args));
                 }
                 std::thread::sleep(Duration::from_millis(40));
             }
-            Err(e) => return Err(format!("adb wait failed: {e}")),
+            Err(e) => {
+                stdout_thread.join().ok();
+                stderr_thread.join().ok();
+                return Err(format!("adb wait failed: {e}"));
+            }
         }
+    };
+
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+
+    if !status.success() {
+        let err = String::from_utf8_lossy(&stderr);
+        let out = String::from_utf8_lossy(&stdout);
+        let detail = if !err.trim().is_empty() {
+            err.trim().to_string()
+        } else {
+            out.trim().to_string()
+        };
+        return Err(if detail.is_empty() {
+            match status.code() {
+                Some(code) => format!("adb {:?} failed (exit code: {code})", args),
+                None => format!("adb {:?} failed (terminated by signal)", args),
+            }
+        } else {
+            detail
+        });
     }
+    Ok(stdout)
 }
 
 fn run_adb_text(
@@ -643,8 +673,19 @@ fn connect_and_list(
         }
     }
     let mut serials = list_online_serials(adb)?;
-    // Always try known hosts (custom port / preferred serial first) so a cold emulator becomes visible.
-    if serials.is_empty() || custom_port.is_some() || preferred.is_some() {
+    let preferred_already_online = match preferred {
+        Some(pref) if preferred_is_fingerprint => serials
+            .iter()
+            .any(|s| device_fingerprint(adb, s).as_deref() == Some(pref)),
+        Some(pref) => serials.iter().any(|s| s == pref),
+        None => false,
+    };
+    // Always try known hosts (custom port / preferred serial first) so a cold emulator
+    // becomes visible -- but skip the round trip when the requested device is already
+    // online (e.g. a USB phone that's authorized and listed immediately): each
+    // unreachable host in the probe list costs up to ADB_CONNECT_TIMEOUT_MS.
+    if !preferred_already_online && (serials.is_empty() || custom_port.is_some() || preferred.is_some())
+    {
         for host in &hosts {
             connect_host(adb, host);
         }
@@ -730,6 +771,46 @@ pub fn list_devices(
             }
         })
         .collect())
+}
+
+/// Resolve the ADB binary and the best-matching device serial to capture frames from,
+/// for the "Phone (ADB)" capture source. Reuses the same device discovery/ordering as
+/// [`list_devices`] and the save-pull feature, just picking the top match instead of
+/// listing every candidate.
+pub fn resolve_capture_device(
+    custom_port: Option<u32>,
+    preferred_device: Option<&str>,
+    allow_download: bool,
+) -> Result<(PathBuf, String, String), String> {
+    let adb = ensure_adb(allow_download)?;
+    let (serials, _) = connect_and_list(&adb, custom_port, preferred_device)?;
+    let serial = serials
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No device found via ADB. Connect a phone with USB debugging enabled and authorized.".to_string())?;
+    let fingerprint = device_fingerprint(&adb, &serial);
+    let label = device_label(&serial, fingerprint.as_deref());
+    Ok((adb, serial, label))
+}
+
+/// 25s, not the usual few-second ADB timeout: ADB serializes access per device, so a call
+/// made while the scanner is already mid-poll (e.g. Settings → Preview capture during an
+/// active run) has to wait its turn behind the scanner's own continuous capture stream
+/// rather than actually being stuck.
+const ADB_SCREENCAP_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Grab a single screenshot from a connected device via `screencap`, as its raw
+/// (uncompressed) framebuffer dump — skipping `-p`'s on-device PNG encode, which costs
+/// real CPU time competing with the game itself. Built into the Android shell — no APK
+/// install on the device required. See [`crate::capture::decode_raw_screencap`] for the
+/// header format this returns.
+pub fn capture_screenshot(adb: &Path, serial: &str) -> Result<Vec<u8>, String> {
+    run_adb(
+        adb,
+        Some(serial),
+        &["exec-out", "screencap"],
+        ADB_SCREENCAP_TIMEOUT,
+    )
 }
 
 fn remote_path_exists(adb: &Path, serial: &str, remote_path: &str) -> bool {

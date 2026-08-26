@@ -87,21 +87,28 @@ fn game_mode_label(mode: GameMode) -> &'static str {
     }
 }
 
-/// Capture the configured (or auto-resolved) game window and OCR it once.
+/// Capture the configured (or auto-resolved) capture source — a window or an ADB
+/// phone — and OCR it once.
 pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let settings = settings::load(&conn);
     let configured_target = settings.target_window.clone();
-    let (resolved_target, resolve_error) = match settings::resolve_target_window(&conn) {
-        Ok(tw) => (Some(tw.clone()), None),
-        Err(e) => (None, Some(e)),
-    };
+    let (resolved_target, resolve_error, capture_target) =
+        match settings::resolve_capture_target(&conn) {
+            Ok(capture::CaptureTarget::Window(tw)) => (
+                Some(tw.clone()),
+                None,
+                Some(capture::CaptureTarget::Window(tw)),
+            ),
+            Ok(adb @ capture::CaptureTarget::AdbPhone { .. }) => (None, None, Some(adb)),
+            Err(e) => (None, Some(e), None),
+        };
 
-    let Some(target) = resolved_target.clone() else {
+    let Some(target) = capture_target else {
         return Ok(TargetWindowProbeBundle {
             probe: TargetWindowProbe {
                 configured_target,
-                resolved_target: None,
+                resolved_target,
                 resolve_error,
                 window_found: false,
                 capture_ms: 0,
@@ -132,10 +139,16 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
     let img = match frame {
         Ok(img) => img,
         Err(failure) => {
+            let os_windows = match &target {
+                capture::CaptureTarget::Window(tw) => {
+                    crate::window_probe::describe_matching_windows(&tw.title_substring)
+                }
+                capture::CaptureTarget::AdbPhone { .. } => None,
+            };
             return Ok(TargetWindowProbeBundle {
                 probe: TargetWindowProbe {
                     configured_target,
-                    resolved_target: Some(target.clone()),
+                    resolved_target,
                     resolve_error,
                     window_found: false,
                     capture_ms,
@@ -152,9 +165,7 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
                     sample_lines: Vec::new(),
                     coin_lines: Vec::new(),
                     capture_failure: Some(failure.tag().to_string()),
-                    os_windows: crate::window_probe::describe_matching_windows(
-                        &target.title_substring,
-                    ),
+                    os_windows,
                 },
                 preview_png: None,
                 all_lines: Vec::new(),
@@ -188,7 +199,7 @@ pub fn probe_target_window() -> Result<TargetWindowProbeBundle, String> {
     Ok(TargetWindowProbeBundle {
         probe: TargetWindowProbe {
             configured_target,
-            resolved_target: Some(target),
+            resolved_target,
             resolve_error,
             window_found: true,
             capture_ms,

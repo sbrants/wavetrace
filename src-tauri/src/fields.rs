@@ -48,13 +48,23 @@ impl Default for FieldOcr {
 
 /// OCR tracked fields from the full window capture.
 pub fn ocr_all_fields(frame: &RgbaImage) -> FieldOcr {
-    ocr_all_fields_cancellable(frame, &|| true)
+    ocr_all_fields_cancellable(
+        frame,
+        &|| true,
+        ocr::DEFAULT_OCR_MAX_WIDTH,
+        ocr::DEFAULT_GC_MAX_INK,
+    )
 }
 
-/// Like [`ocr_all_fields`] but returns promptly when `should_continue` is false.
+/// Like [`ocr_all_fields`] but returns promptly when `should_continue` is false, and
+/// takes the pre-OCR downscale target width (see
+/// [`ocr::ocr_full_frame_located_with_max_width`]) and the GC "too busy" ink ceiling
+/// (see [`ocr::ocr_golden_combo_band_anchored_with_max_ink`]) explicitly.
 pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
     frame: &RgbaImage,
     should_continue: &F,
+    max_ocr_width: u32,
+    gc_max_ink: u32,
 ) -> FieldOcr {
     if !should_continue() {
         return FieldOcr::default();
@@ -62,7 +72,7 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
 
     let started = Instant::now();
     let full_started = Instant::now();
-    match ocr::ocr_full_frame_located(frame) {
+    match ocr::ocr_full_frame_located_with_max_width(frame, max_ocr_width) {
         Ok(located) => {
             let full_ms = full_started.elapsed().as_millis() as u64;
             let exit_bottom = ocr::exit_battle_bottom_norm(&located);
@@ -71,7 +81,7 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
             // GC is a floating yellow toast (rises and fades; Y shifts with skip/etc.).
             // Scan the toast travel corridor — full-frame downscale often misses it.
             let gc = if should_continue() {
-                ocr::ocr_golden_combo_band_anchored(frame, exit_bottom)
+                ocr::ocr_golden_combo_band_anchored_with_max_ink(frame, exit_bottom, gc_max_ink)
             } else {
                 GoldenComboBandOcr::default()
             };
@@ -144,17 +154,19 @@ pub fn ocr_all_fields_cancellable<F: Fn() -> bool>(
 
 /// GC toast band only — skips full-frame OCR. Used between full HUD polls.
 /// `exit_bottom_norm` should be the last known Exit Battle bottom from a full poll
-/// (falls back to the default toast corridor when `None`).
+/// (falls back to the default toast corridor when `None`). `gc_max_ink` is the "too
+/// busy to be a toast" ceiling — see [`ocr::ocr_golden_combo_band_anchored_with_max_ink`].
 pub fn ocr_gc_only_cancellable<F: Fn() -> bool>(
     frame: &RgbaImage,
     exit_bottom_norm: Option<f32>,
     should_continue: &F,
+    gc_max_ink: u32,
 ) -> FieldOcr {
     if !should_continue() {
         return FieldOcr::default();
     }
     let started = Instant::now();
-    let gc = ocr::ocr_golden_combo_band_anchored(frame, exit_bottom_norm);
+    let gc = ocr::ocr_golden_combo_band_anchored_with_max_ink(frame, exit_bottom_norm, gc_max_ink);
     FieldOcr {
         all_lines: gc.lines.clone(),
         gc_band_lines: gc.lines.clone(),

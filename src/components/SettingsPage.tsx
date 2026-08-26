@@ -243,7 +243,16 @@ export default function SettingsPage({
 
   const showPreview = async () => {
     try {
-      setPreview(await api.previewCapture(settings?.target_window ?? null));
+      if (settings?.capture_source === "adb_phone") {
+        setPreview(
+          await api.previewAdbCapture(
+            settings.save_pull_adb_port ?? null,
+            settings.capture_adb_device_id || null
+          )
+        );
+      } else {
+        setPreview(await api.previewCapture(settings?.target_window ?? null));
+      }
     } catch (e) {
       reportUiError(e, "Settings.previewCapture");
     }
@@ -321,6 +330,110 @@ export default function SettingsPage({
   return (
     <div className="settings">
       <AccountsSettings scannerRunning={scannerRunning} />
+      <section>
+        <h3>Capture source</h3>
+        <div className="row">
+          <label className="checkbox-inline">
+            <input
+              type="radio"
+              name="capture-source"
+              checked={settings.capture_source === "window"}
+              onChange={() =>
+                setSettings({ ...settings, capture_source: "window" })
+              }
+            />
+            PC window
+          </label>
+          <label className="checkbox-inline">
+            <input
+              type="radio"
+              name="capture-source"
+              checked={settings.capture_source === "adb_phone"}
+              onChange={() =>
+                setSettings({ ...settings, capture_source: "adb_phone" })
+              }
+            />
+            Phone (ADB)
+          </label>
+        </div>
+        {settings.capture_source === "adb_phone" && (
+          <p className="muted">
+            Captures a screenshot from the phone over USB every scan tick — no
+            app install on the phone needed. This is a still image per tick
+            (typically 0.2-1.5s over USB), so tracking is a bit less snappy
+            than a mirrored window.
+          </p>
+        )}
+      </section>
+
+      {settings.capture_source === "adb_phone" ? (
+        <section>
+          <h3>Phone</h3>
+          <div className="row">
+            <label htmlFor="capture-adb-device">
+              Device
+              <select
+                id="capture-adb-device"
+                value={settings.capture_adb_device_id}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    capture_adb_device_id: e.target.value,
+                  })
+                }
+              >
+                <option value="">Auto (first detected device)</option>
+                {(() => {
+                  const options = [...gameSaveDevices];
+                  if (
+                    settings.capture_adb_device_id &&
+                    !options.some(
+                      (d) =>
+                        (d.deviceId ?? d.serial) ===
+                        settings.capture_adb_device_id
+                    )
+                  ) {
+                    options.unshift({
+                      serial: settings.capture_adb_device_id,
+                      deviceId: settings.capture_adb_device_id,
+                      label: `${settings.capture_adb_device_id} (last selected — not currently listed)`,
+                    });
+                  }
+                  return options.map((d) => (
+                    <option key={d.deviceId ?? d.serial} value={d.deviceId ?? d.serial}>
+                      {d.label}
+                    </option>
+                  ));
+                })()}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={devicesBusy}
+              onClick={() => {
+                setDevicesBusy(true);
+                api
+                  .listGameSaveDevices()
+                  .then(setGameSaveDevices)
+                  .catch((e) => reportUiError(e, "Settings.listGameSaveDevices"))
+                  .finally(() => setDevicesBusy(false));
+              }}
+            >
+              {devicesBusy ? "Listing…" : "List devices"}
+            </button>
+          </div>
+          <div className="row">
+            <button onClick={showPreview}>Preview capture</button>
+          </div>
+          {preview && (
+            <img
+              className="preview"
+              src={`data:image/png;base64,${preview}`}
+              alt="capture preview"
+            />
+          )}
+        </section>
+      ) : (
       <section>
         <h3>Target window</h3>
         {screenAccess === "denied" && (
@@ -424,6 +537,7 @@ export default function SettingsPage({
           />
         )}
       </section>
+      )}
 
       {showDevTools && (
       <section>
@@ -666,6 +780,12 @@ export default function SettingsPage({
             Recheck
           </button>
         </div>
+        {settings.capture_source === "adb_phone" ? (
+          <p className="muted">
+            Using the same device as the Phone (ADB) capture source above
+            {settings.capture_adb_device_id ? ` (${settings.capture_adb_device_id})` : ""}.
+          </p>
+        ) : (
         <div className="row">
           <label htmlFor="save-pull-device">
             Preferred device
@@ -717,6 +837,7 @@ export default function SettingsPage({
             {devicesBusy ? "Listing…" : "List devices"}
           </button>
         </div>
+        )}
         <p className="muted" role="status" aria-live="polite">
           {gameSaveStatus?.detail ?? "Checking emulator…"}
           {settings.save_pull_auto

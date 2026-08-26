@@ -178,6 +178,7 @@ pub fn run() {
             commands::export_backup,
             commands::restore_backup,
             commands::preview_capture,
+            commands::preview_adb_capture,
             commands::probe_ocr,
             commands::copy_image_to_clipboard,
             commands::read_scanner_log,

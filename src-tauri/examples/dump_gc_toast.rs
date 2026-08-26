@@ -14,7 +14,7 @@ fn main() {
         process_name: String::new(),
         user_selected: false,
     };
-    let frame = capture::capture_target(&target).unwrap_or_else(|| {
+    let frame = capture::capture_target(&capture::CaptureTarget::Window(target)).unwrap_or_else(|| {
         eprintln!("Could not capture a window matching 'The Tower'.");
         std::process::exit(1);
     });

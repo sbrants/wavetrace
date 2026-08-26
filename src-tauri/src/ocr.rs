@@ -73,7 +73,19 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
 /// Full-frame OCR with line positions (normalized 0..1), used to anchor the GC strip.
 #[cfg(windows)]
 pub fn ocr_full_frame_located(img: &RgbaImage) -> Result<Vec<LocatedLine>, String> {
-    let dynamic = prepare_image(img);
+    ocr_full_frame_located_with_max_width(img, DEFAULT_OCR_MAX_WIDTH)
+}
+
+/// Like [`ocr_full_frame_located`], but with the pre-OCR downscale target width made
+/// explicit. A tighter width trades a little text sharpness for a real speedup on
+/// visually busy frames (e.g. a real device screenshot's FX detail) — see the caller in
+/// `scanner.rs` for why the ADB capture source uses a smaller value than the default.
+#[cfg(windows)]
+pub fn ocr_full_frame_located_with_max_width(
+    img: &RgbaImage,
+    max_width: u32,
+) -> Result<Vec<LocatedLine>, String> {
+    let dynamic = prepare_image(img, max_width);
     let rgba = dynamic.to_rgba8();
     let result = recognize_rgba8(&rgba)?;
     located_lines_from_result(&result, rgba.height())
@@ -108,8 +120,16 @@ const GC_TOAST_DEFAULT_EXIT: f32 = 0.35;
 /// Live toast hits were ≥~860 ink; raising from 400 skips sparse FX crumbs.
 const GC_YELLOW_MIN_INK_PIXELS: u32 = 800;
 /// Skip GC OCR when ink is huge — battlefield gold FX, not a toast-sized glyph run.
-/// Live hits topped out ~6.7k; above ~7k was miss/FX.
-const GC_YELLOW_MAX_INK_PIXELS: u32 = 7_000;
+/// Originally tuned to ~7k from an early sample where hits topped out ~6.7k. A live
+/// side-by-side of window and ADB capture against the *same* emulator (so content was
+/// controlled, not just capture method) showed this was never a capture-source effect —
+/// genuine hit ink scales with how visually loaded the game state is (deep wave, stacked
+/// upgrades/FX), and at a late-game state both sources saw hits well past 7k (up to
+/// ~16.4k on window, ~19.6k combined p99≈17.2k/max≈19.6k across 567 hits from both). One
+/// shared ceiling with real margin above that observed max, not a per-source split.
+const GC_YELLOW_MAX_INK_PIXELS: u32 = 20_000;
+/// Public handle on [`GC_YELLOW_MAX_INK_PIXELS`] for callers outside this module.
+pub const DEFAULT_GC_MAX_INK: u32 = GC_YELLOW_MAX_INK_PIXELS;
 /// Color backup only when yellow OCR is blank *and* ink is in the live toast cluster.
 /// Hits sit ~3.5k–6.5k; blank+out-of-band usually means FX crumbs, not a missed toast.
 const GC_COLOR_MIN_INK_PIXELS: u32 = 3_500;
@@ -163,6 +183,19 @@ pub fn ocr_golden_combo_band_anchored(
     img: &RgbaImage,
     exit_bottom_norm: Option<f32>,
 ) -> GoldenComboBandOcr {
+    ocr_golden_combo_band_anchored_with_max_ink(img, exit_bottom_norm, GC_YELLOW_MAX_INK_PIXELS)
+}
+
+/// Like [`ocr_golden_combo_band_anchored`], but with the "too busy to be a toast" ink
+/// ceiling made explicit. A real device's glow/bloom around the same toast text pushes
+/// its yellow-ink pixel count well above what the default ceiling (tuned against a
+/// flatter emulator render) allows — see the caller in `scanner.rs` for the measured
+/// gap between capture sources.
+pub fn ocr_golden_combo_band_anchored_with_max_ink(
+    img: &RgbaImage,
+    exit_bottom_norm: Option<f32>,
+    max_ink: u32,
+) -> GoldenComboBandOcr {
     let gate_started = Instant::now();
     let (y, h) = toast_corridor(exit_bottom_norm);
     let crop = crop_norm_region(img, GC_BAND_X, y, GC_BAND_W, h);
@@ -178,7 +211,7 @@ pub fn ocr_golden_combo_band_anchored(
             color_ms: 0,
         };
     }
-    if ink_pixels > GC_YELLOW_MAX_INK_PIXELS {
+    if ink_pixels > max_ink {
         return GoldenComboBandOcr {
             lines: Vec::new(),
             ink_pixels,
@@ -478,6 +511,17 @@ pub fn ocr_full_frame(img: &RgbaImage) -> Result<Vec<String>, String> {
         .into_iter()
         .map(|l| l.text)
         .collect())
+}
+
+/// The Tesseract fallback path crops fixed HUD regions rather than downscaling the
+/// whole frame, so there's no equivalent knob to tune here — the width is accepted for
+/// call-site parity with the Windows OCR path and ignored.
+#[cfg(not(windows))]
+pub fn ocr_full_frame_located_with_max_width(
+    img: &RgbaImage,
+    _max_width: u32,
+) -> Result<Vec<LocatedLine>, String> {
+    ocr_full_frame_located(img)
 }
 
 #[cfg(not(windows))]
@@ -859,16 +903,19 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
     Ok(bitmap)
 }
 
-/// Downscale large emulator frames so OCR stays responsive.
+/// Default pre-OCR downscale target width (the window capture path's value, and what
+/// every non-scanner caller — fixtures, diagnostics probes — gets by default).
+pub const DEFAULT_OCR_MAX_WIDTH: u32 = 900;
+
+/// Downscale large frames so OCR stays responsive.
 #[cfg(windows)]
-fn prepare_image(img: &RgbaImage) -> image::DynamicImage {
-    const MAX_WIDTH: u32 = 900;
-    if img.width() <= MAX_WIDTH {
+fn prepare_image(img: &RgbaImage, max_width: u32) -> image::DynamicImage {
+    if img.width() <= max_width {
         return image::DynamicImage::ImageRgba8(img.clone());
     }
-    let scale = MAX_WIDTH as f32 / img.width() as f32;
+    let scale = max_width as f32 / img.width() as f32;
     let new_h = ((img.height() as f32) * scale).round().max(1.0) as u32;
-    let resized = imageops::resize(img, MAX_WIDTH, new_h, imageops::FilterType::Triangle);
+    let resized = imageops::resize(img, max_width, new_h, imageops::FilterType::Triangle);
     image::DynamicImage::ImageRgba8(resized)
 }
 
