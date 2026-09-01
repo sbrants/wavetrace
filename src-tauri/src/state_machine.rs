@@ -258,10 +258,6 @@ impl DebouncedCoinRate {
         let Some(v) = value else {
             return self.confirmed;
         };
-        self.window.push_back(v);
-        while self.window.len() > COIN_MEDIAN_WINDOW {
-            self.window.pop_front();
-        }
         let same = self
             .candidate
             .map(|c| approx_same_rate(c, v))
@@ -269,8 +265,17 @@ impl DebouncedCoinRate {
         if same {
             self.count += 1;
         } else {
+            // A new candidate starts its own window — a stray misread from the
+            // previous (superseded) candidate must not linger and skew the
+            // median once this candidate gets confirmed. See
+            // `coin_rate_repeated_misread_does_not_corrupt_confirmed`.
             self.candidate = Some(v);
             self.count = 1;
+            self.window.clear();
+        }
+        self.window.push_back(v);
+        while self.window.len() > COIN_MEDIAN_WINDOW {
+            self.window.pop_front();
         }
         let needed = if self.is_outlier(v) { 3 } else { DEBOUNCE };
         if self.count >= needed {
@@ -295,6 +300,13 @@ impl DebouncedCoinRate {
         }
     }
 
+    /// A single ~6s poll shouldn't legitimately move the rate by more than a few
+    /// times — even a sudden Golden Combo multiplier activation ramps in, it
+    /// doesn't teleport. A jump past this band needs sustained confirmation
+    /// (`needed = 3`) rather than the fast 2-frame path. Previously this was
+    /// 0.02..=50.0, wide enough that a single dropped-decimal-point OCR misread
+    /// (e.g. "529.4T" read as "5294T", ~10x too large) sailed through as
+    /// "not an outlier" — see `coin_rate_repeated_misread_does_not_corrupt_confirmed`.
     fn is_outlier(&self, v: f64) -> bool {
         let Some(cur) = self.confirmed else {
             return false;
@@ -303,7 +315,7 @@ impl DebouncedCoinRate {
             return false;
         }
         let ratio = v / cur;
-        !(0.02..=50.0).contains(&ratio)
+        !(0.2..=5.0).contains(&ratio)
     }
 
     /// Latest rate for the dashboard; holds the last parseable reading between polls.
@@ -1430,14 +1442,44 @@ mod tests {
             p(GameMode::Normal, 12, 1, CoinReading::Rate(70.0e12)),
         );
         sm.poll(p(GameMode::Normal, 12, 1, CoinReading::Rate(71.0e12)));
-        // Outlier within the spike ratio (so it isn't gated as a 50× spike),
-        // but well off the trend — median should keep us near ~70T.
+        // A single garbled frame well off the trend — even gated as an outlier
+        // (needs 3 confirmations), the very next real reading should restore
+        // the trend rather than letting a lone bad frame linger.
         sm.poll(p(GameMode::Normal, 12, 1, CoinReading::Rate(5.0e12)));
         sm.poll(p(GameMode::Normal, 12, 1, CoinReading::Rate(72.0e12)));
         let reported = sm.live_state().coin_per_minute.unwrap();
         assert!(
             (60.0e12..=80.0e12).contains(&reported),
             "median should reject the 5T outlier, got {reported}"
+        );
+    }
+
+    /// Regression for a real ragchel-account log capture: OCR dropped the
+    /// decimal point on the coin-rate crop twice in a row (real "565.0T/min"
+    /// and "560.1T/min" read as "5650T" / "5601T", ~10x too large), and the
+    /// two misreads were within 5% of each other so the old debounce treated
+    /// them as a confirmed candidate — flipping the tracked rate to ~5.6q and
+    /// writing it to the run's history until a later real reading happened to
+    /// dilute a since-corrupted median back down. Neither fix alone is
+    /// sufficient: the tightened outlier band stops a single ~10x jump from
+    /// confirming in just 2 frames, and the per-candidate window stops a
+    /// figure from a *superseded* candidate polluting the next one's median.
+    #[test]
+    fn coin_rate_repeated_misread_does_not_corrupt_confirmed() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 15, 1, CoinReading::Rate(540.0e12)),
+        );
+        sm.poll(p(GameMode::Normal, 15, 2, CoinReading::Rate(529.4e12)));
+        sm.poll(p(GameMode::Normal, 15, 3, CoinReading::Rate(5294.0e12))); // dropped decimal
+        sm.poll(p(GameMode::Normal, 15, 4, CoinReading::Rate(562.0e12)));
+        sm.poll(p(GameMode::Normal, 15, 5, CoinReading::Rate(5650.0e12))); // dropped decimal
+        sm.poll(p(GameMode::Normal, 15, 6, CoinReading::Rate(5601.0e12))); // dropped decimal, ~same as previous
+        let reported = sm.live_state().coin_per_minute.unwrap();
+        assert!(
+            reported < 1.0e15,
+            "two similar dropped-decimal misreads must not confirm a ~10x spike, got {reported}"
         );
     }
 

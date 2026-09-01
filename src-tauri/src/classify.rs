@@ -262,11 +262,24 @@ fn extract_coin_second_min(lines: &[String], prefer_total: bool) -> CoinReading 
 
 /// When `/min` and `@` heuristics miss, scan for bare total-coin balances (e.g. `2.72q`).
 fn extract_coin_balance(lines: &[String]) -> CoinReading {
+    let stat_panel = on_upgrade_stat_panel(lines);
     let mut best: Option<(i32, CoinReading)> = None;
     for line in lines {
         if let Some(reading) = crate::parser::try_parse_balance_line(line) {
+            let has_icon = crate::parser::has_coin_icon_prefix(line);
+            // Upgrade/dissonance panels ("UTILITY UPGRADES", "Recovery", "Package",
+            // enemy Health/Attack Level, ...) show plenty of unrelated big numbers
+            // (upgrade costs, enemy stats) formatted just like a coin balance (e.g.
+            // a "Defense Absolute" stat OCR'd as "22.99Q"). A bare standalone number
+            // with no coin icon and no anchor has no way to tell those apart from
+            // the real balance, so don't guess at one from this screen — but the
+            // game's actual balance readout on these panels is a compound "X / Y"
+            // pair (e.g. "7.38q / 970.63T"), which stays a much stronger signal.
+            if stat_panel && !has_icon && !line.contains('/') {
+                continue;
+            }
             let mut score = 0;
-            if crate::parser::has_coin_icon_prefix(line) {
+            if has_icon {
                 score += 10;
             }
             if line.trim().chars().filter(|c| *c == '.').count() <= 1
@@ -280,6 +293,19 @@ fn extract_coin_balance(lines: &[String]) -> CoinReading {
         }
     }
     best.map(|(_, r)| r).unwrap_or(CoinReading::Unreadable)
+}
+
+/// Upgrade/dissonance stat overlay markers — lines here are costs, health bars
+/// and other scaling stats, not the coin balance.
+fn on_upgrade_stat_panel(lines: &[String]) -> bool {
+    lines.iter().any(|l| {
+        let lower = l.trim().to_lowercase();
+        lower.contains("upgrades")
+            || lower.contains("recovery")
+            || lower.contains("package")
+            || lower.contains("health level")
+            || lower.contains("attack level")
+    })
 }
 
 #[cfg(test)]
@@ -438,6 +464,33 @@ mod tests {
         let input = classify(&s(&["7.38q / 970.63T", "Tier 14", "Wave 450"]));
         assert_eq!(input.mode, GameMode::TotalCoin);
         assert_eq!(input.coin, CoinReading::Total(7.38e15));
+    }
+
+    /// Regression for a real ragchel-account log capture: the "UTILITY UPGRADES"
+    /// overlay shows a "Defense Absolute" stat OCR'd as "22.99Q" alongside the
+    /// actual (much smaller) coin balance "634.84B". With no coin icon and no
+    /// `/min` or `@` line, the old fallback picked "22.99Q" purely because it
+    /// scored equally to "634.84B" and appeared first in the line list — a
+    /// 22-septillion "balance" that then corrupted the run's average rate.
+    #[test]
+    fn upgrade_panel_stat_not_read_as_coin_balance() {
+        let input = classify(&s(&[
+            "$ 3.17M/min",
+            "View Perks",
+            "Enemy Health Level Skip",
+            "EXIT BATTLE",
+            "Defense Absolute",
+            "22.99Q",
+            "Tier 15",
+            "Wave 4072",
+            "634.84B",
+            "110.23T / 6.68T",
+            "UTILITY UPGRADES",
+            "Recovery",
+            "Amount",
+            "Package",
+        ]));
+        assert_eq!(input.coin, CoinReading::Unreadable);
     }
 
     #[test]
