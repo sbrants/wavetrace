@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.1] — 2026-09-01
+
+### Fixed
+
+- **Coin/min misread as a multi-quadrillion spike, then written into a run's history** — investigation of a real account's scanner logs found OCR occasionally drops the decimal point on the coin-rate crop (e.g. "565.0T" read as "5650T", ~10x too large); the debounce meant to reject exactly this kind of single-frame outlier allowed up to a 50x jump through on just 2 matching frames, and its median window could mix samples from an already-superseded misread into the next reading's confirmation. Tightened the outlier band and scoped the median to the current reading's own streak. Separately, a static floor was rejecting genuine coin rates from 1q up to 30q/min as presumed misreads of the total balance — real accounts legitimately sustain rates in that range — so that floor is gone in favor of the same history-aware check. A stat unrelated to the coin balance (e.g. a "Defense Absolute" value on the Utility Upgrades overlay) could also get picked up as the balance when no `/min` or coin-icon line was present; that fallback no longer guesses on those panels.
+
+### Changed
+
+- **Settings save button** was at the bottom of a long scrolling page and easy to miss, so edits got silently lost. Settings now autosave (debounced) as you change them, with a small "Saving…/Saved" indicator pinned to the top of the panel instead of a button at the bottom.
+- **History's coin/min outlier filter** (Below/Above) now accepts the same game-style shorthand it displays — `600T`, `1.5q`, `2Q` — instead of requiring the full number written out.
+
+---
+
 ## [0.4.0] — 2026-08-26
 
 ### Added
