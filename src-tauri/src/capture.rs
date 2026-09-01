@@ -570,7 +570,7 @@ pub(crate) fn decode_raw_screencap(bytes: &[u8]) -> Result<RgbaImage, String> {
     };
     let mut pixels = bytes[header_len..].to_vec();
     if format == HAL_PIXEL_FORMAT_RGBX_8888 {
-        for px in pixels.chunks_exact_mut(4) {
+        for px in pixels.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
     }
