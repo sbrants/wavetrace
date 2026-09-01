@@ -368,6 +368,38 @@ export function formatCoin(value: number | null): string {
   return `${parseFloat(num)}${suffixes[idx]}`;
 }
 
+/** Inverse of `formatCoin`'s suffix table. Case-sensitive to match the
+ * in-game notation (q=1e15, Q=1e18, s=1e21, S=1e24, ...). */
+const COIN_SUFFIX_MULTIPLIERS: Record<string, number> = {
+  "": 1,
+  K: 1e3,
+  M: 1e6,
+  B: 1e9,
+  T: 1e12,
+  q: 1e15,
+  Q: 1e18,
+  s: 1e21,
+  S: 1e24,
+  O: 1e27,
+  N: 1e30,
+  D: 1e33,
+};
+
+/** Parse an optional coin value with an optional game-style suffix (e.g.
+ * "600T", "1.5q") so filtering doesn't require typing out every zero; a
+ * plain number still works too. Blank → null, invalid → false. */
+export function parseOptionalCoin(raw: string): number | null | false {
+  const t = raw.trim();
+  if (!t) return null;
+  const match = /^(-?[\d.,]+)\s*([A-Za-z]*)$/.exec(t);
+  if (!match) return false;
+  const mult = COIN_SUFFIX_MULTIPLIERS[match[2]];
+  if (mult === undefined) return false;
+  const n = Number(match[1].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return false;
+  return n * mult;
+}
+
 /** Format Golden Combo HUD fields (`0.03% ^166 = x0.05`). */
 export function formatGoldenCombo(
   chance: number | null | undefined,

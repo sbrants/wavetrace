@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatAvgGoldenComboCaret, formatCoin, formatGoldenCombo, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
+import { api, formatAvgGoldenComboCaret, formatCoin, formatGoldenCombo, parseOptionalCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
 import {
   buildCompareChartDataByWave,
   applyCompareChartSmoothing,
@@ -628,11 +628,14 @@ export default function History() {
       (s) => s.coin_per_minute,
       coinOutlierBelow,
       coinOutlierAbove,
-      (s) => s.id
+      (s) => s.id,
+      parseOptionalCoin
     );
     if (ids === false) {
       reportUiError(
-        new Error("Enter valid Below / Above numbers (leave a side blank to ignore it)."),
+        new Error(
+          'Enter valid Below / Above coin values, e.g. "600T" or "1.5q" (leave a side blank to ignore it).'
+        ),
         "History"
       );
       return;
@@ -1640,6 +1643,7 @@ export default function History() {
                   onBelowChange={setCoinOutlierBelow}
                   onAboveChange={setCoinOutlierAbove}
                   onSelect={selectCoinOutliers}
+                  placeholder="e.g. 600T"
                 />
                 {chartSelectMode && (
                   <span className="muted">
@@ -2064,10 +2068,11 @@ function idsOutsideBounds<T>(
   getValue: (row: T) => number | null | undefined,
   belowRaw: string,
   aboveRaw: string,
-  getId: (row: T) => string
+  getId: (row: T) => string,
+  parse: (raw: string) => number | null | false = parseOptionalNumber
 ): Set<string> | false {
-  const below = parseOptionalNumber(belowRaw);
-  const above = parseOptionalNumber(aboveRaw);
+  const below = parse(belowRaw);
+  const above = parse(aboveRaw);
   if (below === false || above === false) {
     return false;
   }
@@ -2098,6 +2103,7 @@ function OutlierQuickSelect({
   onBelowChange,
   onAboveChange,
   onSelect,
+  placeholder = "—",
 }: {
   valueLabel: string;
   below: string;
@@ -2105,6 +2111,7 @@ function OutlierQuickSelect({
   onBelowChange: (value: string) => void;
   onAboveChange: (value: string) => void;
   onSelect: () => void;
+  placeholder?: string;
 }) {
   return (
     <div
@@ -2120,7 +2127,7 @@ function OutlierQuickSelect({
           value={below}
           onChange={(e) => onBelowChange(e.target.value)}
           aria-label={`Select when ${valueLabel} is below`}
-          placeholder="—"
+          placeholder={placeholder}
         />
       </label>
       <label className="outlier-quick-label">
@@ -2132,7 +2139,7 @@ function OutlierQuickSelect({
           value={above}
           onChange={(e) => onAboveChange(e.target.value)}
           aria-label={`Select when ${valueLabel} is above`}
-          placeholder="—"
+          placeholder={placeholder}
         />
       </label>
       <button type="button" onClick={onSelect}>
