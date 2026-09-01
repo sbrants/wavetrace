@@ -1135,6 +1135,18 @@ tbody tr.selected {
   margin-bottom: 16px;
 }
 
+.settings-autosave-status {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  min-height: 20px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  pointer-events: none;
+}
+
 .settings code {
   overflow-wrap: anywhere;
 }

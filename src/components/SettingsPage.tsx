@@ -80,7 +80,12 @@ export default function SettingsPage({
   const [screenAccess, setScreenAccess] =
     useState<ScreenCaptureAccess>("not_required");
   const [preview, setPreview] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const isFirstSettingsLoad = useRef(true);
+  const saveTimeoutRef = useRef<number | undefined>(undefined);
+  const savedIndicatorTimeoutRef = useRef<number | undefined>(undefined);
   const [probe, setProbe] = useState<Awaited<ReturnType<typeof api.probeOcr>> | null>(
     null
   );
@@ -190,16 +195,44 @@ export default function SettingsPage({
     return () => window.clearInterval(id);
   }, [probing]);
 
+  const persistSettings = async (next: Settings) => {
+    setSaveState("saving");
+    try {
+      await api.saveSettings(next);
+      window.dispatchEvent(new Event("wavetrace-settings-saved"));
+      setSaveState("saved");
+      window.clearTimeout(savedIndicatorTimeoutRef.current);
+      savedIndicatorTimeoutRef.current = window.setTimeout(
+        () => setSaveState((s) => (s === "saved" ? "idle" : s)),
+        1500
+      );
+    } catch (e) {
+      reportUiError(e, "Settings.autosave", { alert: false });
+      setSaveState("error");
+    }
+  };
+
+  // Autosave: debounce so a burst of edits (typing, dragging a slider) doesn't
+  // fire one save per keystroke, then persist. Skips the very first settings
+  // load so opening the page never writes back the defaults it just read.
+  useEffect(() => {
+    if (!settings) return;
+    if (isFirstSettingsLoad.current) {
+      isFirstSettingsLoad.current = false;
+      return;
+    }
+    setSaveState("saving");
+    window.clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = window.setTimeout(() => {
+      void persistSettings(settings);
+    }, 400);
+    return () => window.clearTimeout(saveTimeoutRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
   if (!settings) return <p className="muted">Loading…</p>;
 
   const ntfyWaveWarning = ntfyWaveMilestoneWarning(settings);
-
-  const save = async () => {
-    await api.saveSettings(settings);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    window.dispatchEvent(new Event("wavetrace-settings-saved"));
-  };
 
   const generateDebugPackage = async () => {
     setDebugBusy(true);
@@ -223,7 +256,10 @@ export default function SettingsPage({
     setNtfyBusy(true);
     setNtfyStatus(null);
     try {
-      await api.saveSettings(settings);
+      // Flush any pending debounced autosave first so the topic just typed
+      // is what the test actually sends to.
+      window.clearTimeout(saveTimeoutRef.current);
+      await persistSettings(settings);
       await api.sendTestNtfy();
       setNtfyStatus("Test sent — check the ntfy app on your phone.");
       await refreshNtfyStatus();
@@ -329,6 +365,19 @@ export default function SettingsPage({
 
   return (
     <div className="settings">
+      <div
+        className="settings-autosave-status"
+        role="status"
+        aria-live="polite"
+      >
+        {saveState === "saving" && <span className="muted">Saving…</span>}
+        {saveState === "saved" && <span className="saved">Saved ✓</span>}
+        {saveState === "error" && (
+          <span className="error">
+            Couldn't save settings — check the app log and try again.
+          </span>
+        )}
+      </div>
       <AccountsSettings scannerRunning={scannerRunning} />
       <section>
         <h3>Capture source</h3>
@@ -660,8 +709,7 @@ export default function SettingsPage({
           Enable game save pull
         </label>
         <p className="muted" style={{ marginTop: 0 }}>
-          Click <strong>Save</strong> at the bottom for header/auto-pull changes
-          to apply.
+          Header/auto-pull changes apply automatically.
         </p>
         <label className="checkbox-inline">
           <input
@@ -1186,16 +1234,6 @@ export default function SettingsPage({
         </>
       )}
 
-      <div className="toolbar">
-        <button className="primary" onClick={save}>
-          Save settings
-        </button>
-        {saved && (
-          <span className="saved" role="status" aria-live="polite">
-            Saved ✓
-          </span>
-        )}
-      </div>
     </div>
   );
 }
