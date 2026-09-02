@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.2] — 2026-09-01
+
+### Fixed
+
+- **Farming runs sometimes tagged as dissonance** — the dissonance classification was the only run-tagging signal that committed from a single frame instead of requiring repeated agreement like tier/wave/coin/min already do, and once set it's sticky for the whole run — so one bad read anywhere during a farming run could permanently mislabel it. Now requires 2 consecutive agreeing polls. Also closed a likely source of those bad reads: the game's "Dissonant Echo" lab/menu screen (browsable mid-farm, not a run type) was guarded by matching the literal word "echo", but OCR routinely drops whole words — a dropped "Echo" could combine with an unrelated category word elsewhere on screen into a false dissonance tag.
+
+### Changed
+
+- **Dashboard** now notes that every run is saved automatically and stays viewable in History, next to the chart's snapshot count — several people didn't realize this and were manually screenshotting the chart before assuming it'd be lost.
+
+---
+
 ## [0.4.1] — 2026-09-01
 
 ### Fixed
