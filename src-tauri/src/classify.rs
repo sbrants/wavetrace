@@ -87,13 +87,21 @@ fn detect_dissonance(lines: &[String]) -> Option<DissonanceKind> {
         }
     }
 
+    // A bare "dissonant" (no "run"/"mode" companion) is the exact shape OCR
+    // produces by dropping "Echo" from "Dissonant Echo" — a lab/menu screen
+    // reachable mid-farm, not a run type — so it's excluded rather than
+    // treated as its own marker. The "-" guard is a second layer for the same
+    // screen: if OCR drops "Echo" but keeps the rest of the line (e.g.
+    // "Dissonant - Utility"), the explicit "echo" check above can't catch it
+    // since the word itself is gone, but real run-type banners ("Dissonant
+    // Attack", "Dissonant Run") never carry a dash.
     let frame_marker = lines.iter().any(|line| {
         let lower = line.trim().to_lowercase();
         (lower.contains("dissonant") || lower.contains("dissonance") || lower.contains("dissident"))
             && !lower.contains("echo")
+            && !lower.contains('-')
             && (lower.contains("run")
                 || lower.contains("mode")
-                || lower == "dissonant"
                 || lower.starts_with("dissonant "))
     });
 
@@ -392,6 +400,19 @@ mod tests {
             "Wave 4072",
         ]));
         assert_eq!(input.dissonance, None);
+    }
+
+    /// OCR dropping the word "Echo" from the lab/menu screen above must not
+    /// turn it into a false dissonance-run read either — whether the whole
+    /// line collapses to a bare "Dissonant", or the rest of the line survives
+    /// with just "Echo" missing.
+    #[test]
+    fn dissonant_echo_lab_survives_ocr_dropping_the_word_echo() {
+        let bare = classify(&s(&["Dissonant", "Tier 14", "Wave 4072", "Utility"]));
+        assert_eq!(bare.dissonance, None);
+
+        let dash = classify(&s(&["Dissonant - Utility", "Tier 14", "Wave 4072"]));
+        assert_eq!(dash.dissonance, None);
     }
 
     #[test]

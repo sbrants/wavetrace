@@ -239,6 +239,49 @@ impl Debounced {
     }
 }
 
+/// Same debounce shape as `Debounced`, for the dissonance-kind classification.
+/// Unlike tier/wave/coin, a run's dissonance tag used to commit from a single
+/// frame — one OCR/icon misread on an unrelated screen (e.g. "Dissonant Echo",
+/// the lab/menu, with "Echo" dropped by OCR) could mislabel an entire farming
+/// run for good, since the tag is sticky for the run's whole lifetime.
+#[derive(Default)]
+struct DebouncedDissonance {
+    candidate: Option<DissonanceKind>,
+    count: u32,
+    confirmed: Option<DissonanceKind>,
+}
+
+impl DebouncedDissonance {
+    fn feed(&mut self, value: Option<DissonanceKind>) -> Option<DissonanceKind> {
+        let Some(v) = value else {
+            return self.confirmed;
+        };
+        if self.candidate == Some(v) {
+            self.count += 1;
+        } else {
+            self.candidate = Some(v);
+            self.count = 1;
+        }
+        if self.count >= DEBOUNCE {
+            self.confirmed = Some(v);
+        }
+        self.confirmed
+    }
+
+    /// Immediate, undebounced set — for a manually-triggered "New Run", the
+    /// currently visible screen is trusted right away since there's no next
+    /// poll to debounce against.
+    fn set(&mut self, value: DissonanceKind) {
+        self.candidate = Some(value);
+        self.count = DEBOUNCE;
+        self.confirmed = Some(value);
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Recent readings retained for the outlier-resistant median.
 const COIN_MEDIAN_WINDOW: usize = 5;
 
@@ -532,7 +575,7 @@ pub struct RunStateMachine {
     last_seen_coin: Option<f64>,
     last_mode: GameMode,
     tournament_seen: bool,
-    dissonance_seen: Option<DissonanceKind>,
+    dissonance_seen: DebouncedDissonance,
     /// Consecutive polls without a readable coin/min rate
     /// (total-coin balance, or unreadable OCR e.g. crash/black screen).
     consecutive_total_coin_polls: u32,
@@ -564,7 +607,7 @@ impl RunStateMachine {
             last_seen_coin: None,
             last_mode: GameMode::Unknown,
             tournament_seen: false,
-            dissonance_seen: None,
+            dissonance_seen: DebouncedDissonance::default(),
             consecutive_total_coin_polls: 0,
             last_skip_multiplier: None,
             last_wave_delta: None,
@@ -620,13 +663,14 @@ impl RunStateMachine {
         if input.mode == GameMode::Tournament {
             self.tournament_seen = true;
         }
-        if let Some(kind) = input.dissonance {
-            self.dissonance_seen = Some(kind);
-        }
+        self.dissonance_seen.feed(input.dissonance);
     }
 
+    /// Manual "New Run": trusts a single icon-detection snapshot of the
+    /// currently visible screen immediately — the user just triggered this
+    /// deliberately, there's no next poll to debounce against.
     pub fn absorb_dissonance(&mut self, kind: DissonanceKind) {
-        self.dissonance_seen = Some(kind);
+        self.dissonance_seen.set(kind);
     }
 
     /// User clicked "New Run": close any active run; the next confirmed
@@ -644,7 +688,7 @@ impl RunStateMachine {
                 self.last_coin_rate.or(self.last_seen_coin),
             ));
         }
-        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen);
+        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen.confirmed);
         // Forget confirmed wave so the next confirmed reading can start a run
         // even if it is > 1.
         self.wave = Debounced::default();
@@ -700,7 +744,7 @@ impl RunStateMachine {
         if self.run.is_some() {
             return Vec::new();
         }
-        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen);
+        let run_type = resolve_run_type(self.tournament_seen, self.dissonance_seen.confirmed);
         self.run = Some(new_active_run(run_type));
         let mut actions = vec![Action::StartRun { run_type }];
         if let Some(wave) = self.wave.confirmed.or(self.last_seen_wave) {
@@ -723,9 +767,7 @@ impl RunStateMachine {
         if input.mode == GameMode::Tournament {
             self.tournament_seen = true;
         }
-        if let Some(kind) = input.dissonance {
-            self.dissonance_seen = Some(kind);
-        }
+        self.dissonance_seen.feed(input.dissonance);
 
         // Coin rate only updates from a /min reading (normal / intro_sprint).
         // Total balances never overwrite the rate (Goal.md total_coin rules).
@@ -777,7 +819,7 @@ impl RunStateMachine {
             // before the game actually shows wave 1 again.
             self.wave = Debounced::default();
             self.tournament_seen = false;
-            self.dissonance_seen = None;
+            self.dissonance_seen.reset();
             return actions;
         }
 
@@ -836,8 +878,10 @@ impl RunStateMachine {
                     None => {
                         // A run starts when wave 1 is confirmed (Goal.md run lifecycle).
                         if wave == 1 {
-                            let run_type =
-                                resolve_run_type(self.tournament_seen, self.dissonance_seen);
+                            let run_type = resolve_run_type(
+                                self.tournament_seen,
+                                self.dissonance_seen.confirmed,
+                            );
                             actions.push(Action::StartRun { run_type });
                             // Keep debounced coin rate — polls toward wave 1 already
                             // established the current /min for snapshots.
@@ -856,10 +900,15 @@ impl RunStateMachine {
                                 final_wave,
                                 self.last_coin_rate.or(self.last_seen_coin),
                             ));
-                            let run_type =
-                                resolve_run_type(self.tournament_seen, self.dissonance_seen);
+                            let run_type = resolve_run_type(
+                                self.tournament_seen,
+                                self.dissonance_seen.confirmed,
+                            );
                             self.tournament_seen = run_type == RunType::Tournament;
-                            self.dissonance_seen = run_type.dissonance_kind();
+                            match run_type.dissonance_kind() {
+                                Some(kind) => self.dissonance_seen.set(kind),
+                                None => self.dissonance_seen.reset(),
+                            }
                             actions.push(Action::StartRun { run_type });
                             self.reset_coin_tracking();
                             self.run = Some(new_active_run(run_type));
@@ -1656,6 +1705,31 @@ mod tests {
         assert!(actions.contains(&Action::StartRun {
             run_type: RunType::DissonanceAttack
         }));
+    }
+
+    /// Regression: a single spurious dissonance read (e.g. OCR dropping "Echo"
+    /// from "Dissonant Echo", the lab/menu you can browse mid-farm, leaving a
+    /// bare "Dissonant" line that combines with an unrelated "Utility"/"Attack"
+    /// label elsewhere on screen) must not survive to tag the whole run —
+    /// dissonance now needs to repeat before being trusted, same as
+    /// tier/wave/coin already do.
+    #[test]
+    fn single_frame_dissonance_misread_does_not_mislabel_farming_run() {
+        let mut sm = RunStateMachine::new();
+        sm.poll(p_dissonance(
+            GameMode::Normal,
+            14,
+            1,
+            CoinReading::Rate(1e12),
+            DissonanceKind::Attack,
+        ));
+        let actions = feed2(&mut sm, p(GameMode::Normal, 14, 1, CoinReading::Rate(1e12)));
+        assert!(
+            actions.contains(&Action::StartRun {
+                run_type: RunType::Farming
+            }),
+            "a single unconfirmed dissonance read must not tag the run: {actions:?}"
+        );
     }
 
     #[test]
