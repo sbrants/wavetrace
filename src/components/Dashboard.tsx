@@ -142,6 +142,7 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
                 ` · chart shows ${chartSnapshots.length} sampled snapshot points`}
               {skipTotal > chartWaveSkips.length &&
                 ` · ${chartWaveSkips.length} of ${skipTotal} skips sampled for chart`}
+              {" · saved automatically — every run's chart stays in History"}
             </span>
           </div>
           <div className="chart-card-actions">
