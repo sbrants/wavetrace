@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.4] — 2026-09-03
+
+### Added
+
+- **Sortable columns in History** — the runs list and the run-detail tables (Coin/min, GC activations, Wave skips) now sort by clicking any column header, ascending/descending, with blank values sorted last.
+
+---
+
 ## [0.4.3] — 2026-09-03
 
 ### Fixed

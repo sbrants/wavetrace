@@ -22,10 +22,49 @@ import { setCompareSessionActive } from "../notificationCapture";
 
 type SortKey =
   | "started_at"
+  | "duration"
+  | "run_type"
   | "final_wave"
   | "peak_tier"
   | "avg_coin_per_minute"
-  | "avg_golden_combo_caret";
+  | "avg_golden_combo_caret"
+  | "snapshot_count"
+  | "comment";
+
+/** Resolves a run's value for a sort key; "duration" is derived (ongoing runs use "now"). */
+function runSortValue(r: RunRow, key: SortKey): number | string | null {
+  if (key === "duration") {
+    const end = r.ended_at ? +new Date(r.ended_at) : Date.now();
+    return end - +new Date(r.started_at);
+  }
+  return r[key];
+}
+
+type CoinSortKey = "wave" | "tier" | "coin_per_minute" | "recorded_at";
+type GcSortKey =
+  | "wave"
+  | "golden_combo_chance"
+  | "golden_combo_caret"
+  | "golden_combo_multiplier"
+  | "recorded_at";
+type SkipSortKey = "at_wave" | "skipped_count" | "coin_per_minute" | "recorded_at";
+
+/** Sorts a copy of `items` by `getValue`, keeping nulls last regardless of direction. */
+function sortByValue<T>(
+  items: T[],
+  getValue: (item: T) => number | string | null,
+  asc: boolean
+): T[] {
+  return [...items].sort((a, b) => {
+    const av = getValue(a);
+    const bv = getValue(b);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return asc ? cmp : -cmp;
+  });
+}
 
 const COMPARE_COLORS = [
   "#4cc2ff",
@@ -113,6 +152,12 @@ export default function History() {
   const [gcEditChance, setGcEditChance] = useState("");
   const [gcEditCaret, setGcEditCaret] = useState("");
   const [gcEditMultiplier, setGcEditMultiplier] = useState("");
+  const [coinSortKey, setCoinSortKey] = useState<CoinSortKey>("wave");
+  const [coinSortAsc, setCoinSortAsc] = useState(true);
+  const [gcSortKey, setGcSortKey] = useState<GcSortKey>("wave");
+  const [gcSortAsc, setGcSortAsc] = useState(true);
+  const [skipSortKey, setSkipSortKey] = useState<SkipSortKey>("at_wave");
+  const [skipSortAsc, setSkipSortAsc] = useState(true);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
@@ -223,12 +268,7 @@ export default function History() {
     gcRowRefs.current.clear();
   }, [selected?.id]);
 
-  const sorted = [...runs].sort((a, b) => {
-    const av = a[sortKey] ?? "";
-    const bv = b[sortKey] ?? "";
-    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-    return sortAsc ? cmp : -cmp;
-  });
+  const sorted = sortByValue(runs, (r) => runSortValue(r, sortKey), sortAsc);
 
   const totalRuns = sorted.length;
   const totalPages = Math.max(1, Math.ceil(totalRuns / pageSize));
@@ -472,6 +512,60 @@ export default function History() {
   const gcSnapshots = useMemo(
     () => snapshots.filter(snapshotHasGoldenCombo),
     [snapshots]
+  );
+
+  const toggleCoinSort = (key: CoinSortKey) => {
+    if (key === coinSortKey) setCoinSortAsc(!coinSortAsc);
+    else {
+      setCoinSortKey(key);
+      setCoinSortAsc(true);
+    }
+  };
+
+  const toggleGcSort = (key: GcSortKey) => {
+    if (key === gcSortKey) setGcSortAsc(!gcSortAsc);
+    else {
+      setGcSortKey(key);
+      setGcSortAsc(true);
+    }
+  };
+
+  const toggleSkipSort = (key: SkipSortKey) => {
+    if (key === skipSortKey) setSkipSortAsc(!skipSortAsc);
+    else {
+      setSkipSortKey(key);
+      setSkipSortAsc(true);
+    }
+  };
+
+  const sortedSnapshots = useMemo(
+    () =>
+      sortByValue(
+        snapshots,
+        (s) => s[coinSortKey],
+        coinSortAsc
+      ),
+    [snapshots, coinSortKey, coinSortAsc]
+  );
+
+  const sortedGcSnapshots = useMemo(
+    () =>
+      sortByValue(
+        gcSnapshots,
+        (s) => s[gcSortKey],
+        gcSortAsc
+      ),
+    [gcSnapshots, gcSortKey, gcSortAsc]
+  );
+
+  const sortedWaveSkips = useMemo(
+    () =>
+      sortByValue(
+        waveSkips,
+        (s) => s[skipSortKey],
+        skipSortAsc
+      ),
+    [waveSkips, skipSortKey, skipSortAsc]
   );
 
   const selectedGcWaves = useMemo(
@@ -1169,8 +1263,18 @@ export default function History() {
               sortAsc={sortAsc}
               onSort={() => toggleSort("started_at")}
             />
-            <th scope="col">Duration</th>
-            <th scope="col">Type</th>
+            <SortableTh
+              label="Duration"
+              active={sortKey === "duration"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("duration")}
+            />
+            <SortableTh
+              label="Type"
+              active={sortKey === "run_type"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("run_type")}
+            />
             <SortableTh
               label="Tier"
               active={sortKey === "peak_tier"}
@@ -1195,8 +1299,18 @@ export default function History() {
               sortAsc={sortAsc}
               onSort={() => toggleSort("avg_golden_combo_caret")}
             />
-            <th scope="col">Snapshots</th>
-            <th scope="col">Comment</th>
+            <SortableTh
+              label="Snapshots"
+              active={sortKey === "snapshot_count"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("snapshot_count")}
+            />
+            <SortableTh
+              label="Comment"
+              active={sortKey === "comment"}
+              sortAsc={sortAsc}
+              onSort={() => toggleSort("comment")}
+            />
           </tr>
         </thead>
         <tbody>
@@ -1684,15 +1798,35 @@ export default function History() {
                         aria-label="Select all coin/min snapshots"
                       />
                     </th>
-                    <th>Wave</th>
-                    <th>Tier</th>
-                    <th>Coin/min</th>
-                    <th>Recorded</th>
+                    <SortableTh
+                      label="Wave"
+                      active={coinSortKey === "wave"}
+                      sortAsc={coinSortAsc}
+                      onSort={() => toggleCoinSort("wave")}
+                    />
+                    <SortableTh
+                      label="Tier"
+                      active={coinSortKey === "tier"}
+                      sortAsc={coinSortAsc}
+                      onSort={() => toggleCoinSort("tier")}
+                    />
+                    <SortableTh
+                      label="Coin/min"
+                      active={coinSortKey === "coin_per_minute"}
+                      sortAsc={coinSortAsc}
+                      onSort={() => toggleCoinSort("coin_per_minute")}
+                    />
+                    <SortableTh
+                      label="Recorded"
+                      active={coinSortKey === "recorded_at"}
+                      sortAsc={coinSortAsc}
+                      onSort={() => toggleCoinSort("recorded_at")}
+                    />
                     <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {snapshots.map((s) => (
+                  {sortedSnapshots.map((s) => (
                     <tr
                       key={s.id}
                       ref={(el) => {
@@ -1786,16 +1920,41 @@ export default function History() {
                           aria-label="Select all GC activations"
                         />
                       </th>
-                      <th>Wave</th>
-                      <th>Chance %</th>
-                      <th>Activations</th>
-                      <th>Multiplier</th>
-                      <th>Recorded</th>
+                      <SortableTh
+                        label="Wave"
+                        active={gcSortKey === "wave"}
+                        sortAsc={gcSortAsc}
+                        onSort={() => toggleGcSort("wave")}
+                      />
+                      <SortableTh
+                        label="Chance %"
+                        active={gcSortKey === "golden_combo_chance"}
+                        sortAsc={gcSortAsc}
+                        onSort={() => toggleGcSort("golden_combo_chance")}
+                      />
+                      <SortableTh
+                        label="Activations"
+                        active={gcSortKey === "golden_combo_caret"}
+                        sortAsc={gcSortAsc}
+                        onSort={() => toggleGcSort("golden_combo_caret")}
+                      />
+                      <SortableTh
+                        label="Multiplier"
+                        active={gcSortKey === "golden_combo_multiplier"}
+                        sortAsc={gcSortAsc}
+                        onSort={() => toggleGcSort("golden_combo_multiplier")}
+                      />
+                      <SortableTh
+                        label="Recorded"
+                        active={gcSortKey === "recorded_at"}
+                        sortAsc={gcSortAsc}
+                        onSort={() => toggleGcSort("recorded_at")}
+                      />
                       <th />
                     </tr>
                   </thead>
                   <tbody>
-                    {gcSnapshots.map((s) => {
+                    {sortedGcSnapshots.map((s) => {
                       const editing = editingGcId === s.id;
                       return (
                         <tr
@@ -1965,15 +2124,35 @@ export default function History() {
                           aria-label="Select all wave skips"
                         />
                       </th>
-                      <th>Wave</th>
-                      <th>Wave jump</th>
-                      <th>Coin/min</th>
-                      <th>Recorded</th>
+                      <SortableTh
+                        label="Wave"
+                        active={skipSortKey === "at_wave"}
+                        sortAsc={skipSortAsc}
+                        onSort={() => toggleSkipSort("at_wave")}
+                      />
+                      <SortableTh
+                        label="Wave jump"
+                        active={skipSortKey === "skipped_count"}
+                        sortAsc={skipSortAsc}
+                        onSort={() => toggleSkipSort("skipped_count")}
+                      />
+                      <SortableTh
+                        label="Coin/min"
+                        active={skipSortKey === "coin_per_minute"}
+                        sortAsc={skipSortAsc}
+                        onSort={() => toggleSkipSort("coin_per_minute")}
+                      />
+                      <SortableTh
+                        label="Recorded"
+                        active={skipSortKey === "recorded_at"}
+                        sortAsc={skipSortAsc}
+                        onSort={() => toggleSkipSort("recorded_at")}
+                      />
                       <th />
                     </tr>
                   </thead>
                   <tbody>
-                    {waveSkips.map((s) => (
+                    {sortedWaveSkips.map((s) => (
                       <tr
                         key={s.id}
                         ref={(el) => {
