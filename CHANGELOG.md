@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.3] — 2026-09-03
+
+### Fixed
+
+- **Coin/min dropping to roughly 1/1000th of its real value, then recovering** — once an account's rate crosses into q territory, OCR occasionally reads the digits correctly but drops the suffix letter itself (the glyph is thin and easy to miss). The parser's fallback for a missing suffix assumes "T" — right for most accounts, wrong by exactly one tier once the real rate has grown past it, e.g. a real "1.05q/min" read as "1.05T/min". Confirmed against a real account's log capture that the same misread can recur across several consecutive polls (a systematic glyph-read failure on that particular screen, not one-off noise), which is why the existing debounce protection couldn't reject it on its own. Recovery now happens before a reading ever reaches the debounce logic: a value off from the currently-confirmed rate by very close to an exact power of 1000 is rescaled back immediately.
+
+---
+
 ## [0.4.2] — 2026-09-01
 
 ### Fixed
