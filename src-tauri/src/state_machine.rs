@@ -298,9 +298,12 @@ struct DebouncedCoinRate {
 
 impl DebouncedCoinRate {
     fn feed(&mut self, value: Option<f64>) -> Option<f64> {
-        let Some(v) = value else {
+        let Some(mut v) = value else {
             return self.confirmed;
         };
+        if let Some(cur) = self.confirmed {
+            v = recover_dropped_suffix_tier(v, cur);
+        }
         let same = self
             .candidate
             .map(|c| approx_same_rate(c, v))
@@ -376,6 +379,37 @@ fn approx_same_rate(a: f64, b: f64) -> bool {
     }
     let scale = a.abs().max(b.abs()).max(1.0);
     (a - b).abs() / scale < 0.05
+}
+
+/// The game's suffix table (K, M, B, T, q, Q, ...) steps by exactly 1000x per
+/// tier. When OCR reads a coin-rate's digits correctly but drops the suffix
+/// letter itself (the glyph is thin and easy to miss, especially once an
+/// account crosses from T into q territory), the parser's fallback assumes
+/// the common case ("no suffix" == "T") — which is wrong by exactly a whole
+/// tier once the real rate has grown past it, e.g. a real "1.05q/min" read as
+/// "1.05T/min" (~1000x too small). Real captures show this recurring on
+/// several consecutive polls (the same glyph keeps failing to OCR the same
+/// way), so debounce alone can't be relied on to reject it — this recovers
+/// the value before it ever reaches the debounce/outlier machinery, using the
+/// already-confirmed rate to tell which tier was actually meant.
+fn recover_dropped_suffix_tier(v: f64, confirmed: f64) -> f64 {
+    if v <= 0.0 || confirmed <= 0.0 {
+        return v;
+    }
+    let tiers = ((confirmed / v).ln() / 1000f64.ln()).round();
+    if tiers == 0.0 {
+        return v;
+    }
+    let rescaled = v * 1000f64.powf(tiers);
+    // Only trust the rescale if it actually lands the value back in the
+    // plausible range relative to the confirmed rate — this is what keeps an
+    // ordinary large-but-real jump (or an unrelated garbled misread) from
+    // getting rescaled into something that merely looks plausible by luck.
+    if (0.2..=5.0).contains(&(rescaled / confirmed)) {
+        rescaled
+    } else {
+        v
+    }
 }
 
 /// Debounce the skip banner, then record when wave jumps by the matching amount.
@@ -1530,6 +1564,32 @@ mod tests {
             reported < 1.0e15,
             "two similar dropped-decimal misreads must not confirm a ~10x spike, got {reported}"
         );
+    }
+
+    /// Regression for a real ragchel-account log capture: with the confirmed
+    /// rate at 1.05q/min, OCR read the digits correctly but dropped the "q"
+    /// glyph on several consecutive polls, producing "1.05T/min" (~1000x too
+    /// small) each time — the parser's fallback for a missing suffix assumes
+    /// "T", which is right for most accounts but wrong once the real rate has
+    /// grown past it. Since the same misread repeated across multiple polls,
+    /// debounce alone previously couldn't reject it (it would eventually
+    /// "confirm" the wrong value). The recovery now happens before debounce
+    /// even sees it, so the reported rate shouldn't dip at all.
+    #[test]
+    fn coin_rate_recovers_dropped_suffix_tier() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 15, 1, CoinReading::Rate(1.05e15)),
+        );
+        for wave in 2..=4 {
+            sm.poll(p(GameMode::Normal, 15, wave, CoinReading::Rate(1.05e12)));
+            assert_eq!(
+                sm.live_state().coin_per_minute,
+                Some(1.05e15),
+                "wave {wave}: dropped-suffix misread must not dip the reported rate"
+            );
+        }
     }
 
     #[test]
