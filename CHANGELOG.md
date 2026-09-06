@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.5] — 2026-09-06
+
+### Fixed
+
+- **Coin/min getting stuck at roughly 1/1000th of its real value for the rest of a run** — a coin-rate crop blocked for several consecutive polls (e.g. an overlay sitting over it) OCRs as an explicit "0/min" each time, which can legitimately confirm the tracked rate at zero. Once that happened, the existing suffix-drop recovery and outlier protection both treated "no positive baseline" as nothing to validate against, so the next reading — even one off by an exact 1000x tier-drop misread — confirmed at face value instead of being caught, corrupting the rest of the run's history. The tracker now remembers the last positive confirmed rate through a zero crash and validates against it once real readings resume.
+
+---
+
 ## [0.4.4] — 2026-09-03
 
 ### Added
