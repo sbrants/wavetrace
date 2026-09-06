@@ -294,6 +294,19 @@ struct DebouncedCoinRate {
     count: u32,
     confirmed: Option<f64>,
     window: std::collections::VecDeque<f64>,
+    /// Last positive confirmed rate, kept even after `confirmed` collapses to
+    /// (or through) zero. A blank/covered coin-rate crop is a common OCR
+    /// artifact `normalize_coin_rate_ocr` canonicalizes to an explicit
+    /// "0/min", and a long enough run of that (e.g. an END ROUND overlay
+    /// sitting over the coin line for several polls) is enough repeats to
+    /// legitimately confirm `confirmed = 0.0` — at which point both
+    /// `recover_dropped_suffix_tier` and `is_outlier` treat "no positive
+    /// baseline" as "nothing to compare against" and wave the very next
+    /// reading through with no scrutiny at all, even a misread off by a
+    /// clean 1000x. This field is that baseline's memory, so the real
+    /// pre-crash rate is still there to validate against once the coin line
+    /// reappears. See `coin_rate_recovers_after_zero_misread_crash`.
+    last_nonzero_confirmed: Option<f64>,
 }
 
 impl DebouncedCoinRate {
@@ -301,7 +314,11 @@ impl DebouncedCoinRate {
         let Some(mut v) = value else {
             return self.confirmed;
         };
-        if let Some(cur) = self.confirmed {
+        let reference = self
+            .confirmed
+            .filter(|&c| c > 0.0)
+            .or(self.last_nonzero_confirmed);
+        if let Some(cur) = reference {
             v = recover_dropped_suffix_tier(v, cur);
         }
         let same = self
@@ -323,9 +340,16 @@ impl DebouncedCoinRate {
         while self.window.len() > COIN_MEDIAN_WINDOW {
             self.window.pop_front();
         }
-        let needed = if self.is_outlier(v) { 3 } else { DEBOUNCE };
+        let needed = if reference.is_some_and(|cur| is_outlier_against(v, cur)) {
+            3
+        } else {
+            DEBOUNCE
+        };
         if self.count >= needed {
             self.confirmed = Some(self.median());
+            if let Some(c) = self.confirmed.filter(|&c| c > 0.0) {
+                self.last_nonzero_confirmed = Some(c);
+            }
         }
         self.confirmed
     }
@@ -346,22 +370,8 @@ impl DebouncedCoinRate {
         }
     }
 
-    /// A single ~6s poll shouldn't legitimately move the rate by more than a few
-    /// times — even a sudden Golden Combo multiplier activation ramps in, it
-    /// doesn't teleport. A jump past this band needs sustained confirmation
-    /// (`needed = 3`) rather than the fast 2-frame path. Previously this was
-    /// 0.02..=50.0, wide enough that a single dropped-decimal-point OCR misread
-    /// (e.g. "529.4T" read as "5294T", ~10x too large) sailed through as
-    /// "not an outlier" — see `coin_rate_repeated_misread_does_not_corrupt_confirmed`.
     fn is_outlier(&self, v: f64) -> bool {
-        let Some(cur) = self.confirmed else {
-            return false;
-        };
-        if cur <= 0.0 {
-            return false;
-        }
-        let ratio = v / cur;
-        !(0.2..=5.0).contains(&ratio)
+        self.confirmed.is_some_and(|cur| is_outlier_against(v, cur))
     }
 
     /// Latest rate for the dashboard; holds the last parseable reading between polls.
@@ -371,6 +381,22 @@ impl DebouncedCoinRate {
             (confirmed, candidate) => confirmed.or(candidate),
         }
     }
+}
+
+/// A single ~6s poll shouldn't legitimately move the rate by more than a few
+/// times relative to `reference` — even a sudden Golden Combo multiplier
+/// activation ramps in, it doesn't teleport. A jump past this band needs
+/// sustained confirmation (`needed = 3` in `feed`) rather than the fast
+/// 2-frame path. Previously this was 0.02..=50.0, wide enough that a single
+/// dropped-decimal-point OCR misread (e.g. "529.4T" read as "5294T", ~10x too
+/// large) sailed through as "not an outlier" — see
+/// `coin_rate_repeated_misread_does_not_corrupt_confirmed`.
+fn is_outlier_against(v: f64, reference: f64) -> bool {
+    if reference <= 0.0 {
+        return false;
+    }
+    let ratio = v / reference;
+    !(0.2..=5.0).contains(&ratio)
 }
 
 fn approx_same_rate(a: f64, b: f64) -> bool {
@@ -1590,6 +1616,45 @@ mod tests {
                 "wave {wave}: dropped-suffix misread must not dip the reported rate"
             );
         }
+    }
+
+    /// Regression for a real ragchel-account log capture: a coin-rate crop
+    /// blocked for several consecutive polls (e.g. an END ROUND overlay
+    /// sitting over it) OCR'd as an explicit "0/min" each time — a common
+    /// artifact `normalize_coin_rate_ocr` canonicalizes garbled/blank crops
+    /// to — and once repeated enough to satisfy the outlier-confirmation
+    /// gate, `confirmed` legitimately dropped to 0.0. When the coin line
+    /// reappeared, a tier-dropped misread arrived (real "0.89q/min" read as
+    /// "890B/min", ~1000x too small). Before this fix, both
+    /// `recover_dropped_suffix_tier` and the outlier gate treated a
+    /// non-positive `confirmed` as "nothing to validate against", so that
+    /// misread confirmed at face value and silently corrupted the run's
+    /// coin/min for the rest of its history. `last_nonzero_confirmed` keeps
+    /// the pre-crash rate around so recovery still applies.
+    #[test]
+    fn coin_rate_recovers_after_zero_misread_crash() {
+        let mut sm = RunStateMachine::new();
+        feed2(
+            &mut sm,
+            p(GameMode::Normal, 15, 1, CoinReading::Rate(1.24e15)),
+        );
+        for wave in 2..=4 {
+            sm.poll(p(GameMode::Normal, 15, wave, CoinReading::Rate(0.0)));
+        }
+        assert_eq!(
+            sm.live_state().coin_per_minute,
+            Some(0.0),
+            "a sustained blank coin-rate crop must still be able to confirm zero"
+        );
+        sm.poll(p(GameMode::Normal, 15, 5, CoinReading::Rate(890.0e9)));
+        sm.poll(p(GameMode::Normal, 15, 6, CoinReading::Rate(890.0e9)));
+        let reported = sm.live_state().coin_per_minute.unwrap();
+        assert!(
+            reported > 1.0e14,
+            "a tier-dropped misread arriving right after a zero crash must be \
+             recovered against the pre-crash baseline, not confirmed at face \
+             value, got {reported}"
+        );
     }
 
     #[test]
