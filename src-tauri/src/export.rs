@@ -10,18 +10,12 @@ use spreadsheet_ods::{write_ods_buf, Sheet, WorkBook};
 
 use crate::db::{self, RunFilter, RunRow, SnapshotRow};
 
+/// Result of an export written directly to disk (no file content crosses the
+/// webview IPC boundary — large histories would otherwise freeze the UI while
+/// the JS side parses/decodes a multi-megabyte payload).
 #[derive(Debug, Serialize)]
-pub struct CsvExportPayload {
-    pub filename: String,
-    pub content: String,
-    pub run_count: usize,
-    pub snapshot_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WorkbookExportPayload {
-    pub filename: String,
-    pub data_base64: String,
+pub struct ExportFileResult {
+    pub path: String,
     pub run_count: usize,
     pub snapshot_count: usize,
 }
@@ -38,32 +32,39 @@ fn export_stamp() -> String {
     Utc::now().format("%Y-%m-%dT%H-%M-%S").to_string()
 }
 
-/// Flat CSV: one row per snapshot with parent run metadata.
+/// Flat CSV: one row per snapshot with parent run metadata. `progress` is
+/// called after each run is written, with (runs done, total runs), so a
+/// caller can report status on a large export instead of it looking stuck.
 pub fn export_snapshots_csv(
     conn: &Connection,
     filter: &RunFilter,
+    mut progress: impl FnMut(usize, usize),
 ) -> rusqlite::Result<(String, usize, usize)> {
     let runs = db::list_runs(conn, filter)?;
+    let total = runs.len();
     let mut out = String::from(
         "run_id,started_at,ended_at,run_type,peak_tier,final_wave,run_comment,wave,tier,coin_per_minute,golden_combo_chance,golden_combo_caret,golden_combo_multiplier,recorded_at\n",
     );
     let mut snapshot_count = 0usize;
-    for run in &runs {
+    for (i, run) in runs.iter().enumerate() {
         let snaps = db::run_snapshots(conn, &run.id)?;
         for snap in &snaps {
             snapshot_count += 1;
             out.push_str(&format_snapshot_csv_row(run, snap));
         }
+        progress(i + 1, total);
     }
     Ok((out, runs.len(), snapshot_count))
 }
 
-/// ODS workbook bytes: summary sheet plus one sheet per run with its snapshots.
+/// ODS workbook bytes: summary sheet plus one sheet per run with its
+/// snapshots. See `export_snapshots_csv` for the `progress` callback.
 pub fn export_workbook_ods_bytes(
     conn: &Connection,
     filter: &RunFilter,
+    progress: impl FnMut(usize, usize),
 ) -> Result<(Vec<u8>, usize, usize), String> {
-    let (mut wb, run_count, snapshot_count) = build_workbook(conn, filter)?;
+    let (mut wb, run_count, snapshot_count) = build_workbook(conn, filter, progress)?;
     let bytes = write_ods_buf(&mut wb, Vec::new()).map_err(|e| e.to_string())?;
     Ok((bytes, run_count, snapshot_count))
 }
@@ -71,8 +72,10 @@ pub fn export_workbook_ods_bytes(
 fn build_workbook(
     conn: &Connection,
     filter: &RunFilter,
+    mut progress: impl FnMut(usize, usize),
 ) -> Result<(WorkBook, usize, usize), String> {
     let runs = db::list_runs(conn, filter).map_err(|e| e.to_string())?;
+    let total = runs.len();
     let mut wb = WorkBook::new(locale!("en-US"));
     let mut used_sheet_names = HashSet::new();
     let mut snapshot_count = 0usize;
@@ -92,6 +95,7 @@ fn build_workbook(
         let mut sheet = Sheet::new(&sheet_name);
         write_run_detail_sheet(&mut sheet, run, &snaps);
         wb.push_sheet(sheet);
+        progress(idx + 1, total);
     }
 
     Ok((wb, runs.len(), snapshot_count))
@@ -212,6 +216,16 @@ fn write_run_detail_sheet(sheet: &mut Sheet, run: &RunRow, snaps: &[SnapshotRow]
     }
 }
 
+/// ODS sheet names cap at 31 characters. Duplicate base names (common in a
+/// large farming history — many runs share the same date/tier/final wave)
+/// need a numeric disambiguator, so the base is truncated to leave room for
+/// one up front. Truncating *after* appending "(n)" — the old approach —
+/// let large n values collapse onto the same truncated string, which made
+/// the search loop below spin effectively forever once a name repeated
+/// often enough (observed: 720s+ for 1000 runs sharing one name).
+const SHEET_NAME_MAX_LEN: usize = 31;
+const SHEET_NAME_SUFFIX_BUDGET: usize = 8; // " (12345)"
+
 fn unique_sheet_name(run: &RunRow, index: usize, used: &mut HashSet<String>) -> String {
     let date = run.started_at.chars().take(10).collect::<String>();
     let kind = match run.run_type.as_str() {
@@ -225,35 +239,33 @@ fn unique_sheet_name(run: &RunRow, index: usize, used: &mut HashSet<String>) -> 
     let wave = run.final_wave.unwrap_or(0);
     let tier = run.peak_tier.unwrap_or(0);
     let base = format!("{date} {kind} T{tier} W{wave}");
-    let mut name = sanitize_sheet_name(&base);
+    let mut name = sanitize_sheet_name(&base, SHEET_NAME_MAX_LEN - SHEET_NAME_SUFFIX_BUDGET);
     if name.is_empty() {
         name = format!("run_{index}");
     }
     if used.contains(&name) {
-        let mut n = 2;
-        loop {
-            let candidate = sanitize_sheet_name(&format!("{name} ({n})"));
+        let mut disambiguated = None;
+        for n in 2..100_000u32 {
+            let candidate = format!("{name} ({n})");
             if !used.contains(&candidate) {
-                name = candidate;
+                disambiguated = Some(candidate);
                 break;
             }
-            n += 1;
         }
+        // Falls back to an index-based name in the (astronomically unlikely)
+        // case that even a 100,000-way disambiguation search collides.
+        name = disambiguated.unwrap_or_else(|| format!("run_{index}"));
     }
     used.insert(name.clone());
     name
 }
 
-fn sanitize_sheet_name(name: &str) -> String {
+fn sanitize_sheet_name(name: &str, max_len: usize) -> String {
     let invalid = ['\\', '/', '*', '?', ':', '[', ']'];
-    let mut out: String = name
-        .chars()
+    name.chars()
         .map(|c| if invalid.contains(&c) { '_' } else { c })
-        .collect();
-    if out.len() > 31 {
-        out.truncate(31);
-    }
-    out
+        .take(max_len)
+        .collect()
 }
 
 #[cfg(test)]
@@ -269,7 +281,8 @@ mod tests {
         db::insert_snapshot(&conn, &id, 2, Some(11), Some(200.0), None, None, None).unwrap();
         db::end_run(&conn, &id, Some(2), Some(11)).unwrap();
 
-        let (csv, runs, snaps) = export_snapshots_csv(&conn, &db::RunFilter::default()).unwrap();
+        let (csv, runs, snaps) =
+            export_snapshots_csv(&conn, &db::RunFilter::default(), |_, _| {}).unwrap();
         assert_eq!(runs, 1);
         assert_eq!(snaps, 2);
         assert_eq!(csv.matches('\n').count(), 3); // header + 2 rows
@@ -285,9 +298,44 @@ mod tests {
         db::end_run(&conn, &id, Some(3), Some(12)).unwrap();
 
         let (bytes, run_count, snapshot_count) =
-            export_workbook_ods_bytes(&conn, &db::RunFilter::default()).unwrap();
+            export_workbook_ods_bytes(&conn, &db::RunFilter::default(), |_, _| {}).unwrap();
         assert_eq!(run_count, 1);
         assert_eq!(snapshot_count, 1);
         assert!(!bytes.is_empty());
+    }
+
+    /// Regression test: 1200 runs sharing one date/type/tier/wave (so they
+    /// all synthesize the same base sheet name) used to make the
+    /// disambiguation loop in `unique_sheet_name` spin for 12+ minutes, because
+    /// truncating the numbered candidate *after* appending "(n)" let large n
+    /// values collapse onto an already-used truncated string. Bounded here to
+    /// a couple of seconds max — if this regresses, it'll time out or hang.
+    #[test]
+    fn export_workbook_handles_many_duplicate_run_names() {
+        let conn = db::open_in_memory().unwrap();
+        for _ in 0..1200 {
+            let id = db::start_run(&conn, "farming").unwrap();
+            db::insert_snapshot(&conn, &id, 1, Some(10), Some(100.0), None, None, None).unwrap();
+            db::end_run(&conn, &id, Some(20), Some(10)).unwrap();
+        }
+        let (_wb, run_count, _snapshot_count) =
+            build_workbook(&conn, &db::RunFilter::default(), |_, _| {}).unwrap();
+        assert_eq!(run_count, 1200);
+    }
+
+    #[test]
+    fn export_workbook_ods_bytes_reports_progress() {
+        let conn = db::open_in_memory().unwrap();
+        for _ in 0..3 {
+            let id = db::start_run(&conn, "farming").unwrap();
+            db::insert_snapshot(&conn, &id, 1, Some(1), Some(100.0), None, None, None).unwrap();
+            db::end_run(&conn, &id, Some(1), Some(1)).unwrap();
+        }
+        let mut calls = Vec::new();
+        export_workbook_ods_bytes(&conn, &db::RunFilter::default(), |done, total| {
+            calls.push((done, total));
+        })
+        .unwrap();
+        assert_eq!(calls, vec![(1, 3), (2, 3), (3, 3)]);
     }
 }

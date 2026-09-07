@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatAvgGoldenComboCaret, formatCoin, formatGoldenCombo, parseOptionalCoin, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
+import { api, formatAvgGoldenComboCaret, formatCoin, formatGoldenCombo, parseOptionalCoin, ExportFileResult, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
 import {
   buildCompareChartDataByWave,
   applyCompareChartSmoothing,
@@ -9,7 +9,6 @@ import {
   buildWaveJumpMarkers,
   snapshotsToChartData,
 } from "../chartData";
-import { downloadBase64File, downloadTextFile } from "../exportDownload";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
@@ -159,6 +158,11 @@ export default function History() {
   const [skipSortKey, setSkipSortKey] = useState<SkipSortKey>("at_wave");
   const [skipSortAsc, setSkipSortAsc] = useState(true);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
   const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
@@ -481,33 +485,45 @@ export default function History() {
     window.setTimeout(() => setExportStatus(null), 2000);
   };
 
-  const exportCsv = async () => {
+  const runExport = async (
+    kind: "csv" | "workbook",
+    invokeExport: () => Promise<ExportFileResult>,
+    describe: (result: ExportFileResult) => string
+  ) => {
+    setExportBusy(true);
+    setExportStatus("Exporting…");
+    setExportProgress(null);
+    const unlisten = await api.onExportProgress((e) => {
+      if (e.kind === kind) setExportProgress({ done: e.done, total: e.total });
+    });
     try {
-      const result = await api.exportCsv(listFilter());
-      downloadTextFile(result.content, result.filename);
-      flashExport(
-        `Downloaded ${result.snapshot_count} snapshot${result.snapshot_count === 1 ? "" : "s"} ✓`
-      );
+      const result = await invokeExport();
+      flashExport(describe(result));
     } catch (e) {
+      setExportStatus(null);
       reportUiError(e, "History");
+    } finally {
+      unlisten();
+      setExportBusy(false);
+      setExportProgress(null);
     }
   };
 
-  const exportWorkbook = async () => {
-    try {
-      const result = await api.exportWorkbook(listFilter());
-      downloadBase64File(
-        result.data_base64,
-        result.filename,
-        "application/vnd.oasis.opendocument.spreadsheet"
-      );
-      flashExport(
-        `Downloaded ${result.run_count} run${result.run_count === 1 ? "" : "s"} ✓`
-      );
-    } catch (e) {
-      reportUiError(e, "History");
-    }
-  };
+  const exportCsv = () =>
+    runExport(
+      "csv",
+      () => api.exportCsv(listFilter()),
+      (result) =>
+        `Saved ${result.snapshot_count} snapshot${result.snapshot_count === 1 ? "" : "s"} to ${result.path} ✓`
+    );
+
+  const exportWorkbook = () =>
+    runExport(
+      "workbook",
+      () => api.exportWorkbook(listFilter()),
+      (result) =>
+        `Saved ${result.run_count} run${result.run_count === 1 ? "" : "s"} to ${result.path} ✓`
+    );
 
   const gcSnapshots = useMemo(
     () => snapshots.filter(snapshotHasGoldenCombo),
@@ -1213,15 +1229,28 @@ export default function History() {
           </button>
         )}
         <button onClick={reload}>Refresh</button>
-        <button onClick={exportCsv}>Export CSV</button>
-        <button onClick={exportWorkbook}>Export ODS</button>
+        <button onClick={exportCsv} disabled={exportBusy}>
+          Export CSV
+        </button>
+        <button onClick={exportWorkbook} disabled={exportBusy}>
+          Export ODS
+        </button>
         {exportStatus && (
           <span
             className="chart-action-status"
             role="status"
             aria-live="polite"
           >
-            {exportStatus}
+            {exportProgress
+              ? `Exporting… ${exportProgress.done}/${exportProgress.total}`
+              : exportStatus}
+            {exportProgress && (
+              <progress
+                className="export-progress-bar"
+                value={exportProgress.done}
+                max={exportProgress.total || 1}
+              />
+            )}
           </span>
         )}
         <button

@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.6] — 2026-09-07
+
+### Fixed
+
+- **Exporting CSV/ODS from History could freeze the app, or hang indefinitely, on a large run history** — the ODS sheet name for each run was disambiguated by appending "(2)", "(3)", etc. and then truncating the whole result to fit the 31-character sheet-name limit; once many runs shared the same date/type/tier/final-wave label (routine in a big farming history), later disambiguator numbers collapsed onto an already-used truncated string, and the search loop could spin forever chasing a name no truncation would ever produce. Separately, both CSV and ODS export ran synchronously on the UI thread and returned their entire file content through IPC as one large string — which froze the interface even once building the file itself was fast. Exports now build off the UI thread, save straight to the Downloads folder instead of round-tripping file content through the webview, and show a live progress bar so a big export doesn't look stuck.
+
+### Changed
+
+- **Backing up the database** now also writes straight to the Downloads folder instead of round-tripping through the webview, for the same reason as the export fix above.
+
+---
+
 ## [0.4.5] — 2026-09-06
 
 ### Fixed

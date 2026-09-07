@@ -187,23 +187,20 @@ export interface OcrProbeResult {
 
 export type ScanStartMode = "new_run" | "resume_previous";
 
-export interface CsvExport {
-  filename: string;
-  content: string;
+export interface ExportFileResult {
+  path: string;
   run_count: number;
   snapshot_count: number;
 }
 
-export interface WorkbookExport {
-  filename: string;
-  data_base64: string;
-  run_count: number;
-  snapshot_count: number;
+export interface ExportProgress {
+  kind: "csv" | "workbook";
+  done: number;
+  total: number;
 }
 
 export interface BackupExport {
-  filename: string;
-  data_base64: string;
+  path: string;
   run_count: number;
   snapshot_count: number;
 }
@@ -329,12 +326,11 @@ export const api = {
   runWaveSkips: (runId: string) =>
     invoke<WaveSkipRow[]>("run_wave_skips", { runId }),
   exportCsv: (filter: RunFilter) =>
-    invoke<CsvExport>("export_csv", { filter }),
+    invoke<ExportFileResult>("export_csv", { filter }),
   exportWorkbook: (filter: RunFilter) =>
-    invoke<WorkbookExport>("export_workbook", { filter }),
+    invoke<ExportFileResult>("export_workbook", { filter }),
   exportBackup: () => invoke<BackupExport>("export_backup"),
-  restoreBackup: (dataBase64: string) =>
-    invoke<BackupRestore>("restore_backup", { dataBase64 }),
+  restoreBackup: () => invoke<BackupRestore | null>("restore_backup"),
   readScannerLog: (maxLines: number) =>
     invoke<ScannerLogView>("read_scanner_log", { maxLines }),
   appendAppLog: (source: string, message: string) =>
@@ -352,6 +348,8 @@ export const api = {
   probeOcr: () => invoke<OcrProbeResult>("probe_ocr"),
   onScannerUpdate: (cb: (e: ScannerEvent) => void): Promise<UnlistenFn> =>
     listen<ScannerEvent>("scanner-update", (event) => cb(event.payload)),
+  onExportProgress: (cb: (e: ExportProgress) => void): Promise<UnlistenFn> =>
+    listen<ExportProgress>("export-progress", (event) => cb(event.payload)),
 };
 
 /** Format a normalized coin/min back to game-style units (1230 -> "1.23K"). */

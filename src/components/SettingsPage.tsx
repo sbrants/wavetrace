@@ -11,7 +11,6 @@ import {
   Settings,
   WindowInfo,
 } from "../api";
-import { downloadBase64File } from "../exportDownload";
 import AccountsSettings from "./AccountsSettings";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
@@ -107,7 +106,6 @@ export default function SettingsPage({
   );
   const [gameSaveDevices, setGameSaveDevices] = useState<AdbDeviceInfo[]>([]);
   const [devicesBusy, setDevicesBusy] = useState(false);
-  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const [loadedSettings, listedWindows, access, dataPaths] = await Promise.all([
@@ -304,13 +302,8 @@ export default function SettingsPage({
         return;
       }
       const result = await api.exportBackup();
-      downloadBase64File(
-        result.data_base64,
-        result.filename,
-        "application/zip"
-      );
       setBackupStatus(
-        `Backup saved (${result.run_count} runs, ${result.snapshot_count} snapshots).`
+        `Backup saved to ${result.path} (${result.run_count} runs, ${result.snapshot_count} snapshots).`
       );
     } catch (e) {
       setBackupStatus(reportUiError(e, "Settings.exportBackup", { alert: false }));
@@ -319,11 +312,7 @@ export default function SettingsPage({
     }
   };
 
-  const onRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-
+  const restoreBackup = async () => {
     const confirmed = await confirmDialog({
       title: "Restore backup?",
       message:
@@ -341,11 +330,8 @@ export default function SettingsPage({
         setBackupStatus("Stop the scanner before restoring.");
         return;
       }
-      const bytes = await file.arrayBuffer();
-      const dataBase64 = btoa(
-        Array.from(new Uint8Array(bytes), (b) => String.fromCharCode(b)).join("")
-      );
-      const result = await api.restoreBackup(dataBase64);
+      const result = await api.restoreBackup();
+      if (!result) return;
       await load();
       const when = result.backup_created_at
         ? ` from ${new Date(result.backup_created_at).toLocaleString()}`
@@ -1132,24 +1118,9 @@ export default function SettingsPage({
           <button disabled={backupBusy} onClick={exportBackup}>
             Back up now…
           </button>
-          <button
-            disabled={backupBusy}
-            className="danger"
-            onClick={() => restoreInputRef.current?.click()}
-          >
+          <button disabled={backupBusy} className="danger" onClick={restoreBackup}>
             Restore from file…
           </button>
-          <label htmlFor="restore-backup-file" className="visually-hidden">
-            Restore database from zip backup
-          </label>
-          <input
-            id="restore-backup-file"
-            ref={restoreInputRef}
-            type="file"
-            accept=".zip,application/zip"
-            hidden
-            onChange={onRestoreFile}
-          />
         </div>
         {backupStatus && (
           <p className="muted" role="status" aria-live="polite">

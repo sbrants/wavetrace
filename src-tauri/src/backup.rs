@@ -29,8 +29,7 @@ pub struct BackupManifest {
 
 #[derive(Debug, Serialize)]
 pub struct BackupExport {
-    pub filename: String,
-    pub data_base64: String,
+    pub path: String,
     pub run_count: i64,
     pub snapshot_count: i64,
 }

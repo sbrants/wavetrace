@@ -680,9 +680,17 @@ main {
 }
 
 .chart-action-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: #6fdd8b;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.export-progress-bar {
+  width: 100px;
+  height: 6px;
 }
 
 button.icon-btn {

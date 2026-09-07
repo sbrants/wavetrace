@@ -1,12 +1,12 @@
 //! Tauri commands exposed to the frontend.
 
 use base64::Engine;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::backup::{self, BackupExport, BackupRestore};
 use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
 use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
-use crate::export::{self, CsvExportPayload, WorkbookExportPayload};
+use crate::export::{self, ExportFileResult};
 use crate::scanner::{ScanStartMode, Scanner};
 use crate::settings::Settings;
 use crate::{accounts, capture, settings};
@@ -507,31 +507,81 @@ pub async fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> 
     .await
 }
 
-/// Export all snapshots (with run metadata) for browser download.
-#[tauri::command]
-pub fn export_csv(filter: RunFilter) -> Result<CsvExportPayload, String> {
-    let conn = conn()?;
-    let (content, run_count, snapshot_count) =
-        export::export_snapshots_csv(&conn, &filter).map_err(|e| e.to_string())?;
-    Ok(CsvExportPayload {
-        filename: export::snapshots_csv_filename(),
-        content,
-        run_count,
-        snapshot_count,
-    })
+/// Resolve a destination path in the user's Downloads folder, mirroring what
+/// a browser download would do (falls back to the home dir if Downloads
+/// can't be located, e.g. on some Linux setups).
+fn downloads_path(filename: &str) -> Result<std::path::PathBuf, String> {
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "Could not locate a downloads folder.".to_string())?;
+    Ok(dir.join(filename))
 }
 
-/// Export runs workbook (ODS) for browser download.
+#[derive(Clone, Serialize)]
+struct ExportProgress {
+    kind: &'static str,
+    done: usize,
+    total: usize,
+}
+
+/// Emits at most every ~80ms (plus always on the final step) so a large
+/// export doesn't look stuck, without flooding IPC with an event per row.
+fn throttled_progress_emitter(
+    app: AppHandle,
+    kind: &'static str,
+) -> impl FnMut(usize, usize) {
+    let mut last_emit = std::time::Instant::now();
+    move |done, total| {
+        if done == total || last_emit.elapsed().as_millis() >= 80 {
+            last_emit = std::time::Instant::now();
+            let _ = app.emit("export-progress", ExportProgress { kind, done, total });
+        }
+    }
+}
+
+/// Export all snapshots (with run metadata) straight to the Downloads folder.
+/// Writes on disk rather than returning content over IPC — a large history's
+/// content would otherwise have to cross the webview as one huge JS string,
+/// which is what was freezing the UI.
 #[tauri::command]
-pub fn export_workbook(filter: RunFilter) -> Result<WorkbookExportPayload, String> {
-    let conn = conn()?;
-    let (bytes, run_count, snapshot_count) = export::export_workbook_ods_bytes(&conn, &filter)?;
-    Ok(WorkbookExportPayload {
-        filename: export::workbook_ods_filename(),
-        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-        run_count,
-        snapshot_count,
+pub async fn export_csv(app: AppHandle, filter: RunFilter) -> Result<ExportFileResult, String> {
+    run_blocking("export_csv", move || {
+        let conn = conn()?;
+        let progress = throttled_progress_emitter(app, "csv");
+        let (content, run_count, snapshot_count) =
+            export::export_snapshots_csv(&conn, &filter, progress).map_err(|e| e.to_string())?;
+        let path = downloads_path(&export::snapshots_csv_filename())?;
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+        Ok(ExportFileResult {
+            path: path.display().to_string(),
+            run_count,
+            snapshot_count,
+        })
     })
+    .await
+}
+
+/// Export runs workbook (ODS) straight to the Downloads folder. See
+/// `export_csv` for why this writes to disk instead of returning bytes.
+#[tauri::command]
+pub async fn export_workbook(
+    app: AppHandle,
+    filter: RunFilter,
+) -> Result<ExportFileResult, String> {
+    run_blocking("export_workbook", move || {
+        let conn = conn()?;
+        let progress = throttled_progress_emitter(app, "workbook");
+        let (bytes, run_count, snapshot_count) =
+            export::export_workbook_ods_bytes(&conn, &filter, progress)?;
+        let path = downloads_path(&export::workbook_ods_filename())?;
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(ExportFileResult {
+            path: path.display().to_string(),
+            run_count,
+            snapshot_count,
+        })
+    })
+    .await
 }
 
 fn ensure_scanner_stopped(state: &State<AppState>) -> Result<(), String> {
@@ -545,28 +595,46 @@ fn reset_scanner_state(state: &State<AppState>) {
     state.scanner.reset_after_db_restore();
 }
 
-/// Full database backup as a zip for browser download.
+/// Full database backup as a zip, written straight to the Downloads folder
+/// (see `export_csv` above for why file content shouldn't cross IPC).
 #[tauri::command]
-pub fn export_backup(state: State<AppState>) -> Result<BackupExport, String> {
+pub async fn export_backup(state: State<'_, AppState>) -> Result<BackupExport, String> {
     ensure_scanner_stopped(&state)?;
-    let (bytes, manifest) = backup::create_backup_zip()?;
-    Ok(BackupExport {
-        filename: backup::backup_filename(),
-        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-        run_count: manifest.run_count,
-        snapshot_count: manifest.snapshot_count,
+    run_blocking("export_backup", move || {
+        let (bytes, manifest) = backup::create_backup_zip()?;
+        let path = downloads_path(&backup::backup_filename())?;
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(BackupExport {
+            path: path.display().to_string(),
+            run_count: manifest.run_count,
+            snapshot_count: manifest.snapshot_count,
+        })
     })
+    .await
 }
 
-/// Replace the local database from a backup zip (base64).
+/// Replace the local database from a backup zip the user picks. Reads the
+/// file straight from disk rather than taking file content as a command
+/// argument, for the same reason as `export_backup`.
 #[tauri::command]
-pub fn restore_backup(state: State<AppState>, data_base64: String) -> Result<BackupRestore, String> {
+pub async fn restore_backup(state: State<'_, AppState>) -> Result<Option<BackupRestore>, String> {
     ensure_scanner_stopped(&state)?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| format!("Invalid backup data: {e}"))?;
-    let result = backup::restore_backup_zip(&bytes)?;
-    reset_scanner_state(&state);
+    let result = run_blocking("restore_backup", move || {
+        let path = match rfd::FileDialog::new()
+            .set_title("Restore backup")
+            .add_filter("Zip", &["zip"])
+            .pick_file()
+        {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        backup::restore_backup_zip(&bytes).map(Some)
+    })
+    .await?;
+    if result.is_some() {
+        reset_scanner_state(&state);
+    }
     Ok(result)
 }
 
