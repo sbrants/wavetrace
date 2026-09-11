@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.7] — 2026-09-11
+
+### Added
+
+- **History's filters are now collapsible**, and — along with every chart display toggle (Coin/min, Wave jumps, GC activations, Lead/lag band) on both the Dashboard and History — remember their state across restarts.
+- **The runs selected for comparison now persist across restarts** — reopening the app restores the same comparison instead of losing the selection.
+- **Compare and single-run charts can be expanded to fill the window** via a new Expand button, for a closer look at dense data.
+
+### Changed
+
+- **Reworked History's toolbar and the comparison panel's controls into icon buttons** that collapse their text label (falling back to a tooltip) once the window is too narrow to show everything labeled, instead of wrapping into ragged multi-line rows or, in the comparison panel, running checkboxes and buttons off the edge of the window entirely.
+- The runs table's checkbox column is back to its intended width — a global input style meant for text fields was also matching checkboxes, secretly giving every checkbox in the app an 80px-wide invisible hit area that `table-layout: auto` was expanding into. The Started column also no longer wraps its timestamp across three lines.
+- Golden Combo activations, Wave jumps, and Coin/min now use icons matching their in-game look (a gold "C" badge, a skip-forward glyph, and a $ sign) instead of generic chart icons.
+
+### Fixed
+
+- **History didn't show a newly started run until you manually refreshed** — the runs list only reloaded on explicit actions, never on the scanner switching to a new run.
+- **The run comparison could silently stop updating, get cleared, or "Compare" could stop responding** while an ongoing run was part of it — its background refresh looked up the compared runs through the table's active filter (so changing the filter could drop them from the comparison), and shared a staleness guard with the explicit "Compare selected" action (so a background refresh tick could make a fresh compare click's own result get silently discarded).
+- **Tooltips could render off the top edge of the screen** when a chart was expanded to fill the window; they now flip to show below the control instead when there isn't room above it.
+
+---
+
 ## [0.4.6] — 2026-09-07
 
 ### Fixed

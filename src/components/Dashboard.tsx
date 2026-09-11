@@ -17,6 +17,7 @@ import {
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 import { formatRunType, runTypeUsesBadge } from "../runType";
+import { usePersistedBoolean } from "../persistedState";
 
 const SNAPSHOT_REFRESH_MS = 15_000;
 
@@ -26,9 +27,18 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const [skipTotal, setSkipTotal] = useState(0);
   const [chartWaveSkips, setChartWaveSkips] = useState<WaveSkipRow[]>([]);
   const [chartNormalJumps, setChartNormalJumps] = useState<number[]>([]);
-  const [showWaveJumps, setShowWaveJumps] = useState(true);
-  const [showCoinPerMinute, setShowCoinPerMinute] = useState(true);
-  const [showGcActivations, setShowGcActivations] = useState(true);
+  const [showWaveJumps, setShowWaveJumps] = usePersistedBoolean(
+    "dashboard.showWaveJumps",
+    true
+  );
+  const [showCoinPerMinute, setShowCoinPerMinute] = usePersistedBoolean(
+    "dashboard.showCoinPerMinute",
+    true
+  );
+  const [showGcActivations, setShowGcActivations] = usePersistedBoolean(
+    "dashboard.showGcActivations",
+    true
+  );
   const chartRef = useRef<HTMLDivElement>(null);
   const lastFetchAtRef = useRef(0);
   const lastWaveRef = useRef<number | null>(null);

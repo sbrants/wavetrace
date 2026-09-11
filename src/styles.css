@@ -336,6 +336,28 @@ textarea:focus-visible,
   color: var(--text);
 }
 
+.filter-field select {
+  width: 190px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-field-grow {
+  flex: 1 1 190px;
+  max-width: 420px;
+}
+
+.filter-field-grow select {
+  width: 100%;
+}
+
+.filter-field input[type="number"] {
+  width: 90px;
+  min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -380,7 +402,9 @@ button.danger:disabled {
 }
 
 .check-col {
-  width: 36px;
+  width: 32px;
+  padding-left: 8px;
+  padding-right: 8px;
   text-align: center;
 }
 
@@ -478,6 +502,101 @@ main {
   gap: 10px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+
+.history-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.toolbar-compact-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* nowrap is deliberate: Filters and the actions block always share this
+     one row. With `wrap`, the browser decides whether .toolbar-actions fits
+     on this line using its unshrunk (labeled) content size — so it would
+     jump to its own line while still labeled, wide open, well before
+     flex-shrink ever got a chance to compress it. */
+  flex-wrap: nowrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.toolbar-filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.toolbar-actions {
+  /* Fills whatever room is left next to the Filters button so its content
+     hugs the right edge. Deliberately no min-width: 0 here — letting this
+     shrink below its own buttons' natural width just pushes them to
+     silently overlap the Filters button instead. */
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.toolbar-actions-compact .btn-icon {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* Groups related buttons (selection info, exports, bulk actions) with a
+   wider gap between groups than within one. flex-shrink: 0 keeps a group's
+   own buttons from being unevenly squeezed. */
+.toolbar-action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.toolbar-selected-count {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Off-screen, always-labeled clone of .toolbar-actions: exists purely so
+   its scrollWidth tells the resize observer whether labels would fit,
+   without ever affecting visible layout, scroll, or focus order. */
+.toolbar-actions-shadow {
+  position: absolute;
+  top: -9999px;
+  left: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  flex-wrap: nowrap;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.filter-drawer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
 }
 
 .muted {
@@ -650,6 +769,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -659,10 +779,70 @@ main {
   color: var(--muted);
 }
 
+/* Scoped to compare-card only: its actions row now has JS-driven label
+   collapse (see compareActionsCompact), so it's safe to force the title to
+   share one line with it — nowrap + shrink + ellipsis on the title instead
+   of wrapping to its own line, matching the toolbar's Filters treatment.
+   The single-run chart card's header doesn't have that JS yet, so it keeps
+   the default wrap behavior above rather than risking an overflow. */
+.compare-card .chart-card-header {
+  flex-wrap: nowrap;
+}
+
+.compare-card .chart-card-header h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-card .chart-card-actions {
+  flex-shrink: 0;
+}
+
 .chart-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.chart-card-actions-compact .btn-icon {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* Off-screen, always-labeled clone of .chart-card-actions: exists purely so
+   its scrollWidth tells the resize observer whether "Clear comparison" and
+   "Expand" would fit with their labels shown, without ever affecting
+   visible layout, scroll, or focus order. */
+.chart-card-actions-shadow {
+  position: absolute;
+  top: -9999px;
+  left: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  flex-wrap: nowrap;
+}
+
+.chart-card--expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  margin: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chart-card--expanded .chart-card-header {
+  flex-shrink: 0;
+}
+
+.chart-card-body--expanded {
+  flex: 1;
+  min-height: 0;
 }
 
 .chart-marquee .recharts-wrapper {
@@ -706,6 +886,43 @@ button.icon-btn {
 button.icon-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Custom tooltip: native `title` tooltips render unreliably in the WebView2
+   host (they only seem to trigger with the cursor over an exact painted
+   pixel, and never at all on a disabled button). `<DataTooltip>` renders one
+   shared bubble, positioned via JS with `position: fixed`. It deliberately
+   is NOT a per-element `::after` (`position: absolute`) — that broke inside
+   any scrolling container (e.g. the History toolbar's `overflow-x: auto`):
+   even invisible until hover, the bubble's layout box still counted toward
+   the scroll container's scrollable content, so a bubble wider than its
+   (narrow, icon-only) trigger button silently forced a horizontal
+   scrollbar onto a row with plenty of visible room. `position: fixed` is
+   positioned relative to the viewport and never participates in an
+   ancestor's scroll geometry. */
+.shared-tooltip {
+  position: fixed;
+  /* transform is set inline (DataTooltip.tsx) — flips between above/below
+     the trigger depending on available space, so no default here. */
+  background: #0f1830;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  z-index: 1200;
+  opacity: 0;
+  animation: tooltip-fade-in 0.1s ease 0.3s forwards;
+}
+
+@keyframes tooltip-fade-in {
+  to {
+    opacity: 1;
+  }
 }
 
 .compare-card .compare-summary {
@@ -765,6 +982,7 @@ td {
   text-align: left;
   font-size: 13px;
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 
 th {
@@ -787,6 +1005,35 @@ tbody tr.selected {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+
+.history-table-wrap table {
+  /* table-layout: auto keeps redistributing leftover width into whichever
+     columns have the loosest constraint — the checkbox column doesn't
+     resist that at all, so it kept ending up 2-3x its declared width.
+     `fixed` + the explicit <colgroup> widths in History.tsx makes every
+     column's width exactly what's declared as a MINIMUM: width: 100% lets
+     the table stretch to fill a wide wrapper (each column grows only in
+     proportion to its own declared width, so the checkbox column stays
+     comparatively tiny even when stretched), while min-width pins it to
+     the columns' true total on a narrow wrapper instead of shrinking any
+     column below what its content needs — .history-table-wrap's
+     overflow-x: auto scrolls once the wrapper is narrower than that.
+     min-width here MUST be the exact sum of the <colgroup> column widths
+     (32+210+90+180+56+90+130+100+90+200 = 1178px) — keep the two in sync. */
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1178px;
+}
+
+.history-table-wrap th,
+.history-table-wrap td {
+  /* With table-layout: fixed, a cell wider than its column no longer
+     forces the column to grow — it would instead bleed into the next
+     column. Truncate instead, since every fixed-width column here should
+     comfortably fit its real content. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .snapshot-panel {
@@ -1300,7 +1547,7 @@ tbody tr.selected {
   color: var(--muted);
 }
 
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select {
   background: #0f1830;
   color: var(--text);

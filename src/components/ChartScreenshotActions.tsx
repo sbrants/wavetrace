@@ -69,7 +69,7 @@ export default function ChartScreenshotActions({
         disabled={disabled || busy}
         onClick={onCopy}
         aria-label="Copy chart screenshot"
-        title="Copy screenshot"
+        data-tooltip="Copy screenshot"
       >
         <CopyIcon />
       </button>
@@ -79,7 +79,7 @@ export default function ChartScreenshotActions({
         disabled={disabled || busy}
         onClick={onDownload}
         aria-label="Download chart screenshot"
-        title="Download screenshot"
+        data-tooltip="Download screenshot"
       >
         <DownloadIcon />
       </button>

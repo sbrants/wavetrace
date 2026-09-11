@@ -10,6 +10,7 @@ import AccountSelector from "./components/AccountSelector";
 import CaptureOutageBanner from "./components/CaptureOutageBanner";
 import ToastStack from "./components/ToastStack";
 import ConfirmDialog from "./components/ConfirmDialog";
+import DataTooltip from "./components/DataTooltip";
 import { registerTabControl, type AppTab } from "./tabCapture";
 import ExternalLink from "./ExternalLink";
 import { DiscordIcon } from "./support";
@@ -362,6 +363,7 @@ export default function App() {
       </main>
       <ToastStack />
       <ConfirmDialog />
+      <DataTooltip />
     </div>
   );
 }

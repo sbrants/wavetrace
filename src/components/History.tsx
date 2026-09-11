@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { api, formatAvgGoldenComboCaret, formatCoin, formatGoldenCombo, parseOptionalCoin, ExportFileResult, RunFilter, RunRow, SnapshotRow, WaveSkipRow } from "../api";
 import {
   buildCompareChartDataByWave,
@@ -18,6 +25,7 @@ import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../run
 import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
 import { setCompareSessionActive } from "../notificationCapture";
+import { usePersistedBoolean } from "../persistedState";
 
 type SortKey =
   | "started_at"
@@ -95,6 +103,33 @@ function pruneSelectedIds(
   return changed ? next : prev;
 }
 
+const COMPARE_IDS_STORAGE_KEY = "wavetrace.history.compare.runIds";
+
+function loadPersistedCompareIds(): string[] {
+  try {
+    const raw = localStorage.getItem(COMPARE_IDS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePersistedCompareIds(ids: string[]): void {
+  try {
+    if (ids.length >= 2) {
+      localStorage.setItem(COMPARE_IDS_STORAGE_KEY, JSON.stringify(ids));
+    } else {
+      localStorage.removeItem(COMPARE_IDS_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage unavailable — the selection just won't survive a restart.
+  }
+}
+
 export default function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [filter, setFilter] = useState<RunFilter>({});
@@ -102,6 +137,10 @@ export default function History() {
   const [dateTo, setDateTo] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("started_at");
   const [sortAsc, setSortAsc] = useState(false);
+  const [filtersOpen, setFiltersOpen] = usePersistedBoolean(
+    "history.filtersOpen",
+    true
+  );
   const [selected, setSelected] = useState<RunRow | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
@@ -123,12 +162,30 @@ export default function History() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(5);
   const [jumpPage, setJumpPage] = useState("");
-  const [compareShowSkips, setCompareShowSkips] = useState(false);
-  const [compareShowCoin, setCompareShowCoin] = useState(true);
-  const [compareShowGc, setCompareShowGc] = useState(false);
-  const [showWaveJumps, setShowWaveJumps] = useState(true);
-  const [showCoinPerMinute, setShowCoinPerMinute] = useState(true);
-  const [showGcActivations, setShowGcActivations] = useState(true);
+  const [compareShowSkips, setCompareShowSkips] = usePersistedBoolean(
+    "history.compare.showSkips",
+    false
+  );
+  const [compareShowCoin, setCompareShowCoin] = usePersistedBoolean(
+    "history.compare.showCoin",
+    true
+  );
+  const [compareShowGc, setCompareShowGc] = usePersistedBoolean(
+    "history.compare.showGc",
+    false
+  );
+  const [showWaveJumps, setShowWaveJumps] = usePersistedBoolean(
+    "history.single.showWaveJumps",
+    true
+  );
+  const [showCoinPerMinute, setShowCoinPerMinute] = usePersistedBoolean(
+    "history.single.showCoinPerMinute",
+    true
+  );
+  const [showGcActivations, setShowGcActivations] = usePersistedBoolean(
+    "history.single.showGcActivations",
+    true
+  );
   const [coinOutlierBelow, setCoinOutlierBelow] = useState("");
   const [coinOutlierAbove, setCoinOutlierAbove] = useState("");
   const [gcOutlierBelow, setGcOutlierBelow] = useState("");
@@ -138,7 +195,12 @@ export default function History() {
   const [compareSmoothWindow, setCompareSmoothWindow] = useState<0 | 3 | 5 | 10>(
     10
   );
-  const [compareLeadLagBand, setCompareLeadLagBand] = useState(true);
+  const [compareLeadLagBand, setCompareLeadLagBand] = usePersistedBoolean(
+    "history.compare.leadLagBand",
+    true
+  );
+  const [chartExpanded, setChartExpanded] = useState(false);
+  const [expandedChartHeight, setExpandedChartHeight] = useState<number>();
   const [chartSelectMode, setChartSelectMode] = useState(false);
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<Set<string>>(
     new Set()
@@ -169,15 +231,120 @@ export default function History() {
   const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const liveRefreshAtRef = useRef(0);
-  /** Guards compareSelected()/refreshCompare() against out-of-order responses:
-   * only the most recently issued call is allowed to update compare state. */
+  /** Guards compareSelected()/restoreCompareFromIds() against out-of-order
+   * responses: only the most recently issued call is allowed to update
+   * compare state. refreshCompare() deliberately does NOT use this — it's a
+   * background sync of whatever comparison is already active, and must
+   * never be able to cancel a fresh user-initiated compareSelected() call
+   * (see compareRunIdsRef instead). */
   const compareRequestRef = useRef(0);
+  /** Mirrors compareRunIdsKey for refreshCompare()'s own out-of-order guard:
+   * bail if the set of compared runs changed while the fetch was in flight. */
+  const compareRunIdsRef = useRef("");
+  const expandedChartBodyRef = useRef<HTMLDivElement>(null);
+  const toolbarCompactBarRef = useRef<HTMLDivElement>(null);
+  const toolbarFiltersBtnRef = useRef<HTMLButtonElement>(null);
+  const toolbarActionsShadowRef = useRef<HTMLDivElement>(null);
+  const [toolbarActionsCompact, setToolbarActionsCompact] = useState(false);
+  const compareTitleRef = useRef<HTMLHeadingElement>(null);
+  const compareActionsShadowRef = useRef<HTMLDivElement>(null);
+  const [compareActionsCompact, setCompareActionsCompact] = useState(false);
 
   useEffect(() => {
     const active = compareRuns.length >= 2;
     setCompareSessionActive(active);
     void api.setCompareCaptureActive(active);
   }, [compareRuns]);
+
+  // Auto-collapse if the expanded chart's data disappears from under it
+  // (comparison cleared, run deselected, etc.).
+  useEffect(() => {
+    const chartVisible =
+      compareRuns.length >= 2 || (selected != null && compareRuns.length < 2);
+    if (!chartVisible) setChartExpanded(false);
+  }, [compareRuns.length, selected]);
+
+  useEffect(() => {
+    if (!chartExpanded) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChartExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chartExpanded]);
+
+  useEffect(() => {
+    if (!chartExpanded) return;
+    const el = expandedChartBodyRef.current;
+    if (!el) return;
+    const update = () => setExpandedChartHeight(el.clientHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [chartExpanded]);
+
+  // Hide the toolbar action buttons' text labels only once they'd actually
+  // stop fitting — measured against a hidden always-labeled copy — rather
+  // than wrapping/scrolling while there'd have been room for icon-only
+  // buttons. .toolbar-compact-bar is flex-nowrap and the Filters button is
+  // flex-shrink:0 (see CSS), so both their sizes are stable regardless of
+  // what the actions column ends up rendering, which is what makes this
+  // arithmetic reliable. clientWidth includes the bar's own left/right
+  // padding, which isn't available to its children, so that has to come
+  // out too.
+  useLayoutEffect(() => {
+    const bar = toolbarCompactBarRef.current;
+    const filtersBtn = toolbarFiltersBtnRef.current;
+    const shadow = toolbarActionsShadowRef.current;
+    if (!bar || !filtersBtn || !shadow) return;
+    const check = () => {
+      const barStyle = getComputedStyle(bar);
+      const barPadding =
+        parseFloat(barStyle.paddingLeft) + parseFloat(barStyle.paddingRight);
+      const available =
+        bar.clientWidth - barPadding - filtersBtn.offsetWidth - 10;
+      setToolbarActionsCompact(shadow.scrollWidth > available);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(bar);
+    observer.observe(shadow);
+    return () => observer.disconnect();
+  }, []);
+
+  // Same idea as the toolbar above: the title and the actions row share one
+  // line (.chart-card-header is nowrap — see CSS), so hide the toggle
+  // buttons' text labels once title + actions together stop fitting, the
+  // same way the Filters button forced the toolbar's actions to compact.
+  // title.scrollWidth (not offsetWidth) is used because the title itself is
+  // allowed to shrink/truncate via CSS as a last resort — scrollWidth still
+  // reports its true, unshrunk content width regardless of how narrow its
+  // box is currently rendered.
+  // Depends on compareRuns.length because the whole card (and these refs)
+  // only exist in the DOM once there are 2+ compared runs — compareRuns
+  // starts empty and populates asynchronously, so an empty dep array here
+  // would find null refs on the one and only run and never attach the
+  // ResizeObserver at all.
+  useLayoutEffect(() => {
+    const card = compareChartRef.current;
+    const title = compareTitleRef.current;
+    const shadow = compareActionsShadowRef.current;
+    if (!card || !title || !shadow) return;
+    const check = () => {
+      const cardStyle = getComputedStyle(card);
+      const cardPadding =
+        parseFloat(cardStyle.paddingLeft) + parseFloat(cardStyle.paddingRight);
+      const available = card.clientWidth - cardPadding - title.scrollWidth - 12;
+      setCompareActionsCompact(shadow.scrollWidth > available);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(card);
+    observer.observe(title);
+    observer.observe(shadow);
+    return () => observer.disconnect();
+  }, [compareRuns.length]);
 
   const listFilter = useCallback((): RunFilter => {
     const next: RunFilter = { ...filter };
@@ -199,6 +366,24 @@ export default function History() {
   }, [listFilter]);
 
   useEffect(reload, [reload]);
+
+  // Refresh the runs list whenever the scanner switches to a different run
+  // (a new run starting, or resuming one) so it shows up without a manual
+  // refresh.
+  useEffect(() => {
+    let lastRunId: string | null = null;
+    let unlisten: (() => void) | undefined;
+    void api
+      .onScannerUpdate((e) => {
+        if (e.current_run_id === lastRunId) return;
+        lastRunId = e.current_run_id;
+        if (e.current_run_id) reload();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
+  }, [reload]);
 
   useEffect(() => {
     void api.getSettings().then((s) => {
@@ -372,39 +557,47 @@ export default function History() {
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
       );
       setCompareRuns(runsToCompare);
+      savePersistedCompareIds(runsToCompare.map((r) => r.id));
     } catch (e) {
       if (compareRequestRef.current === requestId) {
         reportUiError(e, "History");
       }
     } finally {
-      if (compareRequestRef.current === requestId) {
-        setCompareLoading(false);
-      }
+      // Unconditional: this flag reflects whether *this* compareSelected()
+      // call is still in flight, not whether it won the race to render — a
+      // refreshCompare() firing in the background (e.g. while filters are
+      // being tweaked, for an ongoing compared run) also bumps
+      // compareRequestRef and must not leave the Compare button stuck
+      // disabled forever.
+      setCompareLoading(false);
     }
   };
 
   const compareRunIdsKey = compareRuns.map((r) => r.id).join(",");
   const compareRunIds = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
   const hasOngoingCompareRun = compareRuns.some((r) => !r.ended_at);
+  compareRunIdsRef.current = compareRunIdsKey;
 
   const refreshCompare = useCallback(async () => {
-    const ids = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
+    const idsAtStart = compareRunIdsKey;
+    const ids = idsAtStart ? idsAtStart.split(",") : [];
     if (ids.length < 2) return;
-    const requestId = ++compareRequestRef.current;
     try {
-      const activeFilter = listFilter();
-      const [entries, updatedRuns] = await Promise.all([
+      const [entries, allRuns, tableRuns] = await Promise.all([
         Promise.all(
           ids.map(async (id) => {
             const view = await api.runDashboardData(id);
             return [id, view] as const;
           })
         ),
-        api.listRuns(activeFilter),
+        // Unfiltered — the compared runs must be found regardless of the
+        // table's active filter (they may no longer match it).
+        api.listRuns({}),
+        api.listRuns(listFilter()),
       ]);
-      // Superseded by a newer refresh or a fresh compareSelected() — don't
-      // clobber whatever that one already rendered.
-      if (compareRequestRef.current !== requestId) return;
+      // The set of compared runs changed (new comparison started, or
+      // cleared) while this refresh was in flight — don't clobber it.
+      if (compareRunIdsRef.current !== idsAtStart) return;
       setCompareSnapshots(
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
       );
@@ -414,16 +607,75 @@ export default function History() {
       setCompareNormalJumps(
         Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
       );
-      setCompareRuns(
-        ids
-          .map((id) => updatedRuns.find((r) => r.id === id))
-          .filter((r): r is RunRow => r != null)
-      );
-      setRuns(updatedRuns);
+      const matchedRuns = ids
+        .map((id) => allRuns.find((r) => r.id === id))
+        .filter((r): r is RunRow => r != null);
+      setCompareRuns(matchedRuns);
+      savePersistedCompareIds(matchedRuns.map((r) => r.id));
+      setRuns(tableRuns);
     } catch {
       /* keep last chart */
     }
   }, [compareRunIdsKey, listFilter]);
+
+  const restoreCompareFromIds = useCallback(
+    async (ids: string[]) => {
+      if (ids.length < 2) return;
+      const requestId = ++compareRequestRef.current;
+      setCompareLoading(true);
+      try {
+        const [entries, updatedRuns] = await Promise.all([
+          Promise.all(
+            ids.map(async (id) => {
+              const view = await api.runDashboardData(id);
+              return [id, view] as const;
+            })
+          ),
+          api.listRuns(listFilter()),
+        ]);
+        if (compareRequestRef.current !== requestId) return;
+        const matchedRuns = ids
+          .map((id) => updatedRuns.find((r) => r.id === id))
+          .filter((r): r is RunRow => r != null);
+        if (matchedRuns.length < 2) {
+          // One or more of the persisted runs no longer exists — drop the
+          // stale selection rather than showing a partial comparison.
+          savePersistedCompareIds([]);
+          return;
+        }
+        setCompareSnapshots(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
+        );
+        setCompareWaveSkips(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
+        );
+        setCompareNormalJumps(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
+        );
+        setCompareRuns(matchedRuns);
+        setChecked(new Set(matchedRuns.map((r) => r.id)));
+      } catch {
+        // Persisted runs may have been deleted — give up quietly.
+        savePersistedCompareIds([]);
+      } finally {
+        // Unconditional for the same reason as in compareSelected() — this
+        // flag tracks whether this call is still in flight, not whether it
+        // won the race to render.
+        setCompareLoading(false);
+      }
+    },
+    [listFilter]
+  );
+
+  useEffect(() => {
+    const ids = loadPersistedCompareIds();
+    if (ids.length >= 2) {
+      void restoreCompareFromIds(ids);
+    }
+    // Restore only once, on mount — subsequent changes are persisted
+    // explicitly wherever compareRuns is set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
@@ -453,6 +705,7 @@ export default function History() {
     setCompareSnapshots({});
     setCompareWaveSkips({});
     setCompareNormalJumps({});
+    savePersistedCompareIds([]);
   };
 
   const combineSelected = async () => {
@@ -1143,7 +1396,7 @@ export default function History() {
 
   const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
     dataKey: `coin_${i}`,
-    name: runShortLabel(r),
+    name: runShortLabel(r, compareSnapshots[r.id]),
     stroke: COMPARE_COLORS[i % COMPARE_COLORS.length],
   }));
 
@@ -1154,87 +1407,349 @@ export default function History() {
     setJumpPage("");
   };
 
-  return (
-    <div className="history">
-      <div className="toolbar" role="search" aria-label="Run history filters">
-        <label className="filter-field">
-          Run type
-          <select
-            value={filter.run_type ?? ""}
-            onChange={(e) =>
-              setFilter({ ...filter, run_type: e.target.value || undefined })
-            }
-          >
-            <option value="">All run types</option>
-            {RUN_TYPE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-field">
-          Min wave
-          <input
-            type="number"
-            placeholder="Any"
-            onChange={(e) =>
-              setFilter({
-                ...filter,
-                min_wave: e.target.value ? Number(e.target.value) : undefined,
-              })
-            }
-          />
-        </label>
-        <label className="filter-field">
-          Min tier
-          <input
-            type="number"
-            placeholder="Any"
-            onChange={(e) =>
-              setFilter({
-                ...filter,
-                min_tier: e.target.value ? Number(e.target.value) : undefined,
-              })
-            }
-          />
-        </label>
-        <label className="filter-field">
-          From date
-          <input
-            type="date"
-            value={dateFrom}
-            max={dateTo || undefined}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-        </label>
-        <label className="filter-field">
-          To date
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-        </label>
-        {(dateFrom || dateTo) && (
+  const renderToolbarActionGroups = (showLabels: boolean) => (
+    <>
+      {checked.size > 0 && (
+        <div className="toolbar-action-group">
+          <span className="toolbar-selected-count">
+            {checked.size} selected
+          </span>
           <button
             type="button"
-            onClick={() => {
-              setDateFrom("");
-              setDateTo("");
-            }}
+            className="icon-btn"
+            onClick={() => setChecked(new Set())}
+            data-tooltip="Clear selection"
+            aria-label="Clear selection"
           >
-            Clear dates
+            <CloseIcon />
+          </button>
+        </div>
+      )}
+      <div className="toolbar-action-group">
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={reload}
+          data-tooltip="Refresh the run list"
+        >
+          <RefreshIcon />
+          {showLabels && <span className="btn-icon-label">Refresh</span>}
+        </button>
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={exportCsv}
+          disabled={exportBusy}
+          data-tooltip="Export CSV"
+        >
+          <ExportIcon />
+          {showLabels && <span className="btn-icon-label">Export CSV</span>}
+        </button>
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={exportWorkbook}
+          disabled={exportBusy}
+          data-tooltip="Export ODS"
+        >
+          <DocumentIcon />
+          {showLabels && <span className="btn-icon-label">Export ODS</span>}
+        </button>
+      </div>
+      <div className="toolbar-action-group">
+        <button
+          type="button"
+          className="btn-icon"
+          disabled={checked.size < 2 || compareLoading}
+          onClick={compareSelected}
+          data-tooltip={
+            compareLoading
+              ? "Loading…"
+              : checked.size < 2
+                ? "Select 2+ runs to compare"
+                : `Compare selected (${checked.size})`
+          }
+        >
+          <CompareIcon />
+          {showLabels && (
+            <span className="btn-icon-label">
+              Compare{checked.size >= 2 ? ` (${checked.size})` : ""}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="btn-icon"
+          disabled={checked.size < 2}
+          onClick={combineSelected}
+          data-tooltip={
+            checked.size < 2
+              ? "Select 2+ runs to combine"
+              : `Combine selected (${checked.size})`
+          }
+        >
+          <CombineIcon />
+          {showLabels && (
+            <span className="btn-icon-label">
+              Combine{checked.size >= 2 ? ` (${checked.size})` : ""}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="btn-icon danger"
+          disabled={checked.size === 0}
+          onClick={deleteSelected}
+          data-tooltip={
+            checked.size === 0
+              ? "Select runs to delete"
+              : `Delete selected (${checked.size})`
+          }
+        >
+          <TrashIcon />
+          {showLabels && (
+            <span className="btn-icon-label">
+              Delete{checked.size > 0 ? ` (${checked.size})` : ""}
+            </span>
+          )}
+        </button>
+      </div>
+    </>
+  );
+
+  const renderCompareActions = (showLabels: boolean) => (
+    <>
+      <div className="toolbar-action-group">
+        <button
+          type="button"
+          className={compareShowCoin ? "btn-icon active" : "btn-icon"}
+          onClick={() => setCompareShowCoin((v) => !v)}
+          aria-pressed={compareShowCoin}
+          data-tooltip="Show coin/min series on the chart"
+        >
+          <CoinIcon />
+          {showLabels && <span className="btn-icon-label">Coin/min</span>}
+        </button>
+        {hasCompareSkips && (
+          <button
+            type="button"
+            className={compareShowSkips ? "btn-icon active" : "btn-icon"}
+            onClick={() => setCompareShowSkips((v) => !v)}
+            aria-pressed={compareShowSkips}
+            data-tooltip="Show skip/jump markers on the chart"
+          >
+            <WaveJumpIcon />
+            {showLabels && (
+              <span className="btn-icon-label">Wave jumps</span>
+            )}
           </button>
         )}
-        <button onClick={reload}>Refresh</button>
-        <button onClick={exportCsv} disabled={exportBusy}>
-          Export CSV
+        {hasCompareGc && (
+          <button
+            type="button"
+            className={compareShowGc ? "btn-icon active" : "btn-icon"}
+            onClick={() => setCompareShowGc((v) => !v)}
+            aria-pressed={compareShowGc}
+            data-tooltip="Show Golden Combo activation (^) series on the chart"
+          >
+            <GcActivationIcon />
+            {showLabels && (
+              <span className="btn-icon-label">GC activations</span>
+            )}
+          </button>
+        )}
+      </div>
+      <label className="compare-smooth-label">
+        Smooth
+        <select
+          className="compare-axis-select"
+          value={compareSmoothWindow}
+          onChange={(e) =>
+            setCompareSmoothWindow(Number(e.target.value) as 0 | 3 | 5 | 10)
+          }
+          aria-label="Compare chart smoothing"
+        >
+          <option value={0}>Off</option>
+          <option value={3}>3 pts</option>
+          <option value={5}>5 pts</option>
+          <option value={10}>10 pts</option>
+        </select>
+      </label>
+      <div className="toolbar-action-group">
+        <button
+          type="button"
+          className={compareLeadLagBand ? "btn-icon active" : "btn-icon"}
+          onClick={() => setCompareLeadLagBand((v) => !v)}
+          disabled={compareRuns.length !== 2 || !compareShowCoin}
+          aria-pressed={compareLeadLagBand}
+          data-tooltip={
+            compareRuns.length !== 2
+              ? "Lead/lag band is available when comparing exactly 2 runs"
+              : !compareShowCoin
+                ? "Lead/lag band needs coin/min visible"
+                : "Green when the newer run is higher; red when lower"
+          }
+        >
+          <LeadLagIcon />
+          {showLabels && (
+            <span className="btn-icon-label">Lead/lag band</span>
+          )}
         </button>
-        <button onClick={exportWorkbook} disabled={exportBusy}>
-          Export ODS
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={clearCompare}
+          data-tooltip="Clear comparison"
+        >
+          <CloseIcon />
+          {showLabels && (
+            <span className="btn-icon-label">Clear comparison</span>
+          )}
         </button>
+        <ChartScreenshotActions
+          targetRef={compareChartRef}
+          disabled={compareChartData.length === 0}
+        />
+        <button
+          type="button"
+          className={chartExpanded ? "btn-icon primary" : "btn-icon"}
+          onClick={() => setChartExpanded((v) => !v)}
+          data-tooltip={
+            chartExpanded ? "Collapse chart (Esc)" : "Expand chart to fill the window"
+          }
+        >
+          {chartExpanded ? <CollapseIcon /> : <ExpandIcon />}
+          {showLabels && (
+            <span className="btn-icon-label">
+              {chartExpanded ? "Collapse" : "Expand"}
+            </span>
+          )}
+        </button>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="history">
+      <div className="history-toolbar">
+        <div className="toolbar-compact-bar" ref={toolbarCompactBarRef}>
+          <button
+            type="button"
+            className="toolbar-filters-btn"
+            ref={toolbarFiltersBtnRef}
+            aria-expanded={filtersOpen}
+            aria-controls="history-filter-drawer"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            <FunnelIcon />
+            Filters
+            {filtersOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          </button>
+
+          <div
+            className={
+              toolbarActionsCompact
+                ? "toolbar-actions toolbar-actions-compact"
+                : "toolbar-actions"
+            }
+          >
+            {renderToolbarActionGroups(!toolbarActionsCompact)}
+          </div>
+        </div>
+
+        {/* Off-screen, always-labeled copy used only to measure whether
+            labels would fit — never shown, never reachable. Kept out of
+            .toolbar-compact-bar so it can never affect that element's own
+            overflow/scrollbar. */}
+        <div
+          className="toolbar-actions toolbar-actions-shadow"
+          aria-hidden="true"
+          ref={toolbarActionsShadowRef}
+        >
+          {renderToolbarActionGroups(true)}
+        </div>
+
+        {filtersOpen && (
+          <div
+            id="history-filter-drawer"
+            className="filter-drawer"
+            role="search"
+            aria-label="Run history filters"
+          >
+            <label className="filter-field filter-field-grow">
+              Run type
+              <select
+                value={filter.run_type ?? ""}
+                onChange={(e) =>
+                  setFilter({ ...filter, run_type: e.target.value || undefined })
+                }
+              >
+                <option value="">All run types</option>
+                {RUN_TYPE_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="filter-field">
+              Min wave
+              <input
+                type="number"
+                placeholder="Any"
+                onChange={(e) =>
+                  setFilter({
+                    ...filter,
+                    min_wave: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+              />
+            </label>
+            <label className="filter-field">
+              Min tier
+              <input
+                type="number"
+                placeholder="Any"
+                onChange={(e) =>
+                  setFilter({
+                    ...filter,
+                    min_tier: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+              />
+            </label>
+            <label className="filter-field">
+              From date
+              <input
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
+            </label>
+            <label className="filter-field">
+              To date
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
+            </label>
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+              >
+                Clear dates
+              </button>
+            )}
+          </div>
+        )}
+
         {exportStatus && (
           <span
             className="chart-action-status"
@@ -1253,29 +1768,22 @@ export default function History() {
             )}
           </span>
         )}
-        <button
-          disabled={checked.size < 2 || compareLoading}
-          onClick={compareSelected}
-        >
-          {compareLoading ? "Loading…" : `Compare selected (${checked.size})`}
-        </button>
-        <button
-          disabled={checked.size < 2}
-          onClick={combineSelected}
-        >
-          Combine selected ({checked.size})
-        </button>
-        <button
-          className="danger"
-          disabled={checked.size === 0}
-          onClick={deleteSelected}
-        >
-          Delete selected ({checked.size})
-        </button>
       </div>
 
       <div className="history-table-wrap">
       <table>
+        <colgroup>
+          <col style={{ width: 32 }} />
+          <col style={{ width: 210 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 180 }} />
+          <col style={{ width: 56 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 130 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 200 }} />
+        </colgroup>
         <thead>
           <tr>
             <th className="check-col" scope="col">
@@ -1467,153 +1975,104 @@ export default function History() {
       )}
 
       {compareRuns.length >= 2 && (
-        <div className="chart-card compare-card" ref={compareChartRef}>
+        <div
+          className={
+            chartExpanded
+              ? "chart-card compare-card chart-card--expanded"
+              : "chart-card compare-card"
+          }
+          ref={compareChartRef}
+        >
           <div className="chart-card-header">
-            <h3>
+            <h3 ref={compareTitleRef}>
               Compare {compareRuns.length} runs — coin/min vs wave
               {hasOngoingCompareRun && (
                 <span className="muted"> · live</span>
               )}
             </h3>
-            <div className="chart-card-actions">
-              <label
-                className="checkbox-inline"
-                title="Show coin/min series on the chart"
-              >
-                <input
-                  type="checkbox"
-                  checked={compareShowCoin}
-                  onChange={(e) => setCompareShowCoin(e.target.checked)}
-                  aria-label="Show coin/min on compare chart"
-                />
-                Coin/min
-              </label>
-              {hasCompareSkips && (
-                <label
-                  className="checkbox-inline"
-                  title="Show skip/jump markers on the chart"
-                >
-                  <input
-                    type="checkbox"
-                    checked={compareShowSkips}
-                    onChange={(e) => setCompareShowSkips(e.target.checked)}
-                    aria-label="Show wave jumps on compare chart"
-                  />
-                  Wave jumps
-                </label>
-              )}
-              {hasCompareGc && (
-                <label
-                  className="checkbox-inline"
-                  title="Show Golden Combo activation (^) series on the chart"
-                >
-                  <input
-                    type="checkbox"
-                    checked={compareShowGc}
-                    onChange={(e) => setCompareShowGc(e.target.checked)}
-                    aria-label="Show GC activations on compare chart"
-                  />
-                  GC activations
-                </label>
-              )}
-              <label className="compare-smooth-label">
-                Smooth
-                <select
-                  className="compare-axis-select"
-                  value={compareSmoothWindow}
-                  onChange={(e) =>
-                    setCompareSmoothWindow(
-                      Number(e.target.value) as 0 | 3 | 5 | 10
-                    )
-                  }
-                  aria-label="Compare chart smoothing"
-                >
-                  <option value={0}>Off</option>
-                  <option value={3}>3 pts</option>
-                  <option value={5}>5 pts</option>
-                  <option value={10}>10 pts</option>
-                </select>
-              </label>
-              <label
-                className="checkbox-inline"
-                title={
-                  compareRuns.length !== 2
-                    ? "Lead/lag band is available when comparing exactly 2 runs"
-                    : !compareShowCoin
-                      ? "Lead/lag band needs coin/min visible"
-                      : "Green when the newer run is higher; red when lower"
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={compareLeadLagBand}
-                  onChange={(e) => setCompareLeadLagBand(e.target.checked)}
-                  disabled={compareRuns.length !== 2 || !compareShowCoin}
-                  aria-label="Show lead/lag band between two runs"
-                />
-                Lead/lag band
-              </label>
-              <button onClick={clearCompare}>Clear comparison</button>
-              <ChartScreenshotActions
-                targetRef={compareChartRef}
-                disabled={compareChartData.length === 0}
-              />
+            <div
+              className={
+                compareActionsCompact
+                  ? "chart-card-actions chart-card-actions-compact"
+                  : "chart-card-actions"
+              }
+            >
+              {renderCompareActions(!compareActionsCompact)}
             </div>
           </div>
-          <table className="compare-summary">
-            <thead>
-              <tr>
-                <th>Run</th>
-                <th>Duration</th>
-                <th>Type</th>
-                <th>Peak tier</th>
-                <th>Final wave</th>
-                <th>Avg coin/min</th>
-                <th>Avg GC ^</th>
-                <th>Snapshots</th>
-              </tr>
-            </thead>
-            <tbody>
-              {compareRuns.map((r, i) => (
-                <tr key={r.id}>
-                  <td>
-                    <span
-                      className="compare-swatch"
-                      style={{ background: COMPARE_COLORS[i % COMPARE_COLORS.length] }}
-                    />
-                    {runShortLabel(r)}
-                  </td>
-                  <td>{duration(r)}</td>
-                  <td>
-                    {runTypeUsesBadge(r.run_type) ? (
-                      <span className="badge">{formatRunType(r.run_type)}</span>
-                    ) : (
-                      formatRunType(r.run_type)
-                    )}
-                  </td>
-                  <td>{r.peak_tier ?? "—"}</td>
-                  <td>{r.final_wave ?? "—"}</td>
-                  <td>{formatCoin(r.avg_coin_per_minute)}</td>
-                  <td>{formatAvgGoldenComboCaret(r.avg_golden_combo_caret)}</td>
-                  <td>{r.snapshot_count}</td>
+
+          {/* Off-screen, always-labeled copy used only to measure whether
+              "Clear comparison"/"Expand" would fit with their labels shown. */}
+          <div
+            className="chart-card-actions chart-card-actions-shadow"
+            aria-hidden="true"
+            ref={compareActionsShadowRef}
+          >
+            {renderCompareActions(true)}
+          </div>
+          {!chartExpanded && (
+            <table className="compare-summary">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Duration</th>
+                  <th>Type</th>
+                  <th>Peak tier</th>
+                  <th>Final wave</th>
+                  <th>Avg coin/min</th>
+                  <th>Avg GC ^</th>
+                  <th>Snapshots</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <CoinVsWaveChart
-            mode="compare"
-            data={compareChartDisplayData}
-            lines={compareLines}
-            waveSkipsByLine={
-              compareShowSkips ? compareSkipMarkers : undefined
+              </thead>
+              <tbody>
+                {compareRuns.map((r, i) => (
+                  <tr key={r.id}>
+                    <td>
+                      <span
+                        className="compare-swatch"
+                        style={{ background: COMPARE_COLORS[i % COMPARE_COLORS.length] }}
+                      />
+                      {runShortLabel(r, compareSnapshots[r.id])}
+                    </td>
+                    <td>{duration(r)}</td>
+                    <td>
+                      {runTypeUsesBadge(r.run_type) ? (
+                        <span className="badge">{formatRunType(r.run_type)}</span>
+                      ) : (
+                        formatRunType(r.run_type)
+                      )}
+                    </td>
+                    <td>{liveRunStats(r, compareSnapshots[r.id]).tier ?? "—"}</td>
+                    <td>{liveRunStats(r, compareSnapshots[r.id]).wave ?? "—"}</td>
+                    <td>{formatCoin(r.avg_coin_per_minute)}</td>
+                    <td>{formatAvgGoldenComboCaret(r.avg_golden_combo_caret)}</td>
+                    <td>{r.snapshot_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div
+            className={
+              chartExpanded ? "chart-card-body chart-card-body--expanded" : "chart-card-body"
             }
-            showCoinPerMinute={compareShowCoin}
-            showGoldenComboActivations={compareShowGc}
-            height={320}
-            smoothWindow={compareSmoothWindow}
-            leadLagBand={compareShowCoin ? compareLeadLag : null}
-          />
-          {compareSmoothWindow > 1 && (
+            ref={expandedChartBodyRef}
+          >
+            <CoinVsWaveChart
+              mode="compare"
+              data={compareChartDisplayData}
+              lines={compareLines}
+              waveSkipsByLine={
+                compareShowSkips ? compareSkipMarkers : undefined
+              }
+              showCoinPerMinute={compareShowCoin}
+              showGoldenComboActivations={compareShowGc}
+              height={chartExpanded ? expandedChartHeight ?? 320 : 320}
+              smoothWindow={compareSmoothWindow}
+              leadLagBand={compareShowCoin ? compareLeadLag : null}
+            />
+          </div>
+          {!chartExpanded && compareSmoothWindow > 1 && (
             <p className="compare-chart-hint muted">
               Smoothing is visual only; summary stats use raw snapshot values.
               {compareShowCoin &&
@@ -1621,7 +2080,8 @@ export default function History() {
                 " Green: newer run ahead · red: newer run behind."}
             </p>
           )}
-          {compareSmoothWindow <= 1 &&
+          {!chartExpanded &&
+            compareSmoothWindow <= 1 &&
             compareShowCoin &&
             compareLeadLag != null && (
             <p className="compare-chart-hint muted">
@@ -1634,7 +2094,12 @@ export default function History() {
 
       {selected && compareRuns.length < 2 && (
         <>
-          <div className="chart-card" ref={chartRef}>
+          <div
+            className={
+              chartExpanded ? "chart-card chart-card--expanded" : "chart-card"
+            }
+            ref={chartRef}
+          >
             <div className="chart-card-header">
               <h3>
                 Run {new Date(selected.started_at).toLocaleString()} — coin/min &amp; GC
@@ -1719,50 +2184,71 @@ export default function History() {
                   targetRef={chartRef}
                   disabled={chartData.length === 0}
                 />
+                <button
+                  type="button"
+                  className={chartExpanded ? "primary" : undefined}
+                  onClick={() => setChartExpanded((v) => !v)}
+                  title={
+                    chartExpanded
+                      ? "Collapse chart (Esc)"
+                      : "Expand chart to fill the window"
+                  }
+                >
+                  {chartExpanded ? "Collapse" : "Expand"}
+                </button>
               </div>
             </div>
-            <CoinVsWaveChart
-              mode="single"
-              data={chartData}
-              waveSkips={skipMarkers}
-              height={300}
-              showWaveJumps={showWaveJumps}
-              showCoinPerMinute={showCoinPerMinute}
-              showGoldenComboActivations={showGcActivations}
-              selectedWaves={
-                chartSelectMode && showCoinPerMinute
-                  ? selectedWaves
-                  : undefined
+            <div
+              className={
+                chartExpanded
+                  ? "chart-card-body chart-card-body--expanded"
+                  : "chart-card-body"
               }
-              selectedSkipIds={
-                chartSelectMode && showWaveJumps
-                  ? [...selectedWaveSkipIds]
-                  : undefined
-              }
-              selectedGcWaves={
-                chartSelectMode && showGcActivations
-                  ? selectedGcWaves
-                  : undefined
-              }
-              onPointClick={
-                chartSelectMode && showCoinPerMinute
-                  ? toggleSnapshotWave
-                  : undefined
-              }
-              onSkipClick={
-                chartSelectMode && showWaveJumps
-                  ? (id) => toggleWaveSkipId(id)
-                  : undefined
-              }
-              onGcClick={
-                chartSelectMode && showGcActivations ? toggleGcWave : undefined
-              }
-              onSelectWaves={
-                chartSelectMode && showCoinPerMinute
-                  ? selectSnapshotWaves
-                  : undefined
-              }
-            />
+              ref={expandedChartBodyRef}
+            >
+              <CoinVsWaveChart
+                mode="single"
+                data={chartData}
+                waveSkips={skipMarkers}
+                height={chartExpanded ? expandedChartHeight ?? 300 : 300}
+                showWaveJumps={showWaveJumps}
+                showCoinPerMinute={showCoinPerMinute}
+                showGoldenComboActivations={showGcActivations}
+                selectedWaves={
+                  chartSelectMode && showCoinPerMinute
+                    ? selectedWaves
+                    : undefined
+                }
+                selectedSkipIds={
+                  chartSelectMode && showWaveJumps
+                    ? [...selectedWaveSkipIds]
+                    : undefined
+                }
+                selectedGcWaves={
+                  chartSelectMode && showGcActivations
+                    ? selectedGcWaves
+                    : undefined
+                }
+                onPointClick={
+                  chartSelectMode && showCoinPerMinute
+                    ? toggleSnapshotWave
+                    : undefined
+                }
+                onSkipClick={
+                  chartSelectMode && showWaveJumps
+                    ? (id) => toggleWaveSkipId(id)
+                    : undefined
+                }
+                onGcClick={
+                  chartSelectMode && showGcActivations ? toggleGcWave : undefined
+                }
+                onSelectWaves={
+                  chartSelectMode && showCoinPerMinute
+                    ? selectSnapshotWaves
+                    : undefined
+                }
+              />
+            </div>
           </div>
 
           {waveSkips.length > 0 && (
@@ -2304,6 +2790,325 @@ function idsOutsideBounds<T>(
   return ids;
 }
 
+function FunnelIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        d="M4 5h16l-6 8v6l-4-2v-4z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+      <path
+        d="m6 9 6 6 6-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+      <path
+        d="m6 15 6-6 6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        d="M18 6 6 18M6 6l12 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M21 8a9 9 0 0 0-15-3.36L3 8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 3v5h5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 16a9 9 0 0 0 15 3.36L21 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M16 16h5v5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M12 3v12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7 10l5 5 5-5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5 21h14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function DocumentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <rect
+        x="4"
+        y="3"
+        width="16"
+        height="18"
+        rx="2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M8 8h8M8 12h8M8 16h5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CompareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle
+        cx="9"
+        cy="12"
+        r="6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <circle
+        cx="15"
+        cy="12"
+        r="6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function CombineIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M7 4v6a5 5 0 0 0 5 5 5 5 0 0 0 5-5V4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 15v5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CoinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M12 1v22"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function WaveJumpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M5 4v16l10-8z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M19 4v16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Matches the game's gold "Golden Combo" badge — a filled circle with a
+ * bold C — so it stays gold regardless of the button's active/hover state. */
+function GcActivationIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" fill="#e8b339" stroke="#b8860b" strokeWidth="1" />
+      <text
+        x="12"
+        y="16.5"
+        textAnchor="middle"
+        fontSize="13"
+        fontWeight="800"
+        fontFamily="Georgia, 'Times New Roman', serif"
+        fill="#4a3517"
+      >
+        C
+      </text>
+    </svg>
+  );
+}
+
+function LeadLagIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M3 12h4l3 8 4-16 3 8h4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-.8 12.1a2 2 0 0 1-2 1.9H9.8a2 2 0 0 1-2-1.9L7 7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function OutlierQuickSelect({
   valueLabel,
   below,
@@ -2357,16 +3162,31 @@ function OutlierQuickSelect({
   );
 }
 
-function runShortLabel(r: RunRow): string {
+// An ongoing run's `final_wave`/`peak_tier` columns are only synced when it
+// ends, so fall back to the live-loaded chart snapshots while it's running.
+function liveRunStats(
+  r: RunRow,
+  liveSnapshots?: SnapshotRow[]
+): { wave: number | null; tier: number | null } {
+  if (r.ended_at || !liveSnapshots || liveSnapshots.length === 0) {
+    return { wave: r.final_wave, tier: r.peak_tier };
+  }
+  const wave = Math.max(...liveSnapshots.map((s) => s.wave));
+  const tiers = liveSnapshots
+    .map((s) => s.tier)
+    .filter((t): t is number => t != null);
+  return { wave, tier: tiers.length > 0 ? Math.max(...tiers) : null };
+}
+
+function runShortLabel(r: RunRow, liveSnapshots?: SnapshotRow[]): string {
   const date = new Date(r.started_at).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
-  const wave = r.final_wave ?? "?";
-  const tier = r.peak_tier ?? "?";
-  return `${date} (T${tier} W${wave})`;
+  const { wave, tier } = liveRunStats(r, liveSnapshots);
+  return `${date} (T${tier ?? "?"} W${wave ?? "?"})`;
 }
 
 /** Local calendar date (YYYY-MM-DD) → UTC ISO start of that local day. */
