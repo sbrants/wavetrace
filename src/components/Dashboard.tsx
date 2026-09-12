@@ -18,6 +18,7 @@ import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart from "./CoinVsWaveChart";
 import { formatRunType, runTypeUsesBadge } from "../runType";
 import { usePersistedBoolean } from "../persistedState";
+import { CoinIcon, WaveJumpIcon, GcActivationIcon } from "./ChartToggleIcons";
 
 const SNAPSHOT_REFRESH_MS = 15_000;
 
@@ -157,46 +158,40 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           </div>
           <div className="chart-card-actions">
             {chartData.length > 0 && (
-              <label
-                className="checkbox-inline"
-                title="Show coin/min series on the chart"
+              <button
+                type="button"
+                className={showCoinPerMinute ? "btn-icon active" : "btn-icon"}
+                onClick={() => setShowCoinPerMinute((v) => !v)}
+                aria-pressed={showCoinPerMinute}
+                data-tooltip="Show coin/min series on the chart"
               >
-                <input
-                  type="checkbox"
-                  checked={showCoinPerMinute}
-                  onChange={(e) => setShowCoinPerMinute(e.target.checked)}
-                  aria-label="Show coin/min on dashboard chart"
-                />
-                Coin/min
-              </label>
+                <CoinIcon />
+                <span className="btn-icon-label">Coin/min</span>
+              </button>
             )}
             {hasJumpsOnChart && (
-              <label
-                className="checkbox-inline"
-                title="Show wave jump markers on the chart"
+              <button
+                type="button"
+                className={showWaveJumps ? "btn-icon active" : "btn-icon"}
+                onClick={() => setShowWaveJumps((v) => !v)}
+                aria-pressed={showWaveJumps}
+                data-tooltip="Show wave jump markers on the chart"
               >
-                <input
-                  type="checkbox"
-                  checked={showWaveJumps}
-                  onChange={(e) => setShowWaveJumps(e.target.checked)}
-                  aria-label="Show wave jumps on dashboard chart"
-                />
-                Wave jumps
-              </label>
+                <WaveJumpIcon />
+                <span className="btn-icon-label">Wave jumps</span>
+              </button>
             )}
             {hasGcOnChart && (
-              <label
-                className="checkbox-inline"
-                title="Show Golden Combo activation (^) series on the chart"
+              <button
+                type="button"
+                className={showGcActivations ? "btn-icon active" : "btn-icon"}
+                onClick={() => setShowGcActivations((v) => !v)}
+                aria-pressed={showGcActivations}
+                data-tooltip="Show Golden Combo activation (^) series on the chart"
               >
-                <input
-                  type="checkbox"
-                  checked={showGcActivations}
-                  onChange={(e) => setShowGcActivations(e.target.checked)}
-                  aria-label="Show GC activations on dashboard chart"
-                />
-                GC activations
-              </label>
+                <GcActivationIcon />
+                <span className="btn-icon-label">GC activations</span>
+              </button>
             )}
             <ChartScreenshotActions
               targetRef={chartRef}

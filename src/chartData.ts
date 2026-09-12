@@ -168,6 +168,40 @@ export function buildCompareChartDataByWave(
   });
 }
 
+/** Merges per-run wave-jump markers into compare chart rows as `skip_N` (+ `skip_tip_N`),
+ * defaulting to 0 on rows that already exist so the field is smoothable like coin/gc. */
+export function mergeCompareWithSkips(
+  rows: CompareChartRow[],
+  waveSkipsByLine: WaveSkipMarker[][]
+): CompareChartRow[] {
+  const byX = new Map<number, CompareChartRow>();
+  for (const row of rows) {
+    byX.set(row.x, { ...row });
+  }
+  const lineCount = waveSkipsByLine.length;
+  for (const row of byX.values()) {
+    for (let i = 0; i < lineCount; i++) {
+      if (row[`skip_${i}`] == null) {
+        row[`skip_${i}`] = 0;
+      }
+    }
+  }
+  waveSkipsByLine.forEach((skips, i) => {
+    for (const s of skips) {
+      const row = byX.get(s.wave) ?? { x: s.wave };
+      for (let j = 0; j < lineCount; j++) {
+        if (row[`skip_${j}`] == null) {
+          row[`skip_${j}`] = 0;
+        }
+      }
+      row[`skip_${i}`] = s.skip_count;
+      row[`skip_tip_${i}`] = s.skip_tooltip;
+      byX.set(s.wave, row);
+    }
+  });
+  return [...byX.values()].sort((a, b) => a.x - b.x);
+}
+
 /** True when any compare run has Golden Combo activation samples. */
 export function compareHasGoldenComboActivations(
   runIds: string[],
@@ -207,7 +241,11 @@ export function smoothNullableSeries(
   });
 }
 
-/** Adds `coin_N_raw` and replaces `coin_N` with smoothed values when window > 1. */
+/** Series prefixes eligible for compare-chart smoothing: coin/min, GC activations, wave jumps. */
+const SMOOTHABLE_PREFIXES = ["coin", "gc", "skip"] as const;
+
+/** Adds `<prefix>_N_raw` and replaces `<prefix>_N` with smoothed values (coin/min, GC activations,
+ * and wave jumps alike) when window > 1. */
 export function applyCompareChartSmoothing(
   rows: CompareChartRow[],
   lineCount: number,
@@ -216,7 +254,9 @@ export function applyCompareChartSmoothing(
   if (window <= 1 || lineCount === 0) {
     return rows;
   }
-  const keys = Array.from({ length: lineCount }, (_, i) => `coin_${i}`);
+  const keys = SMOOTHABLE_PREFIXES.flatMap((prefix) =>
+    Array.from({ length: lineCount }, (_, i) => `${prefix}_${i}`)
+  );
   const series = keys.map((key) =>
     rows.map((row) => {
       const v = row[key];
@@ -274,14 +314,18 @@ function leadLagQuad(
   };
 }
 
-/** Polygons between newer and older coin/min series (linear between chart knots). */
+/** Which comparison series the lead/lag band is drawn from. */
+export type LeadLagMetric = "coin" | "gc" | "skip";
+
+/** Polygons between newer and older series of the given metric (linear between chart knots). */
 export function buildLeadLagPolygons(
   rows: CompareChartRow[],
   newerIndex: number,
-  olderIndex: number
+  olderIndex: number,
+  metric: LeadLagMetric = "coin"
 ): LeadLagPolygon[] {
-  const nKey = `coin_${newerIndex}`;
-  const oKey = `coin_${olderIndex}`;
+  const nKey = `${metric}_${newerIndex}`;
+  const oKey = `${metric}_${olderIndex}`;
   const knots: LeadLagPoint[] = [];
   for (const row of rows) {
     const newer = row[nKey];

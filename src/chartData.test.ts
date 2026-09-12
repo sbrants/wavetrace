@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCompareChartSmoothing,
   averageGoldenComboCaret,
   buildLeadLagPolygons,
   buildWaveJumpMarkers,
   compareNewerRunIndex,
   downsampleChartData,
+  mergeCompareWithSkips,
   smoothNullableSeries,
   snapshotsToChartData,
   type CoinChartPoint,
   type CompareChartRow,
+  type WaveSkipMarker,
 } from "./chartData";
 import type { SnapshotRow, WaveSkipRow } from "./api";
 
@@ -163,5 +166,69 @@ describe("buildLeadLagPolygons", () => {
     expect(polygons.map((p) => p.tone)).toEqual(["ahead", "behind"]);
     // Crossing happens at the midpoint, where newer == older.
     expect(polygons[0].ring[1].x).toBeCloseTo(0.5, 5);
+  });
+
+  it("reads GC activation series when metric is 'gc'", () => {
+    const rows: CompareChartRow[] = [
+      { x: 0, gc_0: 4, gc_1: 1 },
+      { x: 1, gc_0: 6, gc_1: 2 },
+    ];
+    const polygons = buildLeadLagPolygons(rows, 0, 1, "gc");
+    expect(polygons).toHaveLength(1);
+    expect(polygons[0].tone).toBe("ahead");
+  });
+
+  it("reads wave-jump series when metric is 'skip'", () => {
+    const rows: CompareChartRow[] = [
+      { x: 0, skip_0: 1, skip_1: 5 },
+      { x: 1, skip_0: 2, skip_1: 6 },
+    ];
+    const polygons = buildLeadLagPolygons(rows, 0, 1, "skip");
+    expect(polygons).toHaveLength(1);
+    expect(polygons[0].tone).toBe("behind");
+  });
+});
+
+describe("mergeCompareWithSkips", () => {
+  function marker(wave: number, skipCount: number): WaveSkipMarker {
+    return { id: `m-${wave}`, wave, skip_count: skipCount, skip_tooltip: String(skipCount) };
+  }
+
+  it("defaults skip_N to 0 on rows that already exist", () => {
+    const rows: CompareChartRow[] = [{ x: 1, coin_0: 100, coin_1: 50 }];
+    const merged = mergeCompareWithSkips(rows, [[], []]);
+    expect(merged).toEqual([{ x: 1, coin_0: 100, coin_1: 50, skip_0: 0, skip_1: 0 }]);
+  });
+
+  it("adds a new row for a skip wave not already present, and fills in the tooltip", () => {
+    const rows: CompareChartRow[] = [{ x: 1, coin_0: 100, coin_1: 50 }];
+    const merged = mergeCompareWithSkips(rows, [[marker(5, 3)], []]);
+    expect(merged).toEqual([
+      { x: 1, coin_0: 100, coin_1: 50, skip_0: 0, skip_1: 0 },
+      { x: 5, skip_0: 3, skip_tip_0: "3", skip_1: 0 },
+    ]);
+  });
+});
+
+describe("applyCompareChartSmoothing", () => {
+  it("smooths coin, gc, and skip series alike and preserves each as a _raw field", () => {
+    const rows: CompareChartRow[] = [
+      { x: 0, coin_0: 10, gc_0: 2, skip_0: 0 },
+      { x: 1, coin_0: 20, gc_0: 4, skip_0: 6 },
+      { x: 2, coin_0: 30, gc_0: 6, skip_0: 0 },
+    ];
+    const smoothed = applyCompareChartSmoothing(rows, 1, 3);
+    expect(smoothed[1].coin_0).toBe(20);
+    expect(smoothed[1].coin_0_raw).toBe(20);
+    expect(smoothed[1].gc_0).toBe(4);
+    expect(smoothed[1].gc_0_raw).toBe(4);
+    // Middle skip value is averaged with its (zero) neighbors instead of staying a sharp spike.
+    expect(smoothed[1].skip_0).toBeCloseTo(2, 5);
+    expect(smoothed[1].skip_0_raw).toBe(6);
+  });
+
+  it("returns the rows unchanged for a window of 1 or less", () => {
+    const rows: CompareChartRow[] = [{ x: 0, coin_0: 10 }];
+    expect(applyCompareChartSmoothing(rows, 1, 1)).toBe(rows);
   });
 });

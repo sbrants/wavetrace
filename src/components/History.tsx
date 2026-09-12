@@ -14,7 +14,9 @@ import {
   compareHasGoldenComboActivations,
   buildChartWaveJumpMarkers,
   buildWaveJumpMarkers,
+  mergeCompareWithSkips,
   snapshotsToChartData,
+  type LeadLagMetric,
 } from "../chartData";
 import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
@@ -26,6 +28,12 @@ import { reportUiError } from "../uiError";
 import { confirmDialog } from "../confirmDialog";
 import { setCompareSessionActive } from "../notificationCapture";
 import { usePersistedBoolean } from "../persistedState";
+import {
+  CoinIcon,
+  WaveJumpIcon,
+  GcActivationIcon,
+  LeadLagIcon,
+} from "./ChartToggleIcons";
 
 type SortKey =
   | "started_at"
@@ -83,6 +91,15 @@ const COMPARE_COLORS = [
   "#7ee8d6",
   "#c9a0ff",
 ];
+
+const COMPARE_SMOOTH_WINDOWS = [0, 3, 5, 10, 20, 50, 100] as const;
+type CompareSmoothWindow = (typeof COMPARE_SMOOTH_WINDOWS)[number];
+
+const LEAD_LAG_METRIC_LABEL: Record<LeadLagMetric, string> = {
+  coin: "coin/min",
+  gc: "GC activations",
+  skip: "wave jumps",
+};
 
 const PAGE_SIZES = [5, 10, 25, 50, 100] as const;
 /** Min gap between live History table refreshes on scanner-update (avoids DB thrash). */
@@ -192,7 +209,7 @@ export default function History() {
   const [gcOutlierAbove, setGcOutlierAbove] = useState("");
   const [skipOutlierBelow, setSkipOutlierBelow] = useState("");
   const [skipOutlierAbove, setSkipOutlierAbove] = useState("");
-  const [compareSmoothWindow, setCompareSmoothWindow] = useState<0 | 3 | 5 | 10>(
+  const [compareSmoothWindow, setCompareSmoothWindow] = useState<CompareSmoothWindow>(
     10
   );
   const [compareLeadLagBand, setCompareLeadLagBand] = usePersistedBoolean(
@@ -1360,28 +1377,6 @@ export default function History() {
     compareSnapshots
   );
 
-  const compareChartDisplayData = useMemo(() => {
-    if (compareSmoothWindow <= 1) {
-      return compareChartData;
-    }
-    return applyCompareChartSmoothing(
-      compareChartData,
-      compareRuns.length,
-      compareSmoothWindow
-    );
-  }, [compareChartData, compareRuns.length, compareSmoothWindow]);
-
-  const compareLeadLag = useMemo(() => {
-    if (!compareLeadLagBand || compareRuns.length !== 2) {
-      return null;
-    }
-    const newerIndex = compareNewerRunIndex(compareRuns);
-    if (newerIndex == null) {
-      return null;
-    }
-    return { newerIndex, olderIndex: 1 - newerIndex };
-  }, [compareLeadLagBand, compareRuns]);
-
   const compareSkipMarkers = compareRunIds.map((id) =>
     buildChartWaveJumpMarkers(
       compareWaveSkips[id] ?? [],
@@ -1393,6 +1388,47 @@ export default function History() {
     compareRunIds,
     compareSnapshots
   );
+
+  const compareChartMerged = useMemo(
+    () => mergeCompareWithSkips(compareChartData, compareSkipMarkers),
+    [compareChartData, compareSkipMarkers]
+  );
+
+  const compareChartDisplayData = useMemo(() => {
+    if (compareSmoothWindow <= 1) {
+      return compareChartMerged;
+    }
+    return applyCompareChartSmoothing(
+      compareChartMerged,
+      compareRuns.length,
+      compareSmoothWindow
+    );
+  }, [compareChartMerged, compareRuns.length, compareSmoothWindow]);
+
+  // Lead/lag band works off whichever comparison series is visible: coin/min
+  // takes priority, then GC activations, then wave jumps.
+  const compareLeadLagMetric: LeadLagMetric | null = compareShowCoin
+    ? "coin"
+    : compareShowGc && hasCompareGc
+      ? "gc"
+      : compareShowSkips && hasCompareSkips
+        ? "skip"
+        : null;
+
+  const compareLeadLag = useMemo(() => {
+    if (!compareLeadLagBand || compareRuns.length !== 2 || !compareLeadLagMetric) {
+      return null;
+    }
+    const newerIndex = compareNewerRunIndex(compareRuns);
+    if (newerIndex == null) {
+      return null;
+    }
+    return {
+      newerIndex,
+      olderIndex: 1 - newerIndex,
+      metric: compareLeadLagMetric,
+    };
+  }, [compareLeadLagBand, compareRuns, compareLeadLagMetric]);
 
   const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
     dataKey: `coin_${i}`,
@@ -1565,14 +1601,17 @@ export default function History() {
           className="compare-axis-select"
           value={compareSmoothWindow}
           onChange={(e) =>
-            setCompareSmoothWindow(Number(e.target.value) as 0 | 3 | 5 | 10)
+            setCompareSmoothWindow(
+              Number(e.target.value) as CompareSmoothWindow
+            )
           }
           aria-label="Compare chart smoothing"
         >
-          <option value={0}>Off</option>
-          <option value={3}>3 pts</option>
-          <option value={5}>5 pts</option>
-          <option value={10}>10 pts</option>
+          {COMPARE_SMOOTH_WINDOWS.map((w) => (
+            <option key={w} value={w}>
+              {w === 0 ? "Off" : `${w} pts`}
+            </option>
+          ))}
         </select>
       </label>
       <div className="toolbar-action-group">
@@ -1580,13 +1619,13 @@ export default function History() {
           type="button"
           className={compareLeadLagBand ? "btn-icon active" : "btn-icon"}
           onClick={() => setCompareLeadLagBand((v) => !v)}
-          disabled={compareRuns.length !== 2 || !compareShowCoin}
+          disabled={compareRuns.length !== 2 || !compareLeadLagMetric}
           aria-pressed={compareLeadLagBand}
           data-tooltip={
             compareRuns.length !== 2
               ? "Lead/lag band is available when comparing exactly 2 runs"
-              : !compareShowCoin
-                ? "Lead/lag band needs coin/min visible"
+              : !compareLeadLagMetric
+                ? "Lead/lag band needs coin/min, GC activations, or wave jumps visible"
                 : "Green when the newer run is higher; red when lower"
           }
         >
@@ -2069,24 +2108,22 @@ export default function History() {
               showGoldenComboActivations={compareShowGc}
               height={chartExpanded ? expandedChartHeight ?? 320 : 320}
               smoothWindow={compareSmoothWindow}
-              leadLagBand={compareShowCoin ? compareLeadLag : null}
+              leadLagBand={compareLeadLag}
             />
           </div>
           {!chartExpanded && compareSmoothWindow > 1 && (
             <p className="compare-chart-hint muted">
               Smoothing is visual only; summary stats use raw snapshot values.
-              {compareShowCoin &&
-                compareLeadLag != null &&
-                " Green: newer run ahead · red: newer run behind."}
+              {compareLeadLag != null &&
+                ` Green: newer run ahead · red: newer run behind (${LEAD_LAG_METRIC_LABEL[compareLeadLag.metric]}).`}
             </p>
           )}
           {!chartExpanded &&
             compareSmoothWindow <= 1 &&
-            compareShowCoin &&
             compareLeadLag != null && (
             <p className="compare-chart-hint muted">
-              Lead/lag band: green when the newer run (by start time) is higher,
-              red when lower.
+              Lead/lag band ({LEAD_LAG_METRIC_LABEL[compareLeadLag.metric]}): green when
+              the newer run (by start time) is higher, red when lower.
             </p>
           )}
         </div>
@@ -3005,85 +3042,6 @@ function CollapseIcon() {
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <path
         d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function CoinIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M12 1v22"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function WaveJumpIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M5 4v16l10-8z"
-        fill="currentColor"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M19 4v16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-/** Matches the game's gold "Golden Combo" badge — a filled circle with a
- * bold C — so it stays gold regardless of the button's active/hover state. */
-function GcActivationIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" fill="#e8b339" stroke="#b8860b" strokeWidth="1" />
-      <text
-        x="12"
-        y="16.5"
-        textAnchor="middle"
-        fontSize="13"
-        fontWeight="800"
-        fontFamily="Georgia, 'Times New Roman', serif"
-        fill="#4a3517"
-      >
-        C
-      </text>
-    </svg>
-  );
-}
-
-function LeadLagIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M3 12h4l3 8 4-16 3 8h4"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"

@@ -13,7 +13,13 @@ import {
   Customized,
 } from "recharts";
 import { formatCoin } from "../api";
-import type { CoinChartPoint, CompareChartRow, LeadLagPolygon, WaveSkipMarker } from "../chartData";
+import type {
+  CoinChartPoint,
+  CompareChartRow,
+  LeadLagMetric,
+  LeadLagPolygon,
+  WaveSkipMarker,
+} from "../chartData";
 import { buildLeadLagPolygons } from "../chartData";
 
 export type ChartLineConfig = {
@@ -169,38 +175,6 @@ function toSingleChartRows(data: CoinChartPoint[]): SingleChartRow[] {
   }));
 }
 
-function mergeCompareWithSkips(
-  rows: CompareChartRow[],
-  waveSkipsByLine: WaveSkipMarker[][]
-): CompareChartRow[] {
-  const byX = new Map<number, CompareChartRow>();
-  for (const row of rows) {
-    byX.set(row.x, { ...row });
-  }
-  const lineCount = waveSkipsByLine.length;
-  for (const row of byX.values()) {
-    for (let i = 0; i < lineCount; i++) {
-      if (row[`skip_${i}`] == null) {
-        row[`skip_${i}`] = 0;
-      }
-    }
-  }
-  waveSkipsByLine.forEach((skips, i) => {
-    for (const s of skips) {
-      const row = byX.get(s.wave) ?? { x: s.wave };
-      for (let j = 0; j < lineCount; j++) {
-        if (row[`skip_${j}`] == null) {
-          row[`skip_${j}`] = 0;
-        }
-      }
-      row[`skip_${i}`] = s.skip_count;
-      row[`skip_tip_${i}`] = s.skip_tooltip;
-      byX.set(s.wave, row);
-    }
-  });
-  return [...byX.values()].sort((a, b) => a.x - b.x);
-}
-
 function waveDomain(
   data: CoinChartPoint[],
   skips: WaveSkipMarker[]
@@ -263,7 +237,11 @@ type CompareProps = {
   showGoldenComboActivations?: boolean;
   height?: number;
   smoothWindow?: number;
-  leadLagBand?: { newerIndex: number; olderIndex: number } | null;
+  leadLagBand?: {
+    newerIndex: number;
+    olderIndex: number;
+    metric: LeadLagMetric;
+  } | null;
 };
 
 export type CoinVsWaveChartProps = SingleProps | CompareProps;
@@ -310,13 +288,15 @@ function CompareLeadLagLayer({
   polygons,
   xAxisMap,
   yAxisMap,
+  axisId,
 }: {
   polygons: LeadLagPolygon[];
   xAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
   yAxisMap?: Record<string, { scale?: AxisScale["scale"] }>;
+  axisId: string;
 }) {
   const xAxis = xAxisMap ? Object.values(xAxisMap)[0] : undefined;
-  const yAxis = yAxisMap?.coin;
+  const yAxis = yAxisMap?.[axisId];
   const paths = leadLagPolygonsToPixels(
     polygons,
     xAxis?.scale,
@@ -334,15 +314,23 @@ function CompareLeadLagLayer({
   );
 }
 
-function compareCoinValue(
+function compareMetricValue(
   row: CompareChartRow | undefined,
-  lineIndex: number
+  lineIndex: number,
+  metric: LeadLagMetric
 ): number | null {
   if (!row) {
     return null;
   }
-  const v = row[`coin_${lineIndex}`];
+  const v = row[`${metric}_${lineIndex}`];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function compareCoinValue(
+  row: CompareChartRow | undefined,
+  lineIndex: number
+): number | null {
+  return compareMetricValue(row, lineIndex, "coin");
 }
 
 function compareCoinRaw(
@@ -770,15 +758,18 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
 
   const smoothWindow = props.smoothWindow ?? 0;
   const showCoinPerMinute = props.showCoinPerMinute !== false;
-  const leadLag = showCoinPerMinute ? props.leadLagBand ?? null : null;
+  const leadLag = props.leadLagBand ?? null;
   const leadLagPolygons =
     leadLag != null
       ? buildLeadLagPolygons(
           props.data,
           leadLag.newerIndex,
-          leadLag.olderIndex
+          leadLag.olderIndex,
+          leadLag.metric
         )
       : [];
+  const leadLagAxisId =
+    leadLag?.metric === "gc" ? "gc" : leadLag?.metric === "skip" ? "skip" : "coin";
 
   const flatSkips = props.waveSkipsByLine?.flat() ?? [];
   const hasSkips = flatSkips.length > 0;
@@ -804,9 +795,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
     }
     return [0, Math.max(1, Math.ceil(max * 1.05))];
   })();
-  const chartData = hasSkips
-    ? mergeCompareWithSkips(props.data, props.waveSkipsByLine ?? [])
-    : props.data;
+  const chartData = props.data;
   const Chart = hasSkips || hasGc ? ComposedChart : LineChart;
   const rightAxes = (hasSkips ? 1 : 0) + (hasGc ? 1 : 0);
   const rightMargin = rightAxes === 0 ? 12 : rightAxes === 1 ? 44 : 80;
@@ -892,7 +881,26 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               return [value, name];
             }
             if (String(name).toLowerCase().includes("gc ^")) {
-              return [v == null ? "—" : String(v), name];
+              if (v == null) {
+                return ["—", name];
+              }
+              let text = String(v);
+              const dataKey = String(
+                (item as { dataKey?: string })?.dataKey ?? ""
+              );
+              const gcMatch = /^gc_(\d+)$/.exec(dataKey);
+              if (smoothWindow > 1 && gcMatch && typeof v === "number") {
+                const row = (item as { payload?: CompareChartRow })?.payload;
+                const raw = row?.[`gc_${gcMatch[1]}_raw`];
+                if (
+                  typeof raw === "number" &&
+                  Number.isFinite(raw) &&
+                  Math.abs(raw - v) > 0.0001
+                ) {
+                  text += ` (raw ${raw})`;
+                }
+              }
+              return [text, name];
             }
             const dataKey = String((item as { dataKey?: string })?.dataKey ?? "");
             const coinMatch = /^coin_(\d+)$/.exec(dataKey);
@@ -921,8 +929,8 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
             const base = `Wave ${label}`;
             if (leadLag && payload?.length) {
               const row = payload[0]?.payload as CompareChartRow | undefined;
-              const newer = compareCoinValue(row, leadLag.newerIndex);
-              const older = compareCoinValue(row, leadLag.olderIndex);
+              const newer = compareMetricValue(row, leadLag.newerIndex, leadLag.metric);
+              const older = compareMetricValue(row, leadLag.olderIndex, leadLag.metric);
               if (newer != null && older != null) {
                 const delta = formatCompareDelta(newer, older);
                 return delta ? `${base} · ${delta}` : base;
@@ -945,6 +953,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
                 polygons={leadLagPolygons}
                 xAxisMap={customProps.xAxisMap}
                 yAxisMap={customProps.yAxisMap}
+                axisId={leadLagAxisId}
               />
             )}
           />
