@@ -40,10 +40,54 @@ const ADB_FIND_SAVE_TIMEOUT_MS: u64 = 12_000;
 static DOWNLOAD_LOCK: Mutex<()> = Mutex::new(());
 static AUTO_PULL_STARTED: AtomicBool = AtomicBool::new(false);
 static LAST_WRITTEN_HASH: Mutex<Option<String>> = Mutex::new(None);
-/// Cache of (path, mtime) -> "actually launches" verdicts, so the auto-pull loop (every
-/// 15s+) doesn't re-spawn `adb version` on every tick. Keyed by mtime so a repaired/
-/// replaced binary at the same path gets re-checked instead of trusting a stale verdict.
-static ADB_RUNS_CACHE: Mutex<Vec<(PathBuf, SystemTime, bool)>> = Mutex::new(Vec::new());
+/// mtimes of adb.exe and (on Windows) its companion DLLs, used to key `ADB_RUNS_CACHE`.
+type AdbFingerprint = Vec<Option<SystemTime>>;
+
+/// Cache of (path, fingerprint) -> "actually launches" verdicts, so the auto-pull loop
+/// (every 15s+) doesn't re-spawn `adb version` on every tick. Fingerprinted on the mtimes
+/// of adb.exe *and* its companion DLLs (Windows) so a repaired/replaced binary, or a DLL
+/// an antivirus quarantines/restores after adb.exe was last verified, gets re-checked
+/// instead of trusting a stale verdict — see `adb_fingerprint`.
+static ADB_RUNS_CACHE: Mutex<Vec<(PathBuf, AdbFingerprint, bool)>> = Mutex::new(Vec::new());
+
+/// mtimes of `adb` plus (on Windows) its statically-imported companion DLLs, used as an
+/// `ADB_RUNS_CACHE` key. Antivirus quarantine commonly corrupts/restores `AdbWinApi.dll`
+/// or `AdbWinUsbApi.dll` without touching `adb.exe` itself, so caching on adb.exe's mtime
+/// alone let a stale "it works" verdict survive the DLL going bad underneath it — every
+/// subsequent real command then failed with a DLL-not-found exit status forever, since
+/// nothing ever invalidated the cache. Including the DLL mtimes closes that gap.
+fn adb_fingerprint(adb: &Path) -> AdbFingerprint {
+    let mut parts = vec![fs::metadata(adb).and_then(|m| m.modified()).ok()];
+    if cfg!(windows) {
+        if let Some(dir) = adb.parent() {
+            for dll in ["AdbWinApi.dll", "AdbWinUsbApi.dll"] {
+                parts.push(fs::metadata(dir.join(dll)).and_then(|m| m.modified()).ok());
+            }
+        }
+    }
+    parts
+}
+
+/// True for an exit status indicating the process itself failed to launch/run (a Windows
+/// loader failure such as `STATUS_DLL_NOT_FOUND`), as opposed to adb starting fine and
+/// exiting normally to report an ordinary command failure. adb only ever returns small
+/// non-negative exit codes (0/1) for those; loader failures surface as negative NTSTATUS
+/// values, so a negative code reliably means the binary itself is broken.
+fn is_process_launch_failure(status: &std::process::ExitStatus) -> bool {
+    cfg!(windows) && matches!(status.code(), Some(code) if code < 0)
+}
+
+/// Immediately record `adb` as unusable at its current fingerprint, so `adb_is_usable`
+/// reflects a just-observed real failure without needing to re-spawn `adb version` to
+/// find out, and so `resolve_and_run`'s retry can tell a broken-binary failure apart from
+/// an ordinary one (e.g. "no device found").
+fn mark_adb_broken(adb: &Path) {
+    let fingerprint = adb_fingerprint(adb);
+    if let Ok(mut cache) = ADB_RUNS_CACHE.lock() {
+        cache.retain(|(p, _, _)| p != adb);
+        cache.push((adb.to_path_buf(), fingerprint, false));
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -176,12 +220,10 @@ fn adb_binary_name() -> &'static str {
 /// DLL in place rather than deleting it) or otherwise broken in ways a file-existence check
 /// can't see. Cheap and side-effect-free: `version` never touches the adb server/daemon.
 fn adb_runs(adb: &Path) -> bool {
-    let mtime = fs::metadata(adb).and_then(|m| m.modified()).ok();
-    if let Some(mtime) = mtime {
-        if let Ok(cache) = ADB_RUNS_CACHE.lock() {
-            if let Some((_, _, ok)) = cache.iter().find(|(p, m, _)| p == adb && *m == mtime) {
-                return *ok;
-            }
+    let fingerprint = adb_fingerprint(adb);
+    if let Ok(cache) = ADB_RUNS_CACHE.lock() {
+        if let Some((_, _, ok)) = cache.iter().find(|(p, f, _)| p == adb && *f == fingerprint) {
+            return *ok;
         }
     }
     let mut cmd = Command::new(adb);
@@ -191,11 +233,9 @@ fn adb_runs(adb: &Path) -> bool {
         .output()
         .map(|out| out.status.success() && !out.stdout.is_empty())
         .unwrap_or(false);
-    if let Some(mtime) = mtime {
-        if let Ok(mut cache) = ADB_RUNS_CACHE.lock() {
-            cache.retain(|(p, _, _)| p != adb);
-            cache.push((adb.to_path_buf(), mtime, ok));
-        }
+    if let Ok(mut cache) = ADB_RUNS_CACHE.lock() {
+        cache.retain(|(p, _, _)| p != adb);
+        cache.push((adb.to_path_buf(), fingerprint, ok));
     }
     ok
 }
@@ -432,6 +472,39 @@ pub fn ensure_adb(allow_download: bool) -> Result<PathBuf, String> {
     download_platform_tools()
 }
 
+/// Resolves an adb binary and runs `op` with it, for the handful of entry points that
+/// each make several adb calls of their own. `find_existing_adb` may pick any installed
+/// copy — WaveTrace's own, or one belonging to Android Studio, an emulator's bundled SDK,
+/// etc. — and any of them can go bad later (antivirus quarantine corrupting a companion
+/// DLL is the common case). When `op` fails because the binary itself died mid-command,
+/// `run_adb` has already flagged that exact path as unusable via `mark_adb_broken`, so
+/// resolving again here skips it in favor of another installed copy or a fresh download,
+/// and `op` is retried once against that. An ordinary failure (e.g. "no device found")
+/// leaves the binary marked usable, so it's returned as-is with no wasted retry.
+///
+/// Returns the adb path actually used alongside the result — `None` only when resolving
+/// adb itself failed — so callers that surface the path (e.g. `GameSaveStatus`) stay
+/// accurate after a retry. Whenever the result is `Ok`, the path is always `Some`.
+fn resolve_and_run<T>(
+    allow_download: bool,
+    op: impl Fn(&Path) -> Result<T, String>,
+) -> (Option<PathBuf>, Result<T, String>) {
+    let adb = match ensure_adb(allow_download) {
+        Ok(p) => p,
+        Err(e) => return (None, Err(e)),
+    };
+    let result = op(&adb);
+    if result.is_err() && !adb_is_usable(&adb) {
+        if let Ok(retry_adb) = ensure_adb(allow_download) {
+            if retry_adb != adb {
+                let retry_result = op(&retry_adb);
+                return (Some(retry_adb), retry_result);
+            }
+        }
+    }
+    (Some(adb), result)
+}
+
 pub fn build_known_hosts(custom_port: Option<u32>) -> Vec<String> {
     let mut hosts = Vec::new();
     if let Some(port) = custom_port.filter(|p| (1_000..65_536).contains(p)) {
@@ -611,10 +684,18 @@ fn run_adb(
         } else {
             out.trim().to_string()
         };
+        if detail.is_empty() && is_process_launch_failure(&status) {
+            // adb didn't run at all (a Windows loader failure like STATUS_DLL_NOT_FOUND —
+            // e.g. antivirus corrupted a companion DLL after we last verified this copy
+            // works), not adb reporting an ordinary command failure. Flag it as unusable
+            // immediately so callers that retry via `resolve_and_run` pick a different
+            // installed copy or trigger a fresh download instead of hitting this forever.
+            mark_adb_broken(adb);
+        }
         return Err(if detail.is_empty() {
             match status.code() {
-                Some(code) => format!("adb {:?} failed (exit code: {code})", args),
-                None => format!("adb {:?} failed (terminated by signal)", args),
+                Some(code) => format!("adb {} {:?} failed (exit code: {code})", adb.display(), args),
+                None => format!("adb {} {:?} failed (terminated by signal)", adb.display(), args),
             }
         } else {
             detail
@@ -717,33 +798,26 @@ pub fn probe_game_save(
     preferred_device: Option<&str>,
     allow_download: bool,
 ) -> GameSaveStatus {
-    let adb = match ensure_adb(allow_download) {
-        Ok(p) => p,
-        Err(e) => {
-            return GameSaveStatus {
-                ready: false,
-                adb_path: None,
-                device_serial: None,
-                detail: e,
-            };
-        }
-    };
-    match connect_and_list(&adb, custom_port, preferred_device) {
+    let (adb, result) = resolve_and_run(allow_download, |adb| {
+        connect_and_list(adb, custom_port, preferred_device)
+    });
+    let adb_path = adb.map(|p| p.display().to_string());
+    match result {
         Ok((serials, _)) if !serials.is_empty() => GameSaveStatus {
             ready: true,
-            adb_path: Some(adb.display().to_string()),
+            adb_path,
             device_serial: Some(serials[0].clone()),
             detail: format!("Emulator ready · {}", serials[0]),
         },
         Ok(_) => GameSaveStatus {
             ready: false,
-            adb_path: Some(adb.display().to_string()),
+            adb_path,
             device_serial: None,
             detail: "No emulator via ADB".into(),
         },
         Err(e) => GameSaveStatus {
             ready: false,
-            adb_path: Some(adb.display().to_string()),
+            adb_path,
             device_serial: None,
             detail: e,
         },
@@ -757,8 +831,11 @@ pub fn list_devices(
     preferred_device: Option<&str>,
     allow_download: bool,
 ) -> Result<Vec<AdbDeviceInfo>, String> {
-    let adb = ensure_adb(allow_download)?;
-    let (serials, _) = connect_and_list(&adb, custom_port, preferred_device)?;
+    let (adb, result) = resolve_and_run(allow_download, |adb| {
+        connect_and_list(adb, custom_port, preferred_device)
+    });
+    let (serials, _) = result?;
+    let adb = adb.expect("adb path is set whenever resolve_and_run succeeds");
     Ok(serials
         .into_iter()
         .map(|serial| {
@@ -782,13 +859,17 @@ pub fn resolve_capture_device(
     preferred_device: Option<&str>,
     allow_download: bool,
 ) -> Result<(PathBuf, String, String), String> {
-    let adb = ensure_adb(allow_download)?;
-    let (serials, _) = connect_and_list(&adb, custom_port, preferred_device)?;
-    let serial = serials
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No device found via ADB. Connect a phone with USB debugging enabled and authorized.".to_string())?;
-    let fingerprint = device_fingerprint(&adb, &serial);
+    let (adb, result) = resolve_and_run(allow_download, |adb| {
+        let (serials, _) = connect_and_list(adb, custom_port, preferred_device)?;
+        let serial = serials.into_iter().next().ok_or_else(|| {
+            "No device found via ADB. Connect a phone with USB debugging enabled and authorized."
+                .to_string()
+        })?;
+        let fingerprint = device_fingerprint(adb, &serial);
+        Ok((serial, fingerprint))
+    });
+    let (serial, fingerprint) = result?;
+    let adb = adb.expect("adb path is set whenever resolve_and_run succeeds");
     let label = device_label(&serial, fingerprint.as_deref());
     Ok((adb, serial, label))
 }
@@ -995,53 +1076,55 @@ pub fn output_file_path(dir: &Path, timestamp_filename: bool) -> PathBuf {
 pub fn pull_game_save_with_options(
     opts: &PullWriteOptions,
 ) -> Result<GameSavePullResult, String> {
-    let adb = ensure_adb(true)?;
-    let (serials, _) = connect_and_list(&adb, opts.custom_port, opts.preferred_device.as_deref())?;
-    if serials.is_empty() {
-        return Err(
-            "No supported emulator detected. Start your emulator with ADB debugging, then try again."
-                .into(),
-        );
-    }
-    let mut last_serial = serials[0].clone();
-    for serial in &serials {
-        last_serial = serial.clone();
-        if let Some((remote_path, bytes)) = discover_and_pull_on_serial(&adb, serial) {
-            let hash = content_hash(&bytes);
-            if opts.skip_if_same_hash {
-                if let Some(prev) = load_persisted_hash() {
-                    if prev == hash {
-                        let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
-                        return Ok(GameSavePullResult {
-                            path: path.display().to_string(),
-                            bytes: bytes.len() as u64,
-                            remote_path,
-                            device_serial: serial.clone(),
-                            written: false,
-                            content_hash: hash,
-                        });
+    let (_, result) = resolve_and_run(true, |adb| {
+        let (serials, _) = connect_and_list(adb, opts.custom_port, opts.preferred_device.as_deref())?;
+        if serials.is_empty() {
+            return Err(
+                "No supported emulator detected. Start your emulator with ADB debugging, then try again."
+                    .into(),
+            );
+        }
+        let mut last_serial = serials[0].clone();
+        for serial in &serials {
+            last_serial = serial.clone();
+            if let Some((remote_path, bytes)) = discover_and_pull_on_serial(adb, serial) {
+                let hash = content_hash(&bytes);
+                if opts.skip_if_same_hash {
+                    if let Some(prev) = load_persisted_hash() {
+                        if prev == hash {
+                            let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
+                            return Ok(GameSavePullResult {
+                                path: path.display().to_string(),
+                                bytes: bytes.len() as u64,
+                                remote_path,
+                                device_serial: serial.clone(),
+                                written: false,
+                                content_hash: hash,
+                            });
+                        }
                     }
                 }
+                let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
+                {
+                    let mut file = File::create(&path).map_err(|e| e.to_string())?;
+                    file.write_all(&bytes).map_err(|e| e.to_string())?;
+                }
+                persist_hash(&hash);
+                return Ok(GameSavePullResult {
+                    path: path.display().to_string(),
+                    bytes: bytes.len() as u64,
+                    remote_path,
+                    device_serial: serial.clone(),
+                    written: true,
+                    content_hash: hash,
+                });
             }
-            let path = output_file_path(&opts.output_dir, opts.timestamp_filename);
-            {
-                let mut file = File::create(&path).map_err(|e| e.to_string())?;
-                file.write_all(&bytes).map_err(|e| e.to_string())?;
-            }
-            persist_hash(&hash);
-            return Ok(GameSavePullResult {
-                path: path.display().to_string(),
-                bytes: bytes.len() as u64,
-                remote_path,
-                device_serial: serial.clone(),
-                written: true,
-                content_hash: hash,
-            });
         }
-    }
-    Err(format!(
-        "Save file '{TOWER_SAVE_FILENAME}' not found via ADB on {last_serial}. Open The Tower, save your progress, then try again."
-    ))
+        Err(format!(
+            "Save file '{TOWER_SAVE_FILENAME}' not found via ADB on {last_serial}. Open The Tower, save your progress, then try again."
+        ))
+    });
+    result
 }
 
 /// Manual / command pull using current settings (hash skip so repeat clicks don't rewrite identical files).
