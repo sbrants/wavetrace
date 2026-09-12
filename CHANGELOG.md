@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.9] — 2026-09-12
+
+### Fixed
+
+- **Game save pull could fail with an ADB "DLL not found" error on every attempt and never recover**, even after WaveTrace redownloaded its ADB tools — a corrupted companion DLL (commonly from antivirus quarantine) was being cached as still working, so the broken copy kept getting reused. WaveTrace now detects this immediately and switches to a working ADB install (or downloads a fresh one) automatically.
+
+---
+
 ## [0.4.8] — 2026-09-12
 
 ### Added
