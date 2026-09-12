@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.8] — 2026-09-12
+
+### Added
+
+- **"Follow new run"** in History's comparison panel (on by default) — when the live run in a 2-run comparison ends and a different run starts, the comparison automatically swaps it in instead of going stale. A companion **"vs. previous run"** option pairs the new run against the run that just ended instead of the older reference run.
+
+### Changed
+
+- **Lead/lag band and the Smooth control in the comparison chart now apply to GC activations and wave jumps, not just coin/min.** Lead/lag band no longer requires coin/min to be visible — it follows whichever of coin/min, GC activations, or wave jumps is shown.
+- The comparison chart's Smooth dropdown now offers up to 100 points (previously capped at 10) for noisier, longer runs.
+
+---
+
 ## [0.4.7] — 2026-09-11
 
 ### Added

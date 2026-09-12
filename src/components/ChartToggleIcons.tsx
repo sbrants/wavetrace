@@ -96,3 +96,52 @@ export function LeadLagIcon() {
     </svg>
   );
 }
+
+/** A pin with a tracking arc — used for the "Follow new run" toggle. */
+export function FollowRunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M12 21s-6.5-5.6-6.5-11A6.5 6.5 0 0 1 18.5 10c0 5.4-6.5 11-6.5 11z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="10" r="2.2" fill="currentColor" />
+      <path
+        d="M19.5 5.5a9 9 0 0 1 1.8 5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M21.6 9 22 11l-2-1.1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** A rewind-to-previous glyph — used for the "vs. previous run" toggle. */
+export function PreviousRunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M5 5v14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M19 6.5v11a1 1 0 0 1-1.55.84L9 12.84a1 1 0 0 1 0-1.68l8.45-5.5A1 1 0 0 1 19 6.5z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}

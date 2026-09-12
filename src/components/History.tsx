@@ -33,6 +33,8 @@ import {
   WaveJumpIcon,
   GcActivationIcon,
   LeadLagIcon,
+  FollowRunIcon,
+  PreviousRunIcon,
 } from "./ChartToggleIcons";
 
 type SortKey =
@@ -216,6 +218,12 @@ export default function History() {
     "history.compare.leadLagBand",
     true
   );
+  const [compareFollowNewRun, setCompareFollowNewRun] = usePersistedBoolean(
+    "history.compare.followNewRun",
+    true
+  );
+  const [compareFollowKeepPrevious, setCompareFollowKeepPrevious] =
+    usePersistedBoolean("history.compare.followKeepPrevious", false);
   const [chartExpanded, setChartExpanded] = useState(false);
   const [expandedChartHeight, setExpandedChartHeight] = useState<number>();
   const [chartSelectMode, setChartSelectMode] = useState(false);
@@ -716,6 +724,85 @@ export default function History() {
       });
     return () => unlisten?.();
   }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
+
+  /** Re-points a 2-run comparison at a newly started run, keeping `keepId` as the
+   * other side. Used by the "Follow new run" auto-swap below. */
+  const followCompareToNewRun = useCallback(
+    async (keepId: string, newRunId: string) => {
+      const requestId = ++compareRequestRef.current;
+      try {
+        const [entries, allRuns] = await Promise.all([
+          Promise.all(
+            [keepId, newRunId].map(async (id) => {
+              const view = await api.runDashboardData(id);
+              return [id, view] as const;
+            })
+          ),
+          api.listRuns({}),
+        ]);
+        if (compareRequestRef.current !== requestId) return;
+        const matchedRuns = [keepId, newRunId]
+          .map((id) => allRuns.find((r) => r.id === id))
+          .filter((r): r is RunRow => r != null);
+        if (matchedRuns.length < 2) {
+          // The new run's row isn't queryable yet (scanner event fired just
+          // ahead of the DB write) — the ongoing-run polling above will pick
+          // it up once its own run_id lands in the compare set. Leave the
+          // current comparison alone rather than risk clearing it.
+          return;
+        }
+        setCompareSnapshots(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
+        );
+        setCompareWaveSkips(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
+        );
+        setCompareNormalJumps(
+          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
+        );
+        setCompareRuns(matchedRuns);
+        setChecked(new Set(matchedRuns.map((r) => r.id)));
+        savePersistedCompareIds(matchedRuns.map((r) => r.id));
+      } catch {
+        // Same reasoning as above: quietly skip and let the next scanner
+        // update retry.
+      }
+    },
+    []
+  );
+
+  // "Follow new run": when the live run in a 2-run comparison ends and a
+  // different run starts, automatically swap it in — keeping either the
+  // other (older) run in the comparison, or the run that just ended,
+  // depending on compareFollowKeepPrevious.
+  useEffect(() => {
+    if (!compareFollowNewRun || compareRuns.length !== 2 || !hasOngoingCompareRun) {
+      return;
+    }
+    const ids = compareRunIdsKey.split(",");
+    const endedLiveId = compareRuns.find((r) => !r.ended_at)?.id;
+    const keepId = compareFollowKeepPrevious
+      ? endedLiveId
+      : compareRuns.find((r) => r.id !== endedLiveId)?.id;
+    if (!endedLiveId || !keepId) return;
+    let unlisten: (() => void) | undefined;
+    void api
+      .onScannerUpdate((e) => {
+        if (!e.current_run_id || ids.includes(e.current_run_id)) return;
+        void followCompareToNewRun(keepId, e.current_run_id);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
+  }, [
+    compareFollowNewRun,
+    compareFollowKeepPrevious,
+    compareRuns,
+    compareRunIdsKey,
+    hasOngoingCompareRun,
+    followCompareToNewRun,
+  ]);
 
   const clearCompare = () => {
     setCompareRuns([]);
@@ -1632,6 +1719,35 @@ export default function History() {
           <LeadLagIcon />
           {showLabels && (
             <span className="btn-icon-label">Lead/lag band</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={compareFollowNewRun ? "btn-icon active" : "btn-icon"}
+          onClick={() => setCompareFollowNewRun((v) => !v)}
+          aria-pressed={compareFollowNewRun}
+          data-tooltip="When the live run in this comparison ends and a new run starts, automatically swap it in so the comparison keeps following your current run."
+        >
+          <FollowRunIcon />
+          {showLabels && (
+            <span className="btn-icon-label">Follow new run</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={compareFollowKeepPrevious ? "btn-icon active" : "btn-icon"}
+          onClick={() => setCompareFollowKeepPrevious((v) => !v)}
+          disabled={!compareFollowNewRun}
+          aria-pressed={compareFollowKeepPrevious}
+          data-tooltip={
+            !compareFollowNewRun
+              ? "Enable Follow new run first"
+              : "Compare the new run against the run that just ended, instead of the older reference run."
+          }
+        >
+          <PreviousRunIcon />
+          {showLabels && (
+            <span className="btn-icon-label">vs. previous run</span>
           )}
         </button>
         <button
