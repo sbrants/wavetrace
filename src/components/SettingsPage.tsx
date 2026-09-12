@@ -878,6 +878,18 @@ export default function SettingsPage({
             ? " · Header button hidden while auto-pull is on."
             : " · Header Download save appears when an emulator is ready."}
         </p>
+        {gameSaveStatus && !gameSaveStatus.ready && (
+          <p className="muted">
+            Emulator not showing up? Most emulators ship with ADB turned off.
+            In <strong>BlueStacks 5</strong>, click the gear icon in the
+            instance's side toolbar → <strong>Advanced</strong> → enable{" "}
+            <strong>Android Debug Bridge</strong> → <strong>Save changes</strong>,
+            then restart the instance (BlueStacks applies this on next launch,
+            not live) before clicking <strong>Recheck</strong> above.
+            LDPlayer, Nox, MEmu, and the Android Studio emulator each have an
+            equivalent ADB/Developer option.
+          </p>
+        )}
       </section>
 
       <section>

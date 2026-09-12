@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.10] — 2026-09-12
+
+### Added
+
+- **Settings now shows a hint for enabling ADB when no emulator is detected** — BlueStacks 5 (and most other Android emulators) ship with ADB turned off by default, which silently prevents WaveTrace from finding any device. The Game save section now walks through BlueStacks' Advanced settings toggle, including the instance restart it requires, when the emulator isn't showing up.
+
+---
+
 ## [0.4.9] — 2026-09-12
 
 ### Fixed
