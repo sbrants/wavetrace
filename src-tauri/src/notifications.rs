@@ -458,10 +458,32 @@ fn publish_ntfy_shutdown(
     Ok(())
 }
 
+/// `load_settings()` used to open a fresh SQLite connection on every call. It's invoked from
+/// `on_scanner_status`/`on_poll`, both called on every single scanner tick (multiple times per
+/// full-frame poll), which was eating into the "emitting_ui_event"/"notifications" stage budget
+/// the scanner's stall watchdog tracks, and contending with every other DB consumer (History's
+/// own refresh queries included) for no reason — settings only change when the user saves them
+/// in the Settings tab. A short cache, cleared on save, removes the per-tick DB round trip
+/// everywhere else without any real staleness.
+static SETTINGS_CACHE: Mutex<Option<(Instant, Settings)>> = Mutex::new(None);
+const SETTINGS_CACHE_TTL: Duration = Duration::from_secs(2);
+
+pub fn invalidate_settings_cache() {
+    *SETTINGS_CACHE.lock().unwrap() = None;
+}
+
 fn load_settings() -> Settings {
-    crate::db::open()
+    let mut cache = SETTINGS_CACHE.lock().unwrap();
+    if let Some((at, cfg)) = cache.as_ref() {
+        if at.elapsed() < SETTINGS_CACHE_TTL {
+            return cfg.clone();
+        }
+    }
+    let cfg = crate::db::open()
         .map(|conn| settings::load(&conn))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    *cache = Some((Instant::now(), cfg.clone()));
+    cfg
 }
 
 fn ntfy_attach_capture(cfg: &Settings) -> bool {

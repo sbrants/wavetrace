@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.12] — 2026-09-13
+
+### Fixed
+
+- **The app could look frozen for several seconds at a stretch, especially right as one run ended and the next began** — notification settings were being re-read from a fresh database connection on every single scanner tick (and again on every full-frame poll), the same anti-pattern behind v0.4.11's History fix but on an even hotter path. This starved the scanner's own event loop and any concurrent UI query for the DB. Settings are now cached in memory and only re-read when you actually save them.
+
+---
+
 ## [0.4.11] — 2026-09-13
 
 ### Fixed

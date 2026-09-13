@@ -194,7 +194,9 @@ pub fn save_settings(new_settings: Settings) -> Result<(), String> {
     let mut merged = new_settings;
     // Managed only via set_compare_capture_active; don't clear when saving other settings.
     merged.compare_capture_active = settings::load(&conn).compare_capture_active;
-    settings::save(&conn, &merged).map_err(|e| e.to_string())
+    settings::save(&conn, &merged).map_err(|e| e.to_string())?;
+    crate::notifications::invalidate_settings_cache();
+    Ok(())
 }
 
 #[tauri::command]
