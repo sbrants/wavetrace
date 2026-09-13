@@ -7,7 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.4.13] — 2026-09-13
+## [0.4.14] — 2026-09-13
+
+*Supersedes v0.4.13, which was pulled: a packaging mistake left its Windows/Linux/Microsoft Store builds self-reporting as v0.4.12 (all the fixes below were correctly built in — only the version label was wrong), which could have kept the updater from offering it to anyone already on v0.4.12.*
 
 ### Fixed
 
