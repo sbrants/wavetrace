@@ -209,6 +209,16 @@ pub fn open() -> rusqlite::Result<Connection> {
     // Scanner, UI, and tests can open the DB concurrently; without a busy timeout
     // a second connection fails immediately with "database is locked".
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // The scanner writes almost continuously while running, and the UI issues frequent
+    // small reads (History/compare live refresh) from separate connections. The default
+    // rollback journal makes every write block every concurrent read (and vice versa) for
+    // the whole transaction, which on a database that reaches a million-plus snapshot rows
+    // was severe enough to freeze the UI for seconds at a time. WAL lets one writer and any
+    // number of readers proceed without blocking each other; NORMAL synchronous is the
+    // mode SQLite itself recommends pairing with WAL. This is a one-time, persistent
+    // property of the database file, but harmless to (and fast to) set on every connection.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
     migrate(&conn)?;
     Ok(conn)
 }

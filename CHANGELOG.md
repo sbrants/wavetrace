@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.13] — 2026-09-13
+
+### Fixed
+
+- **The UI could still hang for a few seconds at a time even after v0.4.12** — most noticeably switching between History and Dashboard mid-run. The database was using SQLite's default rollback journal, where any write blocks every concurrent read (and vice versa) for the whole transaction. With the scanner writing almost continuously and History/compare issuing their own frequent background reads, that meant every one of them could end up queued behind another on a database that had grown past a million snapshot rows. Switched to WAL mode, which lets the scanner's writes and the UI's reads proceed without blocking each other.
+
+---
+
 ## [0.4.12] — 2026-09-13
 
 ### Fixed
