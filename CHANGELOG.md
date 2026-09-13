@@ -7,7 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.4.14] — 2026-09-13
+## [0.4.15] — 2026-09-14
+
+### Fixed
+
+- **The app could pin the CPU and briefly go completely unresponsive right as a run ended and the next began** — desktop toast notifications (run-ended, window-lost, coin-unavailable) called into WinRT's notification APIs directly on the scanner's per-tick thread, and wave-milestone notifications PNG-encoded the full captured frame there too. Neither has a bound on how long it can take, and both sit right on a path that already fires around a run boundary. All of this now runs on background threads, matching how ntfy publishing already worked, so nothing notification-related can stall scanning.
 
 *Supersedes v0.4.13, which was pulled: a packaging mistake left its Windows/Linux/Microsoft Store builds self-reporting as v0.4.12 (all the fixes below were correctly built in — only the version label was wrong), which could have kept the updater from offering it to anyone already on v0.4.12.*
 

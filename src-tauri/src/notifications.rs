@@ -612,16 +612,21 @@ fn crossed_wave_milestones(wave: u32, every: u32, last_notified: u32) -> Vec<u32
 }
 
 /// Show a title/body-only OS notification (no image).
+///
+/// Spawned off the caller's thread: this is invoked from the scanner's hot per-tick path
+/// (wave milestones, run-ended, etc.), and the underlying WinRT toast APIs — same as
+/// `ensure_permission`'s first-ever call, which can pop a real permission prompt — have no
+/// bound on how long they can take. Nothing here needs to complete before the caller moves on.
 fn show_plain_desktop_notification(app: &AppHandle, title: &str, body: &str) {
-    if let Some(state) = app.try_state::<NotifyState>() {
-        state.ensure_permission(app);
-    }
-    let _ = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show();
+    let app = app.clone();
+    let title = title.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        if let Some(state) = app.try_state::<NotifyState>() {
+            state.ensure_permission(&app);
+        }
+        let _ = app.notification().builder().title(&title).body(&body).show();
+    });
 }
 
 /// Toasts render small — no need to ship a full-resolution screenshot.
@@ -725,20 +730,30 @@ fn show_wave_milestone(
 
     if want_image {
         if let Some(frame) = capture {
-            match crate::capture::encode_png_base64(frame) {
+            // PNG-encoding a full game frame is real CPU work (can run past a second on a
+            // busy/loaded frame) that has no business blocking the scanner's per-tick loop —
+            // wave milestones fire often enough during a run that this was a recurring stall
+            // source, not a one-off. Everything downstream of the encode only needs
+            // `app`/`title`/`body`/`prefer_compare`, so it all moves into the same
+            // background thread as the encode itself.
+            let app = app.clone();
+            let title = title.to_string();
+            let body = body.to_string();
+            let prefer_compare = cfg.compare_capture_active;
+            let frame = frame.clone();
+            std::thread::spawn(move || match crate::capture::encode_png_base64(&frame) {
                 Ok(game_png_base64) => {
-                    let prefer_compare = cfg.compare_capture_active;
                     if let Some(state) = app.try_state::<AppState>() {
                         *state.pending_wave_milestone_ntfy.lock().unwrap() =
                             Some(crate::commands::PendingWaveMilestoneNtfy {
-                                title: title.to_string(),
-                                body: body.to_string(),
+                                title: title.clone(),
+                                body: body.clone(),
                                 game_png_base64,
                             });
                     }
                     let payload = WaveMilestoneNtfyPayload {
-                        title: title.to_string(),
-                        body: body.to_string(),
+                        title: title.clone(),
+                        body: body.clone(),
                         prefer_compare,
                     };
                     crate::db::append_app_log(&format!(
@@ -751,7 +766,7 @@ fn show_wave_milestone(
                                 state.pending_wave_milestone_ntfy.lock().unwrap().take()
                             {
                                 let _ = complete_wave_milestone_blocking(
-                                    app,
+                                    &app,
                                     pending.title,
                                     pending.body,
                                     pending.game_png_base64,
@@ -760,10 +775,10 @@ fn show_wave_milestone(
                             }
                         }
                     }
-                    return;
                 }
                 Err(e) => eprintln!("wave milestone game capture encode failed: {e}"),
-            }
+            });
+            return;
         }
     }
 
@@ -784,15 +799,23 @@ fn show(
 ) {
     let cfg = load_settings();
     if cfg.notify_desktop_enabled {
-        if let Some(state) = app.try_state::<NotifyState>() {
-            state.ensure_permission(app);
-        }
-        let _ = app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show();
+        // Same reasoning as show_plain_desktop_notification(): keep the WinRT toast call
+        // (and ensure_permission's first-ever, potentially prompt-blocking call) off the
+        // scanner's hot per-tick path.
+        let app_bg = app.clone();
+        let title_bg = title.to_string();
+        let body_bg = body.to_string();
+        std::thread::spawn(move || {
+            if let Some(state) = app_bg.try_state::<NotifyState>() {
+                state.ensure_permission(&app_bg);
+            }
+            let _ = app_bg
+                .notification()
+                .builder()
+                .title(&title_bg)
+                .body(&body_bg)
+                .show();
+        });
     }
     let capture_owned = if attach_ntfy_capture {
         capture.cloned()
