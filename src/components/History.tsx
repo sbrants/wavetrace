@@ -256,6 +256,7 @@ export default function History() {
   const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const liveRefreshAtRef = useRef(0);
+  const listLiveRefreshAtRef = useRef(0);
   /** Guards compareSelected()/restoreCompareFromIds() against out-of-order
    * responses: only the most recently issued call is allowed to update
    * compare state. refreshCompare() deliberately does NOT use this — it's a
@@ -409,6 +410,37 @@ export default function History() {
       });
     return () => unlisten?.();
   }, [reload]);
+
+  // The effect above only reloads once, when the scanner switches to a
+  // *different* run — further ticks against that same run wouldn't otherwise
+  // touch this list again, so an ongoing run's row (duration, final wave,
+  // avg coin/min, snapshot count) would sit frozen at its just-started values
+  // until a manual refresh. Keep it live the same way compare/selected-run
+  // detail already do: a slow poll plus a throttled nudge on scanner ticks.
+  const hasOngoingRunInList = runs.some((r) => !r.ended_at);
+
+  useEffect(() => {
+    if (!hasOngoingRunInList) return;
+    const id = window.setInterval(reload, 15_000);
+    return () => window.clearInterval(id);
+  }, [hasOngoingRunInList, reload]);
+
+  useEffect(() => {
+    if (!hasOngoingRunInList) return;
+    let unlisten: (() => void) | undefined;
+    void api
+      .onScannerUpdate((e) => {
+        if (!e.current_run_id) return;
+        const now = Date.now();
+        if (now - listLiveRefreshAtRef.current < LIVE_REFRESH_MIN_MS) return;
+        listLiveRefreshAtRef.current = now;
+        reload();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
+  }, [hasOngoingRunInList, reload]);
 
   useEffect(() => {
     void api.getSettings().then((s) => {

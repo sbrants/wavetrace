@@ -132,10 +132,16 @@ pub fn update_scanner_ui(app: &AppHandle, status: &str, live: &LiveState) {
         return;
     };
     let running = status != "stopped";
-    let resumable = app
-        .try_state::<AppState>()
-        .and_then(|s| s.scanner.has_resumable_run().ok())
-        .unwrap_or(false);
+    // has_resumable_run() opens a fresh DB connection and queries it — worth paying only
+    // when the result can actually change the menu: `resume_item` is gated on `!running`
+    // below, so while running its value never matters, and this is called on every single
+    // scanner tick (contending with the scanner's own writes and the UI's own DB polling
+    // for History/compare, previously a source of multi-second stalls on every tick).
+    let resumable = !running
+        && app
+            .try_state::<AppState>()
+            .and_then(|s| s.scanner.has_resumable_run().ok())
+            .unwrap_or(false);
 
     let wave = live.wave.map(|w| w.to_string()).unwrap_or_else(|| "—".into());
     let prefix = app_icon::tooltip_prefix();

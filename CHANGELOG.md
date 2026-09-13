@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.11] — 2026-09-13
+
+### Fixed
+
+- **A newly started run could stay invisible in History no matter how many times you hit Refresh** — the tray icon's "Resume run" menu state was recomputed by opening a fresh database connection and querying it on every single scanner tick, even while the scanner was running (when the result can't change the menu). Under contention this could stall the scanner for 10–40+ seconds at a stretch and starve History's own refresh queries, which failed silently. That check now only runs while the scanner is stopped.
+
+### Added
+
+- **History's run list keeps an ongoing run's stats live** — duration, final wave, avg coin/min, and snapshot count now keep updating for a run already showing in the table, instead of freezing at whatever they were the moment it started.
+
+---
+
 ## [0.4.10] — 2026-09-12
 
 ### Added
