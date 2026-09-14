@@ -48,6 +48,12 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
   const live = event?.live ?? null;
 
   useEffect(() => {
+    // Guards against a new fetch starting while a previous one is still in flight — the
+    // wave-changed/staleness checks below bound how *often* a fetch is considered, but not
+    // whether the last one actually finished. Once currentRunDashboard() takes longer than
+    // the gap between scanner ticks (a growing snapshots table gets there eventually) and the
+    // wave is changing every tick anyway, calls piled up unbounded with no cap at all.
+    let inFlight = false;
     const refresh = (force = false) => {
       const wave = liveWaveRef.current;
       const now = Date.now();
@@ -56,6 +62,8 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
       if (!force && !waveChanged && !stale && lastFetchAtRef.current > 0) {
         return;
       }
+      if (inFlight) return;
+      inFlight = true;
       lastFetchAtRef.current = now;
       lastWaveRef.current = wave;
       api
@@ -67,7 +75,10 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
           setChartWaveSkips(view.chart_wave_skips);
           setChartNormalJumps(view.chart_normal_jumps);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
     };
 
     lastFetchAtRef.current = 0;

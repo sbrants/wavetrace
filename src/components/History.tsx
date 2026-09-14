@@ -256,6 +256,18 @@ export default function History() {
   const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const liveRefreshAtRef = useRef(0);
+  /** Same in-flight guard as compareRefreshInFlightRef, for refreshSelectedRun()'s own
+   * triggers — the scanner-tick one already has a time-based throttle, but that only bounds
+   * how often a *new* call starts, not whether a previous one is still running. */
+  const selectedRefreshInFlightRef = useRef(false);
+  /** Guards refreshCompare()'s own triggers (15s interval + every matching scanner tick)
+   * against firing a new call while one is still in flight. Neither trigger previously
+   * checked this, so once refreshCompare() took longer than the gap between scanner ticks —
+   * trivial once the snapshots table reaches a few hundred thousand rows — new calls piled
+   * up unbounded: each spawns its own OS thread (Tokio's blocking pool) and DB connection,
+   * so a backlog of dozens turned into exactly the CPU/thread explosion this was meant to
+   * avoid, worst right at a run transition when backend load is already elevated. */
+  const compareRefreshInFlightRef = useRef(false);
   const listLiveRefreshAtRef = useRef(0);
   /** Guards compareSelected()/restoreCompareFromIds() against out-of-order
    * responses: only the most recently issued call is allowed to update
@@ -734,12 +746,20 @@ export default function History() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refreshCompareGuarded = useCallback(() => {
+    if (compareRefreshInFlightRef.current) return;
+    compareRefreshInFlightRef.current = true;
+    void refreshCompare().finally(() => {
+      compareRefreshInFlightRef.current = false;
+    });
+  }, [refreshCompare]);
+
   useEffect(() => {
     if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
-    void refreshCompare();
-    const id = window.setInterval(() => void refreshCompare(), 15_000);
+    refreshCompareGuarded();
+    const id = window.setInterval(refreshCompareGuarded, 15_000);
     return () => window.clearInterval(id);
-  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
+  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompareGuarded]);
 
   useEffect(() => {
     if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
@@ -748,14 +768,14 @@ export default function History() {
     void api
       .onScannerUpdate((e) => {
         if (e.current_run_id && ids.includes(e.current_run_id)) {
-          void refreshCompare();
+          refreshCompareGuarded();
         }
       })
       .then((fn) => {
         unlisten = fn;
       });
     return () => unlisten?.();
-  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompare]);
+  }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompareGuarded]);
 
   /** Re-points a 2-run comparison at a newly started run, keeping `keepId` as the
    * other side. Used by the "Follow new run" auto-swap below. */
@@ -1307,13 +1327,21 @@ export default function History() {
     }
   }, [selectedRunId, listFilter, hasOngoingSelectedRun]);
 
+  const refreshSelectedRunGuarded = useCallback(() => {
+    if (selectedRefreshInFlightRef.current) return;
+    selectedRefreshInFlightRef.current = true;
+    void refreshSelectedRun().finally(() => {
+      selectedRefreshInFlightRef.current = false;
+    });
+  }, [refreshSelectedRun]);
+
   useEffect(() => {
     if (!selectedRunId || !hasOngoingSelectedRun) return;
     liveRefreshAtRef.current = 0;
-    void refreshSelectedRun();
-    const id = window.setInterval(() => void refreshSelectedRun(), 15_000);
+    refreshSelectedRunGuarded();
+    const id = window.setInterval(refreshSelectedRunGuarded, 15_000);
     return () => window.clearInterval(id);
-  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRun]);
+  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRunGuarded]);
 
   useEffect(() => {
     if (!selectedRunId || !hasOngoingSelectedRun) return;
@@ -1324,7 +1352,7 @@ export default function History() {
         const now = Date.now();
         if (now - liveRefreshAtRef.current < LIVE_REFRESH_MIN_MS) return;
         liveRefreshAtRef.current = now;
-        void refreshSelectedRun();
+        refreshSelectedRunGuarded();
       })
       .then((fn) => {
         unlisten = fn;

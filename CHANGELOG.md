@@ -7,11 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.16] — 2026-09-14
+
+### Fixed
+
+- **The app could pin the CPU and briefly freeze right as a run ended and the next began — the real cause, this time.** History's "compare 2 runs" live view (and, less severely, its single-run live view and Dashboard's live view) refreshed on every scanner tick with no check for whether the *previous* refresh had actually finished. Once the database grew large enough that a refresh routinely took longer than the gap between ticks — exactly the case on a database with a million-plus snapshot rows — new calls piled up completely unbounded: confirmed live at 68 simultaneous in-flight requests, each opening its own database connection and OS thread. The last three releases (v0.4.11, v0.4.12, v0.4.15) each fixed a real but smaller contributor on the scanner side; this was the actual mechanism behind "goes crazy and uses a lot of CPU." All three refresh paths now skip a tick rather than stack another request on top of one still running.
+
+---
+
 ## [0.4.15] — 2026-09-14
 
 ### Fixed
 
 - **The app could pin the CPU and briefly go completely unresponsive right as a run ended and the next began** — desktop toast notifications (run-ended, window-lost, coin-unavailable) called into WinRT's notification APIs directly on the scanner's per-tick thread, and wave-milestone notifications PNG-encoded the full captured frame there too. Neither has a bound on how long it can take, and both sit right on a path that already fires around a run boundary. All of this now runs on background threads, matching how ntfy publishing already worked, so nothing notification-related can stall scanning.
+
+---
+
+## [0.4.14] — 2026-09-13
 
 *Supersedes v0.4.13, which was pulled: a packaging mistake left its Windows/Linux/Microsoft Store builds self-reporting as v0.4.12 (all the fixes below were correctly built in — only the version label was wrong), which could have kept the updater from offering it to anyone already on v0.4.12.*
 
