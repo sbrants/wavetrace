@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.17] — 2026-09-15
+
+### Fixed
+
+- **"Follow new run" could silently stop watching for the next run** — it derived which side of the comparison to replace from the compared runs' live `ended_at` status on every render, gated on at least one of them still being ongoing. But the scanner clears its "current run" the instant a run ends, and the *next* run can start anywhere from the same tick up to tens of seconds later (waiting on the game's end-of-run/home screen). If a background refresh landed in that gap and reflected the ended run's `ended_at`, both the outer gate and the derivation flipped false, tearing down the watch before the next run had even started — so the swap that "Follow new run" exists to make just never happened. It now captures which side to watch the moment it first sees an ongoing run, and keeps that until the swap actually occurs or a different comparison is selected.
+
+---
+
 ## [0.4.16] — 2026-09-14
 
 ### Fixed

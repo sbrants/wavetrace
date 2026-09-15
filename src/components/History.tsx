@@ -260,6 +260,15 @@ export default function History() {
    * triggers — the scanner-tick one already has a time-based throttle, but that only bounds
    * how often a *new* call starts, not whether a previous one is still running. */
   const selectedRefreshInFlightRef = useRef(false);
+  /** "Follow new run" (below) snapshots which side of the comparison to watch/keep here the
+   * first time it sees an ongoing run in the pair, instead of recomputing from `compareRuns`
+   * on every render. EndRun clears the scanner's current_run_id to None immediately, but the
+   * *next* run can start anywhere from the same tick up to tens of seconds later (e.g. sitting
+   * on the game's end-of-run/home screen) — if a background refresh lands in that gap and
+   * updates `compareRuns` to show the ended run's ended_at, hasOngoingCompareRun and this
+   * derivation both flip false, which used to tear down the listener before the next run had
+   * even started. */
+  const followWatchRef = useRef<{ endedLiveId: string; keepId: string } | null>(null);
   /** Guards refreshCompare()'s own triggers (15s interval + every matching scanner tick)
    * against firing a new call while one is still in flight. Neither trigger previously
    * checked this, so once refreshCompare() took longer than the gap between scanner ticks —
@@ -823,24 +832,37 @@ export default function History() {
     []
   );
 
+  // A genuinely new pair to compare — reset which side "Follow new run" is watching so a
+  // stale watch from a previous comparison can't leak into this one.
+  useEffect(() => {
+    followWatchRef.current = null;
+  }, [compareRunIdsKey]);
+
   // "Follow new run": when the live run in a 2-run comparison ends and a
   // different run starts, automatically swap it in — keeping either the
   // other (older) run in the comparison, or the run that just ended,
   // depending on compareFollowKeepPrevious.
   useEffect(() => {
-    if (!compareFollowNewRun || compareRuns.length !== 2 || !hasOngoingCompareRun) {
+    if (!compareFollowNewRun || compareRuns.length !== 2) {
       return;
     }
+    if (!followWatchRef.current) {
+      const endedLiveId = compareRuns.find((r) => !r.ended_at)?.id;
+      const keepId = compareFollowKeepPrevious
+        ? endedLiveId
+        : compareRuns.find((r) => r.id !== endedLiveId)?.id;
+      // Neither run in the pair is ongoing (yet, or anymore without a fresh snapshot to
+      // learn from) — nothing to arm the watch with.
+      if (!endedLiveId || !keepId) return;
+      followWatchRef.current = { endedLiveId, keepId };
+    }
+    const { keepId } = followWatchRef.current;
     const ids = compareRunIdsKey.split(",");
-    const endedLiveId = compareRuns.find((r) => !r.ended_at)?.id;
-    const keepId = compareFollowKeepPrevious
-      ? endedLiveId
-      : compareRuns.find((r) => r.id !== endedLiveId)?.id;
-    if (!endedLiveId || !keepId) return;
     let unlisten: (() => void) | undefined;
     void api
       .onScannerUpdate((e) => {
         if (!e.current_run_id || ids.includes(e.current_run_id)) return;
+        followWatchRef.current = null;
         void followCompareToNewRun(keepId, e.current_run_id);
       })
       .then((fn) => {
@@ -852,7 +874,6 @@ export default function History() {
     compareFollowKeepPrevious,
     compareRuns,
     compareRunIdsKey,
-    hasOngoingCompareRun,
     followCompareToNewRun,
   ]);
 
