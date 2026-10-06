@@ -67,12 +67,8 @@ function Verify-ReleaseExe([string]$exePath) {
     $fingerprint = Get-FrontendFingerprint
     $bytes = [System.IO.File]::ReadAllBytes($exePath)
     $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-    if (-not $text.Contains("tauri.localhost")) {
-        throw @"
-Store build verification failed: wavetrace.exe does not embed production assets (tauri.localhost missing).
-Ensure dist/ exists and run: npm run build && npm run tauri build -- --no-bundle --config src-tauri/tauri.microsoftstore.conf.json
-"@
-    }
+    # The embedded asset key is the proof of a production build; Tauri >= 2.12 no longer
+    # contains a literal "tauri.localhost" (the origin is formatted at runtime).
     if (-not $text.Contains($fingerprint)) {
         throw @"
 Store build verification failed: wavetrace.exe does not embed the current dist/ build ($fingerprint missing).
@@ -80,7 +76,7 @@ Run a clean release build: npm run tauri:store:build
 Do not package a debug build or an exe built before npm run build.
 "@
     }
-    Write-Host "Verified release exe embeds production frontend ($fingerprint, tauri.localhost)."
+    Write-Host "Verified release exe embeds production frontend ($fingerprint)."
 }
 
 function Copy-StoreRuntimeFiles([string]$stagingDir, [string]$exePath, [string]$resourcesDir) {

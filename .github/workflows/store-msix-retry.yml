@@ -21,12 +21,30 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
+      # Package with main's script so packaging fixes apply to already-tagged releases.
+      - uses: actions/checkout@v7
+        with:
+          path: _main
+          sparse-checkout: scripts/build-microsoft-store.ps1
+          sparse-checkout-cone-mode: false
+
+      - name: Use packaging script from main
+        shell: pwsh
+        run: Copy-Item _main/scripts/build-microsoft-store.ps1 scripts/ -Force
+
       - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Warmed on main by release-cache.yml.
+          shared-key: release-windows-latest
+          save-if: false
 
       - name: Install npm dependencies
         run: npm ci
