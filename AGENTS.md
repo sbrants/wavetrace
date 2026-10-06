@@ -24,7 +24,7 @@ Standard commands live in `README.md` and `package.json`; the key ones:
 | Task | Command | Notes |
 | --- | --- | --- |
 | Frontend deps | `npm install` | Run from repo root. |
-| Lint | `npm run lint` | ESLint on `src/`. 2 pre-existing `react-hooks/exhaustive-deps` warnings in `History.tsx` are expected (good-first-issue #2). |
+| Lint | `npm run lint` | ESLint on `src/`. One pre-existing warning is expected: an unused `eslint-disable` directive in `SettingsPage.tsx`. |
 | Frontend build | `npm run build` | `tsc` typecheck + Vite build. |
 | Rust tests | `cd src-tauri && cargo test --release` | 98 tests (parser, state machine, db, …). The Windows-only OCR `captured_corpus` tests do not run on Linux. |
 | Run app (dev) | `npm run tauri dev` | Launches the GUI window. |

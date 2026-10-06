@@ -81,7 +81,7 @@ work in phases. **Phases A and B are implemented** (v0.2.24+); C–E are planned
 
 ## Phase E — Process & release (planned)
 
-1. **`Goal.md` “Accessibility”** section — link here; state target (pragmatic AA for
+1. **Done:** **`Goal.md` “Accessibility”** section — link here; state target (pragmatic AA for
    core flows, not certified).
 2. **Manual release checklist** (see [CONTRIBUTING.md](../CONTRIBUTING.md#release--maintainer-notes) and below):
    - Tab through Dashboard, History, Settings without traps
