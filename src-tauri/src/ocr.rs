@@ -892,11 +892,8 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, String> {
 
         let src = img.as_raw();
         let dst = unsafe { slice::from_raw_parts_mut(data, capacity as usize) };
-        for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
-            d[0] = s[2];
-            d[1] = s[1];
-            d[2] = s[0];
-            d[3] = s[3];
+        for (s, d) in src.as_chunks::<4>().0.iter().zip(dst.as_chunks_mut::<4>().0) {
+            *d = [s[2], s[1], s[0], s[3]];
         }
     }
 
