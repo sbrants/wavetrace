@@ -73,6 +73,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Warmed on main by release-cache.yml; tag runs can't reuse caches saved on other tags.
+          shared-key: release-${{ matrix.platform }}
+          save-if: false
+
       - name: Install npm dependencies
         run: npm ci
 
@@ -144,6 +151,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Warmed on main by release-cache.yml; tag runs can't reuse caches saved on other tags.
+          shared-key: release-${{ matrix.target }}
+          save-if: false
 
       - name: Install npm dependencies
         run: npm ci
@@ -236,6 +250,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Warmed on main by release-cache.yml; tag runs can't reuse caches saved on other tags.
+          shared-key: release-windows-latest
+          save-if: false
+
       - name: Install npm dependencies
         run: npm ci
 
@@ -289,6 +310,13 @@ jobs:
             sleep 30
           done
           exit 1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Warmed on main by release-cache.yml; tag runs can't reuse caches saved on other tags.
+          shared-key: release-arch
+          save-if: false
 
       - name: Build Arch binary
         env:

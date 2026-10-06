@@ -1,0 +1,142 @@
+# Warm the Rust build caches that release.yml restores.
+# Release runs are triggered by tags, and a tag run can only restore caches saved on
+# its own ref or on main — so caches must be saved here, on main, to be reusable.
+# Each job compiles exactly what its release.yml counterpart compiles (`--no-bundle`
+# skips only packaging) under the same `shared-key`.
+name: Release cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src-tauri/Cargo.lock
+      - src-tauri/Cargo.toml
+      - .github/workflows/release-cache.yml
+  schedule:
+    # Weekly: picks up new stable rustc and stops GitHub evicting idle caches (7 days).
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: release-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+          - platform: ubuntu-24.04
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-${{ matrix.platform }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libtesseract-dev \
+            tesseract-ocr-eng \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            lld \
+            libgbm-dev
+
+      - name: Release build
+        run: npm run tauri build -- --no-bundle
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-${{ matrix.target }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install macOS build dependencies
+        run: brew install tesseract leptonica
+
+      - name: Release build
+        run: npm run tauri build -- --target ${{ matrix.target }} --no-bundle --config src-tauri/tauri.macos.ci.conf.json
+
+  arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Arch build dependencies
+        run: |
+          packages=(
+            base-devel git nodejs npm rust patchelf
+            gtk3 webkit2gtk-4.1 librsvg libappindicator-gtk3
+            tesseract tesseract-data-eng openssl pkgconf
+            pipewire libpipewire clang
+          )
+          for attempt in 1 2 3 4 5; do
+            if pacman -Syu --noconfirm "${packages[@]}"; then
+              exit 0
+            fi
+            echo "pacman attempt $attempt failed, syncing DB and retrying in 30s..."
+            pacman -Syy --noconfirm || true
+            sleep 30
+          done
+          exit 1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-arch
+
+      - name: Release build
+        run: |
+          npm ci
+          npm run tauri build -- --config src-tauri/tauri.arch.ci.conf.json --no-bundle
