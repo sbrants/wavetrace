@@ -732,7 +732,6 @@ function History() {
   };
 
   const compareRunIdsKey = compareRuns.map((r) => r.id).join(",");
-  const compareRunIds = compareRunIdsKey ? compareRunIdsKey.split(",") : [];
   const hasOngoingCompareRun = compareRuns.some((r) => !r.ended_at);
   compareRunIdsRef.current = compareRunIdsKey;
 
@@ -846,15 +845,15 @@ function History() {
   }, [refreshCompare]);
 
   useEffect(() => {
-    if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
+    if (compareRunIdsKey.split(",").length < 2 || !hasOngoingCompareRun) return;
     refreshCompareGuarded();
     const id = window.setInterval(refreshCompareGuarded, 15_000);
     return () => window.clearInterval(id);
   }, [compareRunIdsKey, hasOngoingCompareRun, refreshCompareGuarded]);
 
   useEffect(() => {
-    if (compareRunIds.length < 2 || !hasOngoingCompareRun) return;
     const ids = compareRunIdsKey.split(",");
+    if (ids.length < 2 || !hasOngoingCompareRun) return;
     let unlisten: (() => void) | undefined;
     void api
       .onScannerUpdate((e) => {
@@ -1466,7 +1465,7 @@ function History() {
         unlisten = fn;
       });
     return () => unlisten?.();
-  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRun]);
+  }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRunGuarded]);
 
   const deleteSelectedSnapshots = async () => {
     if (!selected || selectedSnapshotIds.size === 0) return;
