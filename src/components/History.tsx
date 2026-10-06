@@ -149,6 +149,83 @@ function savePersistedCompareIds(ids: string[]): void {
   }
 }
 
+/** Quiet time after the last keystroke before a comment is written to the DB. */
+const COMMENT_SAVE_DEBOUNCE_MS = 600;
+
+/**
+ * Run-table comment field. Holds its own draft while focused instead of rendering
+ * `run.comment` directly: the runs list is replaced by live reloads several times a
+ * second during a run, and a reload whose query started before the latest keystroke
+ * was saved would otherwise put older text back under the cursor mid-typing.
+ */
+function CommentInput({
+  run,
+  onSave,
+}: {
+  run: RunRow;
+  onSave: (runId: string, value: string) => Promise<void>;
+}) {
+  const stored = run.comment ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  // Last value sent to the DB. Shown after blur until a reload reflects it, so a
+  // reload that was already in flight can't briefly revert the field.
+  const [saved, setSaved] = useState<string | null>(null);
+  const timerRef = useRef<number | undefined>(undefined);
+  const draftRef = useRef<string | null>(null);
+  const lastSentRef = useRef(stored);
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const runId = run.id;
+
+  const flush = useCallback(() => {
+    window.clearTimeout(timerRef.current);
+    timerRef.current = undefined;
+    const value = draftRef.current;
+    if (value === null || value === lastSentRef.current) return;
+    lastSentRef.current = value;
+    setSaved(value);
+    onSaveRef.current(runId, value).catch(() => setSaved(null));
+  }, [runId]);
+
+  // The row can unmount mid-edit (paging, filters, the run being deleted).
+  useEffect(() => flush, [flush]);
+
+  // The backend trims and stores "" as NULL, so compare on the trimmed value.
+  useEffect(() => {
+    if (saved !== null && stored === saved.trim()) setSaved(null);
+  }, [stored, saved]);
+
+  return (
+    <input
+      type="text"
+      className="comment-input"
+      value={draft ?? saved ?? stored}
+      placeholder="Add comment…"
+      onFocus={() => {
+        lastSentRef.current = saved ?? stored;
+        draftRef.current = saved ?? stored;
+        setDraft(saved ?? stored);
+      }}
+      onChange={(e) => {
+        const value = e.target.value;
+        draftRef.current = value;
+        setDraft(value);
+        window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(flush, COMMENT_SAVE_DEBOUNCE_MS);
+      }}
+      onBlur={() => {
+        flush();
+        draftRef.current = null;
+        setDraft(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+      aria-label={`Comment for run ${runId}`}
+    />
+  );
+}
+
 export default function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [filter, setFilter] = useState<RunFilter>({});
@@ -278,6 +355,7 @@ export default function History() {
    * avoid, worst right at a run transition when backend load is already elevated. */
   const compareRefreshInFlightRef = useRef(false);
   const listLiveRefreshAtRef = useRef(0);
+  const compareLiveRefreshAtRef = useRef(0);
   /** Guards compareSelected()/restoreCompareFromIds() against out-of-order
    * responses: only the most recently issued call is allowed to update
    * compare state. refreshCompare() deliberately does NOT use this — it's a
@@ -486,6 +564,7 @@ export default function History() {
     } catch (e) {
       reportUiError(e, "History");
       reload();
+      throw e;
     }
   }, [reload]);
 
@@ -661,18 +740,20 @@ export default function History() {
     const ids = idsAtStart ? idsAtStart.split(",") : [];
     if (ids.length < 2) return;
     try {
-      const [entries, allRuns, tableRuns] = await Promise.all([
+      const [entries, tableRuns] = await Promise.all([
         Promise.all(
           ids.map(async (id) => {
             const view = await api.runDashboardData(id);
             return [id, view] as const;
           })
         ),
-        // Unfiltered — the compared runs must be found regardless of the
-        // table's active filter (they may no longer match it).
-        api.listRuns({}),
         api.listRuns(listFilter()),
       ]);
+      // The compared runs must be found regardless of the table's active filter (they
+      // may no longer match it) — only fetch the unfiltered list when one is missing.
+      const allRuns = ids.every((id) => tableRuns.some((r) => r.id === id))
+        ? tableRuns
+        : await api.listRuns({});
       // The set of compared runs changed (new comparison started, or
       // cleared) while this refresh was in flight — don't clobber it.
       if (compareRunIdsRef.current !== idsAtStart) return;
@@ -776,9 +857,14 @@ export default function History() {
     let unlisten: (() => void) | undefined;
     void api
       .onScannerUpdate((e) => {
-        if (e.current_run_id && ids.includes(e.current_run_id)) {
-          refreshCompareGuarded();
-        }
+        if (!e.current_run_id || !ids.includes(e.current_run_id)) return;
+        // The in-flight guard alone only stops overlap: a refresh that finishes within
+        // a scanner tick (~1s) let the next tick start another, so this ran back to
+        // back for as long as a compared run was live.
+        const now = Date.now();
+        if (now - compareLiveRefreshAtRef.current < LIVE_REFRESH_MIN_MS) return;
+        compareLiveRefreshAtRef.current = now;
+        refreshCompareGuarded();
       })
       .then((fn) => {
         unlisten = fn;
@@ -2123,14 +2209,7 @@ export default function History() {
               <td>{formatAvgGoldenComboCaret(r.avg_golden_combo_caret)}</td>
               <td>{r.snapshot_count}</td>
               <td className="comment-col" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="text"
-                  className="comment-input"
-                  value={r.comment ?? ""}
-                  placeholder="Add comment…"
-                  onChange={(e) => updateComment(r.id, e.target.value)}
-                  aria-label={`Comment for run ${r.id}`}
-                />
+                <CommentInput run={r} onSave={updateComment} />
               </td>
             </tr>
           ))}

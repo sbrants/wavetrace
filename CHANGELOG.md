@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.18] — 2026-10-06
+
+### Fixed
+
+- **WaveTrace used about a full CPU core for as long as a run was live.** Listing runs (the History table, and the compare view's refresh) computed every run's snapshot count, average coin/min and average Golden Combo caret by grouping the *entire* snapshots table — every run ever recorded — on each call. On a database with 1.3M snapshot rows that was ~350ms and a ~240MB read per call, and the compare view issued it twice per refresh with no time throttle (only the in-flight guard from v0.4.16), so it ran back to back: measured at ~580MB/s of database reads, half of it kernel time. These aggregates are now stored on each run and kept current by database triggers, so listing runs takes ~2ms regardless of history size. Existing runs are backfilled once on first launch (under a second). The compare view's live refresh is also throttled to once per 2.5s like the other History views, and only fetches the unfiltered run list when a compared run is hidden by the table's filter.
+- **Typing a run comment could lose characters.** The comment field rendered straight from the runs list, which live reloads replace several times a second during a run; a reload that started before the latest keystroke was saved put older text back under the cursor. The field now keeps its own draft while focused and saves 600ms after you stop typing (or immediately on Enter / leaving the field).
+
+---
+
 ## [0.4.17] — 2026-09-15
 
 ### Fixed

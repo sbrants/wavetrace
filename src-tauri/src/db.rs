@@ -285,7 +285,93 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "UPDATE runs SET run_type = 'farming' WHERE run_type = 'normal'",
         [],
     )?;
+    migrate_run_aggregates(conn)?;
     Ok(())
+}
+
+/// Per-run snapshot aggregates (count, coin/min and Golden Combo caret sums) stored on
+/// `runs` and kept current by triggers on `snapshots`. `list_runs` used to derive these
+/// with a GROUP BY over the entire snapshots table — every run ever recorded — on each
+/// call; at a million-plus rows that was ~350ms of CPU and a full read of the table, and
+/// the History live refresh issues it several times a second. Triggers (rather than
+/// updates in each Rust write path) also cover inserts/deletes/merges added later, and
+/// keep the columns correct if an older build that knows nothing about them writes to
+/// the same database.
+fn migrate_run_aggregates(conn: &Connection) -> rusqlite::Result<()> {
+    // `migrate` runs on every connection open, and several connections can open at once
+    // on first launch after the upgrade. IMMEDIATE takes the write lock up front so only
+    // one of them adds the columns and backfills; the rest see the column and skip.
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let has_columns: bool = tx.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = 'snap_count'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_columns {
+        return tx.commit();
+    }
+    tx.execute_batch(
+        "ALTER TABLE runs ADD COLUMN snap_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE runs ADD COLUMN coin_sum REAL NOT NULL DEFAULT 0;
+        ALTER TABLE runs ADD COLUMN coin_n INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE runs ADD COLUMN gc_sum REAL NOT NULL DEFAULT 0;
+        ALTER TABLE runs ADD COLUMN gc_n INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TRIGGER IF NOT EXISTS snapshots_agg_insert AFTER INSERT ON snapshots BEGIN
+            UPDATE runs SET
+                snap_count = snap_count + 1,
+                coin_sum = coin_sum + COALESCE(NEW.coin_per_minute, 0),
+                coin_n = coin_n + (NEW.coin_per_minute IS NOT NULL),
+                gc_sum = gc_sum + COALESCE(NEW.golden_combo_caret, 0),
+                gc_n = gc_n + (NEW.golden_combo_caret IS NOT NULL)
+            WHERE id = NEW.run_id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS snapshots_agg_delete AFTER DELETE ON snapshots BEGIN
+            UPDATE runs SET
+                snap_count = snap_count - 1,
+                coin_sum = coin_sum - COALESCE(OLD.coin_per_minute, 0),
+                coin_n = coin_n - (OLD.coin_per_minute IS NOT NULL),
+                gc_sum = gc_sum - COALESCE(OLD.golden_combo_caret, 0),
+                gc_n = gc_n - (OLD.golden_combo_caret IS NOT NULL)
+            WHERE id = OLD.run_id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS snapshots_agg_update
+        AFTER UPDATE OF run_id, coin_per_minute, golden_combo_caret ON snapshots BEGIN
+            UPDATE runs SET
+                snap_count = snap_count - 1,
+                coin_sum = coin_sum - COALESCE(OLD.coin_per_minute, 0),
+                coin_n = coin_n - (OLD.coin_per_minute IS NOT NULL),
+                gc_sum = gc_sum - COALESCE(OLD.golden_combo_caret, 0),
+                gc_n = gc_n - (OLD.golden_combo_caret IS NOT NULL)
+            WHERE id = OLD.run_id;
+            UPDATE runs SET
+                snap_count = snap_count + 1,
+                coin_sum = coin_sum + COALESCE(NEW.coin_per_minute, 0),
+                coin_n = coin_n + (NEW.coin_per_minute IS NOT NULL),
+                gc_sum = gc_sum + COALESCE(NEW.golden_combo_caret, 0),
+                gc_n = gc_n + (NEW.golden_combo_caret IS NOT NULL)
+            WHERE id = NEW.run_id;
+        END;
+
+        UPDATE runs SET
+            snap_count = agg.snap_count,
+            coin_sum = agg.coin_sum,
+            coin_n = agg.coin_n,
+            gc_sum = agg.gc_sum,
+            gc_n = agg.gc_n
+        FROM (
+            SELECT run_id,
+                   COUNT(*) AS snap_count,
+                   TOTAL(coin_per_minute) AS coin_sum,
+                   COUNT(coin_per_minute) AS coin_n,
+                   TOTAL(golden_combo_caret) AS gc_sum,
+                   COUNT(golden_combo_caret) AS gc_n
+            FROM snapshots
+            GROUP BY run_id
+        ) AS agg
+        WHERE agg.run_id = runs.id;",
+    )?;
+    tx.commit()
 }
 
 /// Close every run that still has no `ended_at` (at most one should be open).
@@ -404,19 +490,14 @@ pub fn insert_wave_skip(
 }
 
 pub fn list_runs(conn: &Connection, filter: &RunFilter) -> rusqlite::Result<Vec<RunRow>> {
-    // One snapshots pass (GROUP BY run_id) instead of three correlated subqueries per run.
+    // Aggregates are maintained on `runs` by triggers (see `migrate_run_aggregates`), so
+    // this never touches the snapshots table.
     let mut sql = String::from(
         "SELECT r.id, r.started_at, r.ended_at, r.run_type, r.peak_tier, r.final_wave,
-                agg.avg_coin, agg.avg_gc, COALESCE(agg.snap_count, 0), r.comment
+                CASE WHEN r.coin_n > 0 THEN r.coin_sum / r.coin_n END,
+                CASE WHEN r.gc_n > 0 THEN r.gc_sum / r.gc_n END,
+                r.snap_count, r.comment
          FROM runs r
-         LEFT JOIN (
-           SELECT run_id,
-                  AVG(coin_per_minute) AS avg_coin,
-                  AVG(golden_combo_caret) AS avg_gc,
-                  COUNT(*) AS snap_count
-           FROM snapshots
-           GROUP BY run_id
-         ) agg ON agg.run_id = r.id
          WHERE 1=1",
     );
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1277,6 +1358,108 @@ mod tests {
         assert_eq!(runs[0].snapshot_count, 3);
         assert_eq!(runs[0].avg_coin_per_minute, Some(200.0));
         assert_eq!(runs[0].avg_golden_combo_caret, Some(150.0));
+    }
+
+    /// (snapshot_count, avg coin/min, avg caret) recomputed straight from `snapshots`.
+    fn aggregates_from_snapshots(conn: &Connection, run_id: &str) -> (i64, Option<f64>, Option<f64>) {
+        conn.query_row(
+            "SELECT COUNT(*), AVG(coin_per_minute), AVG(golden_combo_caret)
+             FROM snapshots WHERE run_id = ?1",
+            params![run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn assert_list_runs_matches_snapshots(conn: &Connection) {
+        for run in list_runs(conn, &RunFilter::default()).unwrap() {
+            let (count, coin, caret) = aggregates_from_snapshots(conn, &run.id);
+            assert_eq!(run.snapshot_count, count, "count for {}", run.id);
+            assert_eq!(run.avg_coin_per_minute, coin, "coin for {}", run.id);
+            assert_eq!(run.avg_golden_combo_caret, caret, "caret for {}", run.id);
+        }
+    }
+
+    #[test]
+    fn list_runs_aggregates_follow_snapshot_edits() {
+        let conn = open_in_memory().unwrap();
+        let a = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &a, 1, Some(10), Some(100.0), Some(0.03), Some(100), None).unwrap();
+        insert_snapshot(&conn, &a, 2, Some(10), Some(200.0), None, None, None).unwrap();
+        insert_snapshot(&conn, &a, 3, Some(10), None, Some(0.03), Some(300), None).unwrap();
+        end_run(&conn, &a, Some(3), Some(10)).unwrap();
+        let b = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &b, 4, Some(10), Some(400.0), None, None, None).unwrap();
+        end_run(&conn, &b, Some(4), Some(10)).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+
+        let snaps = run_snapshots(&conn, &a).unwrap();
+        update_snapshot_golden_combo(&conn, &snaps[1].id, Some(0.03), Some(500), None).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+
+        clear_snapshot_golden_combo(&conn, &[snaps[0].id.clone()]).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+
+        delete_snapshots(&conn, &[snaps[2].id.clone()]).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+
+        let merged = combine_runs(&conn, &[a.clone(), b.clone()]).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, merged);
+        assert_eq!(runs[0].snapshot_count, 3);
+
+        // Removing every coin reading leaves no average rather than 0 or a float residue.
+        for s in run_snapshots(&conn, &merged).unwrap() {
+            conn.execute(
+                "UPDATE snapshots SET coin_per_minute = NULL WHERE id = ?1",
+                params![s.id],
+            )
+            .unwrap();
+        }
+        assert_list_runs_matches_snapshots(&conn);
+        assert_eq!(list_runs(&conn, &RunFilter::default()).unwrap()[0].avg_coin_per_minute, None);
+
+        delete_runs(&conn, &[merged]).unwrap();
+        assert!(list_runs(&conn, &RunFilter::default()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_aggregates_backfill_existing_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Schema as it was before the aggregate columns, with data already in it.
+        conn.execute_batch(
+            "CREATE TABLE runs (
+                id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT,
+                run_type TEXT NOT NULL DEFAULT 'farming', peak_tier INTEGER,
+                final_wave INTEGER, comment TEXT
+            );
+            CREATE TABLE snapshots (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+                wave INTEGER NOT NULL, tier INTEGER, coin_per_minute REAL,
+                recorded_at TEXT NOT NULL, golden_combo_chance REAL,
+                golden_combo_caret INTEGER, golden_combo_multiplier REAL
+            );
+            INSERT INTO runs (id, started_at) VALUES ('r1', '2026-01-01T00:00:00Z');
+            INSERT INTO runs (id, started_at) VALUES ('r2', '2026-01-02T00:00:00Z');
+            INSERT INTO snapshots (id, run_id, wave, coin_per_minute, golden_combo_caret, recorded_at)
+                VALUES ('s1', 'r1', 1, 10.0, 2, 't'), ('s2', 'r1', 2, 30.0, NULL, 't'),
+                       ('s3', 'r1', 3, NULL, 4, 't');",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
+        let runs = list_runs(&conn, &RunFilter::default()).unwrap();
+        let r1 = runs.iter().find(|r| r.id == "r1").unwrap();
+        assert_eq!((r1.snapshot_count, r1.avg_coin_per_minute, r1.avg_golden_combo_caret), (3, Some(20.0), Some(3.0)));
+        let r2 = runs.iter().find(|r| r.id == "r2").unwrap();
+        assert_eq!((r2.snapshot_count, r2.avg_coin_per_minute), (0, None));
+
+        // Re-running the migration (every connection open does) must not double-count.
+        migrate(&conn).unwrap();
+        insert_snapshot(&conn, "r1", 4, None, Some(40.0), None, None, None).unwrap();
+        assert_list_runs_matches_snapshots(&conn);
     }
 
     #[test]
