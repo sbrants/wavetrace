@@ -177,7 +177,9 @@ export default function App() {
         });
     };
     refresh();
-    const id = window.setInterval(refresh, 12_000);
+    // The status check runs several adb commands; focus and settings-saved events below
+    // already refresh it when the user is likely to act on it.
+    const id = window.setInterval(refresh, 60_000);
     const onFocus = () => refresh();
     const onSettingsSaved = () => refresh();
     window.addEventListener("focus", onFocus);
@@ -358,7 +360,7 @@ export default function App() {
           <History />
         </div>
         <div hidden={tab !== "settings"}>
-          <SettingsPage scannerRunning={running} />
+          <SettingsPage scannerRunning={running} active={tab === "settings"} />
         </div>
       </main>
       <ToastStack />

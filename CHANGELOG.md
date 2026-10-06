@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.19] — 2026-10-06
+
+### Fixed
+
+- **The UI used about a quarter of a CPU core during a run, even on a hidden tab.** The app re-rendered every page — including the hidden History and Settings pages and all of their charts — on every scanner tick (about once a second). History and Settings now only re-render when their own data changes, and charts only when their inputs do. Measured side by side during the same run: the UI went from ~23% to ~1% of a core, and its memory from ~385MB to ~207MB.
+- **Charts drew far more points than the screen can show.** Charts are now thinned to their actual on-screen width: per pixel, only the highest and lowest point of each line is drawn (plus the endpoints and anything selected), so spikes and dips are preserved exactly. Box-selection still selects every underlying snapshot. Coin/min dots are no longer created at all when they aren't clickable or selected.
+- **The run comparison rebuilt its data with a quadratic lookup** — about 12–47ms per rebuild, roughly once a second while a comparison was open. It's now linear, and only rebuilds when the compared data changes. The comparison's coin/min lines no longer animate on each live refresh, matching every other line.
+- **WaveTrace kept launching `adb` in the background** — at least 9 times in 40 seconds — from two status checks (the header's save-pull button every 12s, and the hidden Settings page every 15s), each re-reading every device's Android ID with `adb shell`, which also starts a process inside the emulator. Device IDs are now cached (dropped as soon as the device goes offline, and after 5 minutes), Settings only checks while it's open, and the header checks every 60s plus when the window regains focus.
+- **Every database query briefly took the database write lock.** Each query opens its own connection, and every connection re-ran the schema migration, including two steps that take the write lock (one added in v0.4.18) — so UI queries could queue behind the scanner's writes. The migration now runs once per database file per launch.
+
+---
+
 ## [0.4.18] — 2026-10-06
 
 ### Fixed

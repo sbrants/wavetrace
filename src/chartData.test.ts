@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyCompareChartSmoothing,
   averageGoldenComboCaret,
+  buildCompareChartDataByWave,
   buildLeadLagPolygons,
   buildWaveJumpMarkers,
   compareNewerRunIndex,
   downsampleChartData,
+  downsampleForWidth,
   mergeCompareWithSkips,
   smoothNullableSeries,
   snapshotsToChartData,
@@ -230,5 +232,64 @@ describe("applyCompareChartSmoothing", () => {
   it("returns the rows unchanged for a window of 1 or less", () => {
     const rows: CompareChartRow[] = [{ x: 0, coin_0: 10 }];
     expect(applyCompareChartSmoothing(rows, 1, 1)).toBe(rows);
+  });
+});
+
+describe("downsampleForWidth", () => {
+  const rows = (n: number, value: (i: number) => number | null) =>
+    Array.from({ length: n }, (_, i) => ({ x: i, v: value(i) }));
+
+  it("returns the input unchanged when it already fits", () => {
+    const data = rows(10, (i) => i);
+    expect(downsampleForWidth(data, (r) => r.x, [(r) => r.v], 5)).toBe(data);
+  });
+
+  it("caps output at a min and max per slot, keeping endpoints", () => {
+    const data = rows(10_000, (i) => Math.sin(i / 7));
+    const out = downsampleForWidth(data, (r) => r.x, [(r) => r.v], 400);
+    expect(out.length).toBeLessThanOrEqual(400 * 2 + 2);
+    expect(out[0]).toBe(data[0]);
+    expect(out[out.length - 1]).toBe(data[data.length - 1]);
+    // Order (by x) is preserved.
+    for (let i = 1; i < out.length; i++) expect(out[i].x).toBeGreaterThan(out[i - 1].x);
+  });
+
+  it("keeps a lone spike and dip that uniform striding would skip", () => {
+    const data = rows(10_000, (i) => (i === 4321 ? 1e9 : i === 7777 ? -1e9 : 1));
+    const out = downsampleForWidth(data, (r) => r.x, [(r) => r.v], 100);
+    expect(out.some((r) => r.v === 1e9)).toBe(true);
+    expect(out.some((r) => r.v === -1e9)).toBe(true);
+  });
+
+  it("preserves extremes of every series and rows the caller wants kept", () => {
+    const data = Array.from({ length: 5_000 }, (_, i) => ({
+      x: i,
+      coin: i === 10 ? 999 : 1,
+      gc: i === 4_000 ? 50 : i % 3 === 0 ? null : 2,
+    }));
+    const out = downsampleForWidth(
+      data,
+      (r) => r.x,
+      [(r) => r.coin, (r) => r.gc],
+      50,
+      (r) => r.x === 2_500
+    );
+    expect(out.some((r) => r.coin === 999)).toBe(true);
+    expect(out.some((r) => r.gc === 50)).toBe(true);
+    expect(out.some((r) => r.x === 2_500)).toBe(true);
+  });
+});
+
+describe("buildCompareChartDataByWave", () => {
+  it("aligns runs by wave and takes each run's first snapshot at a wave", () => {
+    const rows = buildCompareChartDataByWave(["a", "b"], {
+      a: [snapshot(1, 10), snapshot(2, 20), snapshot(2, 99)],
+      b: [snapshot(2, 200, 3), snapshot(3, null, 4), snapshot(4, null)],
+    });
+    expect(rows).toEqual([
+      { x: 1, coin_0: 10, gc_0: null, coin_1: null, gc_1: null },
+      { x: 2, coin_0: 20, gc_0: null, coin_1: 200, gc_1: 3 },
+      { x: 3, coin_0: null, gc_0: null, coin_1: null, gc_1: 4 },
+    ]);
   });
 });

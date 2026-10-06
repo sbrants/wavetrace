@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -226,7 +227,7 @@ function CommentInput({
   );
 }
 
-export default function History() {
+function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [filter, setFilter] = useState<RunFilter>({});
   const [dateFrom, setDateFrom] = useState("");
@@ -1626,21 +1627,35 @@ export default function History() {
   const hasJumpsOnChart = skipMarkers.length > 0;
   const hasGcOnChart = chartData.some((d) => d.golden_combo_caret != null);
 
-  const compareChartData = buildCompareChartDataByWave(
-    compareRunIds,
-    compareSnapshots
+  // Memoized on the compare data itself so unrelated History state changes (typing a
+  // comment, toggling a filter) don't rebuild the comparison or re-render its chart.
+  const compareChartData = useMemo(
+    () =>
+      buildCompareChartDataByWave(
+        compareRunIdsKey ? compareRunIdsKey.split(",") : [],
+        compareSnapshots
+      ),
+    [compareRunIdsKey, compareSnapshots]
   );
 
-  const compareSkipMarkers = compareRunIds.map((id) =>
-    buildChartWaveJumpMarkers(
-      compareWaveSkips[id] ?? [],
-      compareNormalJumps[id] ?? []
-    )
+  const compareSkipMarkers = useMemo(
+    () =>
+      (compareRunIdsKey ? compareRunIdsKey.split(",") : []).map((id) =>
+        buildChartWaveJumpMarkers(
+          compareWaveSkips[id] ?? [],
+          compareNormalJumps[id] ?? []
+        )
+      ),
+    [compareRunIdsKey, compareWaveSkips, compareNormalJumps]
   );
   const hasCompareSkips = compareSkipMarkers.some((markers) => markers.length > 0);
-  const hasCompareGc = compareHasGoldenComboActivations(
-    compareRunIds,
-    compareSnapshots
+  const hasCompareGc = useMemo(
+    () =>
+      compareHasGoldenComboActivations(
+        compareRunIdsKey ? compareRunIdsKey.split(",") : [],
+        compareSnapshots
+      ),
+    [compareRunIdsKey, compareSnapshots]
   );
 
   const compareChartMerged = useMemo(
@@ -1684,11 +1699,15 @@ export default function History() {
     };
   }, [compareLeadLagBand, compareRuns, compareLeadLagMetric]);
 
-  const compareLines: ChartLineConfig[] = compareRuns.map((r, i) => ({
-    dataKey: `coin_${i}`,
-    name: runShortLabel(r, compareSnapshots[r.id]),
-    stroke: COMPARE_COLORS[i % COMPARE_COLORS.length],
-  }));
+  const compareLines: ChartLineConfig[] = useMemo(
+    () =>
+      compareRuns.map((r, i) => ({
+        dataKey: `coin_${i}`,
+        name: runShortLabel(r, compareSnapshots[r.id]),
+        stroke: COMPARE_COLORS[i % COMPARE_COLORS.length],
+      })),
+    [compareRuns, compareSnapshots]
+  );
 
   const goToPage = (raw: string) => {
     const n = Number.parseInt(raw, 10);
@@ -3033,6 +3052,10 @@ export default function History() {
     </div>
   );
 }
+
+// Takes no props: memo keeps App's per-scanner-tick re-render (it holds the live event)
+// from re-rendering this whole page — and its charts — every second while it's hidden.
+export default memo(History);
 
 function duration(r: RunRow): string {
   if (!r.ended_at) return "ongoing";

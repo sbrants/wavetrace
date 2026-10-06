@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
@@ -69,10 +69,13 @@ function withDefaultWindow(settings: Settings, windows: WindowInfo[]): Settings 
   };
 }
 
-export default function SettingsPage({
+function SettingsPage({
   scannerRunning = false,
+  active = true,
 }: {
   scannerRunning?: boolean;
+  /** False while another tab is shown (the page stays mounted, just hidden). */
+  active?: boolean;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [windows, setWindows] = useState<WindowInfo[]>([]);
@@ -130,7 +133,10 @@ export default function SettingsPage({
     load();
   }, []);
 
+  // Each status check runs several adb commands (and can start a shell inside the
+  // emulator), so only keep it fresh while this tab is actually on screen.
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const refresh = () => {
       api
@@ -155,7 +161,7 @@ export default function SettingsPage({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, []);
+  }, [active]);
 
   const refreshNtfyStatus = async () => {
     try {
@@ -1220,3 +1226,7 @@ export default function SettingsPage({
     </div>
   );
 }
+
+// App re-renders on every scanner tick (it holds the live event); this page's props only
+// change when the scanner starts/stops or the tab switches.
+export default memo(SettingsPage);

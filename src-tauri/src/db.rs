@@ -204,8 +204,20 @@ pub fn detect_install_kind(app_data_dir: &std::path::Path) -> &'static str {
     }
 }
 
+/// Database files `migrate` has already run against in this process. Every Tauri command
+/// opens its own connection, and `migrate` takes the write lock (the run_type fix-up
+/// UPDATE and the run-aggregates IMMEDIATE transaction) — doing that on every open meant
+/// each UI query queued behind the scanner's writes. Keyed by path because switching
+/// accounts points at a different file.
+static MIGRATED: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
 pub fn open() -> rusqlite::Result<Connection> {
-    let conn = Connection::open(database_path())?;
+    let path = database_path();
+    // A missing file (first launch, or deleted while running) is created empty by
+    // `Connection::open` and must be migrated again even if this path was seen before.
+    let fresh = !path.exists();
+    let conn = Connection::open(&path)?;
     // Scanner, UI, and tests can open the DB concurrently; without a busy timeout
     // a second connection fails immediately with "database is locked".
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -219,7 +231,11 @@ pub fn open() -> rusqlite::Result<Connection> {
     // property of the database file, but harmless to (and fast to) set on every connection.
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
-    migrate(&conn)?;
+    let mut migrated = MIGRATED.lock().unwrap_or_else(|e| e.into_inner());
+    if fresh || !migrated.contains(&path) {
+        migrate(&conn)?;
+        migrated.insert(path);
+    }
     Ok(conn)
 }
 
@@ -298,16 +314,23 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
 /// keep the columns correct if an older build that knows nothing about them writes to
 /// the same database.
 fn migrate_run_aggregates(conn: &Connection) -> rusqlite::Result<()> {
-    // `migrate` runs on every connection open, and several connections can open at once
-    // on first launch after the upgrade. IMMEDIATE takes the write lock up front so only
-    // one of them adds the columns and backfills; the rest see the column and skip.
+    let has_columns = |c: &Connection| -> rusqlite::Result<bool> {
+        c.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = 'snap_count'",
+            [],
+            |row| row.get(0),
+        )
+    };
+    // Checked without a lock first: the common case (already migrated) must not take
+    // the write lock.
+    if has_columns(conn)? {
+        return Ok(());
+    }
+    // Another process (or a connection opened before `open` serialized migrations) can
+    // race us here. IMMEDIATE takes the write lock up front so only one of them adds the
+    // columns and backfills; the rest re-check under the lock and skip.
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    let has_columns: bool = tx.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = 'snap_count'",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_columns {
+    if has_columns(&tx)? {
         return tx.commit();
     }
     tx.execute_batch(

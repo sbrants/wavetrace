@@ -163,10 +163,48 @@ fn is_device_fingerprint(preferred: &str) -> bool {
     preferred.starts_with("aid:") || preferred.starts_with("avd:")
 }
 
+/// How long a serial's fingerprint is trusted without re-reading it. Bounds the window in
+/// which a different instance reusing the same port (emulator restarted between status
+/// checks without ever being seen offline) would be misidentified.
+const FINGERPRINT_CACHE_TTL: Duration = Duration::from_secs(300);
+
+/// serial → (fingerprint, read at). The status check behind the header's save-pull button
+/// runs on a UI timer and used to look up every candidate's fingerprint each time — one or
+/// two `adb shell` round trips per device, each also spawning a shell inside the emulator,
+/// competing with the game for CPU.
+static FINGERPRINT_CACHE: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
+
+/// Forget fingerprints for serials that are no longer online: whatever comes back on that
+/// serial may be a different instance.
+fn prune_fingerprint_cache(online: &[String]) {
+    if let Ok(mut cache) = FINGERPRINT_CACHE.lock() {
+        cache.retain(|(serial, _, _)| online.iter().any(|s| s == serial));
+    }
+}
+
 /// Read a stable per-instance identifier: Android ID first (works on virtually any Android
 /// system, survives port/start-order changes), falling back to the AVD name for the stock
 /// Android Emulator (`emulator-<port>` serials) when Android ID is unavailable.
 fn device_fingerprint(adb: &Path, serial: &str) -> Option<String> {
+    if let Ok(cache) = FINGERPRINT_CACHE.lock() {
+        if let Some((_, fp, _)) = cache
+            .iter()
+            .find(|(s, _, at)| s == serial && at.elapsed() < FINGERPRINT_CACHE_TTL)
+        {
+            return Some(fp.clone());
+        }
+    }
+    // Only successful reads are cached: a device that's still booting can answer with
+    // nothing and will have a real ID moments later.
+    let fp = read_device_fingerprint(adb, serial)?;
+    if let Ok(mut cache) = FINGERPRINT_CACHE.lock() {
+        cache.retain(|(s, _, _)| s != serial);
+        cache.push((serial.to_string(), fp.clone(), Instant::now()));
+    }
+    Some(fp)
+}
+
+fn read_device_fingerprint(adb: &Path, serial: &str) -> Option<String> {
     if let Ok(out) = run_adb_text(
         adb,
         Some(serial),
@@ -734,7 +772,9 @@ fn connect_host(adb: &Path, host: &str) {
 
 fn list_online_serials(adb: &Path) -> Result<Vec<String>, String> {
     let listing = run_adb_text(adb, None, &["devices"], Duration::from_secs(15))?;
-    Ok(parse_adb_devices(&listing))
+    let serials = parse_adb_devices(&listing);
+    prune_fingerprint_cache(&serials);
+    Ok(serials)
 }
 
 /// `preferred` is either a stable fingerprint (`aid:`/`avd:` prefixed — matched by querying
@@ -1186,6 +1226,38 @@ pub fn ensure_auto_pull_loop() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_cache_answers_without_adb_until_device_goes_offline() {
+        // Serials unique to this test: the cache is process-wide and tests run in parallel.
+        let serial = "127.0.0.1:65001";
+        let other = "127.0.0.1:65002";
+        FINGERPRINT_CACHE.lock().unwrap().push((
+            serial.to_string(),
+            "aid:cached".to_string(),
+            Instant::now(),
+        ));
+        // A nonexistent adb binary: any real lookup would fail and return None.
+        let no_adb = Path::new("Z:/definitely/missing/adb.exe");
+        assert_eq!(device_fingerprint(no_adb, serial).as_deref(), Some("aid:cached"));
+
+        prune_fingerprint_cache(&[other.to_string()]);
+        assert_eq!(device_fingerprint(no_adb, serial), None);
+    }
+
+    #[test]
+    fn fingerprint_cache_entries_expire() {
+        let serial = "127.0.0.1:65003";
+        let stale = Instant::now()
+            .checked_sub(FINGERPRINT_CACHE_TTL + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+        FINGERPRINT_CACHE
+            .lock()
+            .unwrap()
+            .push((serial.to_string(), "aid:old".to_string(), stale));
+        let no_adb = Path::new("Z:/definitely/missing/adb.exe");
+        assert_eq!(device_fingerprint(no_adb, serial), None);
+    }
 
     #[test]
     fn parse_adb_devices_online_only() {

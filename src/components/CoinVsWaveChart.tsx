@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import {
   ComposedChart,
   LineChart,
@@ -20,7 +28,45 @@ import type {
   LeadLagPolygon,
   WaveSkipMarker,
 } from "../chartData";
-import { buildLeadLagPolygons } from "../chartData";
+import { buildLeadLagPolygons, downsampleForWidth } from "../chartData";
+
+/** Sampling width used until the chart has been laid out (e.g. mounted in a hidden tab). */
+const FALLBACK_CHART_WIDTH = 1200;
+
+// Stable defaults for optional array props: a fresh `[]` per render would invalidate
+// every memo below that depends on them.
+const NO_SKIPS: WaveSkipMarker[] = [];
+const NO_WAVES: number[] = [];
+const NO_IDS: string[] = [];
+
+/**
+ * Rendered width of the returned ref's element, in CSS pixels, rounded to 10px so a window
+ * drag doesn't resample on every pixel. Zero-width reports (the element's tab being
+ * hidden) are ignored, keeping the last real width.
+ */
+function useElementWidth() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = (w: number) => {
+      if (w > 0) setWidth(Math.round(w / 10) * 10);
+    };
+    update(el.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry) update(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
 export type ChartLineConfig = {
   dataKey: string;
@@ -361,7 +407,7 @@ function formatCompareDelta(
 
 function SingleRunChart({
   data,
-  waveSkips = [],
+  waveSkips = NO_SKIPS,
   waveSkipColor = SKIP_LINE_COLOR,
   showWaveJumps = true,
   showCoinPerMinute = true,
@@ -369,12 +415,13 @@ function SingleRunChart({
   height,
   onPointClick,
   onSelectWaves,
-  selectedWaves = [],
+  selectedWaves = NO_WAVES,
   onSkipClick,
-  selectedSkipIds = [],
+  selectedSkipIds = NO_IDS,
   onGcClick,
-  selectedGcWaves = [],
-}: SingleProps) {
+  selectedGcWaves = NO_WAVES,
+  buckets,
+}: SingleProps & { buckets: number }) {
   const layoutRef = useRef<PlotOffset | null>(null);
   const dragRef = useRef<{ wave: number; coin: number } | null>(null);
   const draggedRef = useRef(false);
@@ -500,7 +547,29 @@ function SingleRunChart({
     }
   };
 
-  const visibleSkips = showWaveJumps ? waveSkips : [];
+  // What gets drawn is thinned to the chart's pixel width (see `downsampleForWidth`);
+  // marquee selection (`wavesInBox`) and the axis bounds keep using the full `data`.
+  const plotData = useMemo(() => {
+    const keepWaves = new Set([...selectedWaves, ...selectedGcWaves]);
+    return downsampleForWidth(
+      data,
+      (d) => d.wave,
+      [(d) => d.coin, (d) => d.golden_combo_caret],
+      buckets,
+      keepWaves.size > 0 ? (d) => keepWaves.has(d.wave) : undefined
+    );
+  }, [data, buckets, selectedWaves, selectedGcWaves]);
+  const visibleSkips = useMemo(() => {
+    if (!showWaveJumps) return [];
+    const keepIds = new Set(selectedSkipIds);
+    return downsampleForWidth(
+      waveSkips,
+      (s) => s.wave,
+      [(s) => s.skip_count],
+      buckets,
+      keepIds.size > 0 ? (s) => keepIds.has(s.id) : undefined
+    );
+  }, [showWaveJumps, waveSkips, buckets, selectedSkipIds]);
   const hasSkips = visibleSkips.length > 0;
   const hasGc =
     showGoldenComboActivations &&
@@ -508,9 +577,9 @@ function SingleRunChart({
   const chartData = useMemo(
     () =>
       hasSkips
-        ? mergeSingleChartData(data, visibleSkips)
-        : toSingleChartRows(data),
-    [data, visibleSkips, hasSkips]
+        ? mergeSingleChartData(plotData, visibleSkips)
+        : toSingleChartRows(plotData),
+    [plotData, visibleSkips, hasSkips]
   );
   const gcDomain = useMemo((): [number, number] | undefined => {
     if (!hasGc) return undefined;
@@ -651,7 +720,9 @@ function SingleRunChart({
             strokeWidth={2}
             connectNulls
             isAnimationActive={false}
-            dot={(dotProps) => {
+            // Without click/selection there is nothing to draw per point, and the render
+            // function below still produced an (empty) element for every one of them.
+            dot={!onPointClick && !selectable && selectedSet.size === 0 ? false : (dotProps) => {
               const { cx, cy, payload } = dotProps;
               const row = payload as SingleChartRow | CoinChartPoint;
               if (cx == null || cy == null || row.coin == null) {
@@ -745,14 +816,42 @@ function SingleRunChart({
   );
 }
 
-export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
+function CoinVsWaveChart(props: CoinVsWaveChartProps) {
+  const [widthRef, width] = useElementWidth();
+  // One sampling slot per pixel of chart width (see `downsampleForWidth`).
+  const buckets = width > 0 ? width : FALLBACK_CHART_WIDTH;
   const height = props.height ?? 320;
+  return (
+    <div ref={widthRef}>
+      {props.mode === "single" ? (
+        <SingleRunChart {...props} height={height} buckets={buckets} />
+      ) : (
+        <CompareRunChart {...props} height={height} buckets={buckets} />
+      )}
+    </div>
+  );
+}
 
-  if (props.mode === "single") {
-    return <SingleRunChart {...props} height={height} />;
-  }
+// Parents re-render far more often than chart data changes (Dashboard on every scanner
+// tick), and a Recharts re-render rebuilds every series path from scratch.
+export default memo(CoinVsWaveChart);
 
-  if (props.data.length === 0) {
+function CompareRunChart(
+  props: CompareProps & { height: number; buckets: number }
+) {
+  const { height, buckets } = props;
+  const lineCount = props.lines.length;
+  const chartData = useMemo(() => {
+    const series: ((row: CompareChartRow) => number | null)[] = [];
+    for (let i = 0; i < lineCount; i++) {
+      for (const key of [`coin_${i}`, `gc_${i}`, `skip_${i}`]) {
+        series.push((row) => finiteOrNull(row[key]));
+      }
+    }
+    return downsampleForWidth(props.data, (row) => row.x, series, buckets);
+  }, [props.data, lineCount, buckets]);
+
+  if (chartData.length === 0) {
     return null;
   }
 
@@ -762,7 +861,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
   const leadLagPolygons =
     leadLag != null
       ? buildLeadLagPolygons(
-          props.data,
+          chartData,
           leadLag.newerIndex,
           leadLag.olderIndex,
           leadLag.metric
@@ -795,7 +894,6 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
     }
     return [0, Math.max(1, Math.ceil(max * 1.05))];
   })();
-  const chartData = props.data;
   const Chart = hasSkips || hasGc ? ComposedChart : LineChart;
   const rightAxes = (hasSkips ? 1 : 0) + (hasGc ? 1 : 0);
   const rightMargin = rightAxes === 0 ? 12 : rightAxes === 1 ? 44 : 80;
@@ -1004,6 +1102,7 @@ export default function CoinVsWaveChart(props: CoinVsWaveChartProps) {
               dot={false}
               strokeWidth={2}
               connectNulls
+              isAnimationActive={false}
             />
           ))}
       </Chart>
