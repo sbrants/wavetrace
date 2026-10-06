@@ -479,8 +479,14 @@ impl Worker {
         std::thread::Builder::new()
             .name("wavetrace-capture".into())
             .spawn(move || {
+                #[cfg(windows)]
+                let mut session = crate::capture_session::WindowSession::new();
                 while let Ok(target) = request_rx.recv() {
-                    if reply_tx.send(capture_target_detailed(&target)).is_err() {
+                    #[cfg(windows)]
+                    let result = capture_target_with_session(&target, &mut session);
+                    #[cfg(not(windows))]
+                    let result = capture_target_detailed(&target);
+                    if reply_tx.send(result).is_err() {
                         break;
                     }
                 }
@@ -491,6 +497,47 @@ impl Worker {
             reply: reply_rx,
         }
     }
+}
+
+/// Scanner capture: answer from the worker's persistent session when it's bound to this
+/// target's window, otherwise take the regular path and, if it found and captured the
+/// window, bind a session to it for the following ticks. Only the scanner's worker does
+/// this — one-off captures (previews, fixtures, new-run detection) stay on the regular path.
+#[cfg(windows)]
+fn capture_target_with_session(
+    target: &CaptureTarget,
+    session: &mut crate::capture_session::WindowSession,
+) -> Result<RgbaImage, CaptureFailure> {
+    let CaptureTarget::Window(tw) = target else {
+        return capture_target_detailed(target);
+    };
+    if let Some(result) = session.capture(tw) {
+        return result;
+    }
+    let result = capture_window_detailed(tw);
+    if result.is_ok() {
+        if let Some(id) = cached_window_id(tw) {
+            session.bind(tw, id);
+        }
+    }
+    result
+}
+
+/// The window id the regular path matched for `target` on its last success (both the
+/// exact-title and substring searches record it in `WINDOW_CACHE` under these keys).
+#[cfg(windows)]
+fn cached_window_id(target: &TargetWindow) -> Option<u32> {
+    let key = if target.user_selected {
+        format!("exact:{}\0{}", target.title_substring, target.process_name)
+    } else {
+        target.title_substring.clone()
+    };
+    WINDOW_CACHE
+        .lock()
+        .ok()?
+        .as_ref()
+        .filter(|(k, _)| *k == key)
+        .map(|(_, id)| *id)
 }
 
 /// Capture the configured target. User-picked windows are matched by exact title

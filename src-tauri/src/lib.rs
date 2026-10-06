@@ -3,6 +3,8 @@ pub mod adb_save;
 pub mod app_icon;
 pub mod backup;
 pub mod capture;
+#[cfg(windows)]
+pub mod capture_session;
 pub mod classify;
 pub mod commands;
 pub mod db;

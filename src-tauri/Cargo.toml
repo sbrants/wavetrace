@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.4.19"
+version = "0.4.20"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 license = "MIT"
@@ -36,11 +36,19 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.62", features = [
     "Foundation",
     "Foundation_Collections",
+    "Graphics_Capture",
+    "Graphics_DirectX_Direct3D11",
     "Graphics_Imaging",
     "Media_Ocr",
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

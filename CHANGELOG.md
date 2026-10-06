@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.20] — 2026-10-06
+
+### Fixed
+
+- **Every window capture set up a brand-new screen-capture session, about 35–70ms per frame.** The scanner now keeps one capture session open on the game window and reads the newest frame from it, falling back to the previous method whenever the session can't answer (window closed, renamed or replaced, mid-resize). Measured side by side on the same emulator window: capture went from ~36ms to ~4–5ms per frame, backend CPU from ~8.7% to ~6.9% of a core, and OS file/driver calls from ~1,100 to ~460 per second. Frames are pixel-identical to before, so OCR is unaffected. The session asks Windows for at most ~10 frames a second, so the emulator's frame rate isn't affected (checked at 120 fps). The log notes when the session starts or stops (`capture session: …`).
+- **The scanner also stopped listing every window on the desktop each tick:** once the game window is found, it's re-checked directly (still exists, same process, title still matches) instead.
+
+### Changed
+
+- **Tauri 2.12** (Rust crate and npm packages together), with notification, process and updater plugin updates.
+- **Security:** rustls 0.23.45 (TLS 1.3 handshake advisory), plus npm dev-dependency advisories (`source-map-js`, `brace-expansion`).
+- Fixed the three `react-hooks/exhaustive-deps` lint warnings in History.
+
+---
+
 ## [0.4.19] — 2026-10-06
 
 ### Fixed
