@@ -88,6 +88,20 @@ pub fn screen_capture_access() -> ScreenCaptureAccess {
     }
 }
 
+/// Whether this is a Linux Wayland session. Window listing goes through X11 there, so only
+/// XWayland windows show up — native Wayland ones (e.g. ika's scrcpy console) never do.
+pub fn wayland_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t.eq_ignore_ascii_case("wayland"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 /// Request Screen Recording permission, prompting on first launch (macOS only).
 pub fn request_screen_capture_access() -> ScreenCaptureAccess {
     #[cfg(target_os = "macos")]
@@ -395,7 +409,7 @@ pub struct TimeboxedCapture {
 }
 
 struct Worker {
-    request: std::sync::mpsc::Sender<CaptureTarget>,
+    request: std::sync::mpsc::Sender<(CaptureTarget, std::time::Duration)>,
     reply: std::sync::mpsc::Receiver<Result<RgbaImage, CaptureFailure>>,
 }
 
@@ -444,7 +458,7 @@ impl TimeboxedCapture {
         }
         let worker = self.worker.as_ref().expect("worker just created");
 
-        if worker.request.send(target.clone()).is_err() {
+        if worker.request.send((target.clone(), timeout)).is_err() {
             self.worker = None;
             return Err(CaptureFailure::CaptureFailed);
         }
@@ -474,18 +488,20 @@ impl TimeboxedCapture {
 
 impl Worker {
     fn spawn() -> Worker {
-        let (request_tx, request_rx) = std::sync::mpsc::channel::<CaptureTarget>();
+        let (request_tx, request_rx) = std::sync::mpsc::channel::<(CaptureTarget, std::time::Duration)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<RgbaImage, CaptureFailure>>();
         std::thread::Builder::new()
             .name("wavetrace-capture".into())
             .spawn(move || {
                 #[cfg(windows)]
                 let mut session = crate::capture_session::WindowSession::new();
-                while let Ok(target) = request_rx.recv() {
-                    #[cfg(windows)]
-                    let result = capture_target_with_session(&target, &mut session);
-                    #[cfg(not(windows))]
-                    let result = capture_target_detailed(&target);
+                while let Ok((target, timeout)) = request_rx.recv() {
+                    let result = capture_for_scanner(
+                        &target,
+                        timeout,
+                        #[cfg(windows)]
+                        &mut session,
+                    );
                     if reply_tx.send(result).is_err() {
                         break;
                     }
@@ -551,8 +567,31 @@ pub fn capture_target(target: &CaptureTarget) -> Option<RgbaImage> {
 pub fn capture_target_detailed(target: &CaptureTarget) -> Result<RgbaImage, CaptureFailure> {
     match target {
         CaptureTarget::Window(tw) => capture_window_detailed(tw),
-        CaptureTarget::AdbPhone { adb, serial, .. } => capture_adb_frame(adb, serial),
+        CaptureTarget::AdbPhone { adb, serial, .. } => {
+            capture_adb_frame(adb, serial, adb_save::ADB_SCREENCAP_TIMEOUT)
+        }
     }
+}
+
+/// How long before the scanner's own deadline a scanner screencap is killed, so `adb`
+/// is gone (and the device free for the next one) by the time the scanner gives up.
+const ADB_KILL_MARGIN: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The scanner worker's capture. ADB screencaps get the scanner's deadline: one left
+/// running past it holds the device (ADB serializes per device), so the next screencap
+/// queues behind it, overruns too, and slow captures snowball into a lasting outage.
+fn capture_for_scanner(
+    target: &CaptureTarget,
+    timeout: std::time::Duration,
+    #[cfg(windows)] session: &mut crate::capture_session::WindowSession,
+) -> Result<RgbaImage, CaptureFailure> {
+    if let CaptureTarget::AdbPhone { adb, serial, .. } = target {
+        return capture_adb_frame(adb, serial, timeout.saturating_sub(ADB_KILL_MARGIN));
+    }
+    #[cfg(windows)]
+    return capture_target_with_session(target, session);
+    #[cfg(not(windows))]
+    capture_target_detailed(target)
 }
 
 fn capture_window_detailed(target: &TargetWindow) -> Result<RgbaImage, CaptureFailure> {
@@ -569,15 +608,86 @@ fn capture_window_detailed(target: &TargetWindow) -> Result<RgbaImage, CaptureFa
 /// CPU time (competing with the game itself for cycles) and is slower end-to-end even
 /// though the raw payload is several times larger over the USB/adb pipe (measured ~600ms
 /// device-side and ~100ms faster round trip on a Pixel 9a).
-fn capture_adb_frame(adb: &Path, serial: &str) -> Result<RgbaImage, CaptureFailure> {
-    let bytes = adb_save::capture_screenshot(adb, serial)
-        .map_err(|error| CaptureFailure::AdbCaptureFailed { error })?;
+fn capture_adb_frame(
+    adb: &Path,
+    serial: &str,
+    timeout: std::time::Duration,
+) -> Result<RgbaImage, CaptureFailure> {
+    let started = std::time::Instant::now();
+    let bytes = adb_save::capture_screenshot(adb, serial, timeout).map_err(|error| {
+        // Killed at the deadline: the device is slow, not missing.
+        if started.elapsed() >= timeout {
+            CaptureFailure::TimedOut {
+                after_ms: timeout.as_millis() as u64,
+            }
+        } else {
+            CaptureFailure::AdbCaptureFailed { error }
+        }
+    })?;
     let img =
         decode_raw_screencap(&bytes).map_err(|error| CaptureFailure::AdbCaptureFailed { error })?;
     if img.width() * img.height() < MIN_CAPTURE_AREA {
         return Err(CaptureFailure::CaptureFailed);
     }
-    Ok(img)
+    Ok(crop_letterbox(img))
+}
+
+/// A pixel counts as letterbox when every channel is at or below this — Android fills the
+/// unused area around a portrait-locked app on a landscape display with pure black.
+const LETTERBOX_MAX_CHANNEL: u8 = 8;
+/// A column/row is a bar when fewer than 1 in this many sampled pixels are lit, so a stray
+/// lit pixel (cursor, compression noise) doesn't stop the trim.
+const LETTERBOX_LIT_TOLERANCE: usize = 100;
+/// Bars thinner than this fraction of the frame are left alone: a few dark columns at the
+/// edge of a normal full-screen frame are game content, not a letterbox.
+const LETTERBOX_MIN_FRACTION: f32 = 0.05;
+/// Only every Nth pixel along a column/row is checked — a bar is uniform, so sampling
+/// keeps this to a few ms on a 2560×1440 frame.
+const LETTERBOX_SAMPLE_STEP: usize = 4;
+
+/// Trims black bars around the game when the device's display doesn't match the game's
+/// portrait aspect — e.g. The Tower on a 2560×1440 landscape Android VM (ika/Cuttlefish),
+/// drawn as a narrow column in the middle. OCR regions are fractions of the frame, so
+/// without this they land on the bars and read nothing. Frames without bars, or that are
+/// entirely black (loading), come back unchanged.
+pub(crate) fn crop_letterbox(img: RgbaImage) -> RgbaImage {
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let raw = img.as_raw();
+    let lit = |x: usize, y: usize| {
+        let i = (y * w + x) * 4;
+        raw[i] > LETTERBOX_MAX_CHANNEL
+            || raw[i + 1] > LETTERBOX_MAX_CHANNEL
+            || raw[i + 2] > LETTERBOX_MAX_CHANNEL
+    };
+    let is_bar = |samples: &mut dyn Iterator<Item = (usize, usize)>| {
+        let (mut n, mut lit_n) = (0usize, 0usize);
+        for (x, y) in samples {
+            n += 1;
+            if lit(x, y) {
+                lit_n += 1;
+            }
+        }
+        lit_n * LETTERBOX_LIT_TOLERANCE <= n
+    };
+    let col_is_bar = |x: usize| is_bar(&mut (0..h).step_by(LETTERBOX_SAMPLE_STEP).map(|y| (x, y)));
+    let row_is_bar = |y: usize| is_bar(&mut (0..w).step_by(LETTERBOX_SAMPLE_STEP).map(|x| (x, y)));
+
+    let Some(left) = (0..w).find(|&x| !col_is_bar(x)) else {
+        return img; // all black
+    };
+    let right = (0..w).rev().find(|&x| !col_is_bar(x)).unwrap_or(left) + 1;
+    let top = (0..h).find(|&y| !row_is_bar(y)).unwrap_or(0);
+    let bottom = (0..h).rev().find(|&y| !row_is_bar(y)).unwrap_or(h - 1) + 1;
+
+    let trim_x = (w - (right - left)) as f32 >= w as f32 * LETTERBOX_MIN_FRACTION;
+    let trim_y = (h - (bottom - top)) as f32 >= h as f32 * LETTERBOX_MIN_FRACTION;
+    let (x0, x1) = if trim_x { (left, right) } else { (0, w) };
+    let (y0, y1) = if trim_y { (top, bottom) } else { (0, h) };
+    if (x0, x1, y0, y1) == (0, w, 0, h) || ((x1 - x0) * (y1 - y0)) < MIN_CAPTURE_AREA as usize {
+        return img;
+    }
+    image::imageops::crop_imm(&img, x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32)
+        .to_image()
 }
 
 /// Android's `PixelFormat` values `screencap`'s raw header can report. Both lay out each
@@ -795,7 +905,54 @@ pub fn encode_png_base64(img: &RgbaImage) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_raw_screencap, is_our_app_window, window_matches_exact_target};
+    use super::{crop_letterbox, decode_raw_screencap, is_our_app_window, window_matches_exact_target};
+    use image::{Rgba, RgbaImage};
+
+    /// A `w`×`h` black frame with a lit (game) rectangle at `x..x+gw`, `y..y+gh`.
+    fn letterboxed(w: u32, h: u32, x: u32, y: u32, gw: u32, gh: u32) -> RgbaImage {
+        RgbaImage::from_fn(w, h, |px, py| {
+            if px >= x && px < x + gw && py >= y && py < y + gh {
+                Rgba([40, 20, 60, 255])
+            } else {
+                Rgba([0, 0, 0, 255])
+            }
+        })
+    }
+
+    #[test]
+    fn crop_letterbox_trims_side_bars_of_landscape_display() {
+        // ika on a 1440p monitor: portrait game centered on a 2560×1440 display.
+        let img = crop_letterbox(letterboxed(2560, 1440, 950, 0, 660, 1440));
+        assert_eq!((img.width(), img.height()), (660, 1440));
+        assert_eq!(img.get_pixel(0, 0), &Rgba([40, 20, 60, 255]));
+    }
+
+    #[test]
+    fn crop_letterbox_trims_top_and_bottom_bars() {
+        let img = crop_letterbox(letterboxed(1080, 2400, 0, 300, 1080, 1800));
+        assert_eq!((img.width(), img.height()), (1080, 1800));
+    }
+
+    #[test]
+    fn crop_letterbox_keeps_full_frame_with_thin_dark_edge() {
+        // 20 dark columns (<5%) at the edge of a normal phone frame are game content.
+        let img = crop_letterbox(letterboxed(1080, 2400, 20, 0, 1060, 2400));
+        assert_eq!((img.width(), img.height()), (1080, 2400));
+    }
+
+    #[test]
+    fn crop_letterbox_ignores_stray_lit_pixels_in_bars() {
+        let mut frame = letterboxed(2560, 1440, 950, 0, 660, 1440);
+        frame.put_pixel(100, 400, Rgba([255, 255, 255, 255]));
+        let img = crop_letterbox(frame);
+        assert_eq!((img.width(), img.height()), (660, 1440));
+    }
+
+    #[test]
+    fn crop_letterbox_leaves_all_black_frame_alone() {
+        let img = crop_letterbox(letterboxed(2560, 1440, 0, 0, 0, 0));
+        assert_eq!((img.width(), img.height()), (2560, 1440));
+    }
 
     fn raw_screencap_bytes(width: u32, height: u32, format: u32, with_color_space: bool) -> Vec<u8> {
         let mut bytes = Vec::new();

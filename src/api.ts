@@ -251,6 +251,7 @@ export const api = {
   listWindows: () => invoke<WindowInfo[]>("list_windows"),
   screenCaptureAccess: () =>
     invoke<ScreenCaptureAccess>("screen_capture_access"),
+  waylandSession: () => invoke<boolean>("wayland_session"),
   requestScreenCaptureAccess: () =>
     invoke<ScreenCaptureAccess>("request_screen_capture_access"),
   openScreenRecordingSettings: () =>

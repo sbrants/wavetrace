@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.22] — 2026-10-08
+
+### Fixed
+
+- **Phone (ADB) capture read nothing when the game didn't fill the device's screen.** The Tower only runs in portrait. On a landscape display, such as an Android VM like ika in a maximized window, Android draws it as a narrow column with black bars on both sides. The scanner looked for the coin, wave and tier text in the wrong places and recorded nothing. Black bars around the game are now cropped off before reading. Settings → Preview capture shows the cropped frame.
+- **One slow ADB screenshot could make the next ones slow too.** When the scanner gave up waiting for a screenshot, the screenshot kept running for up to 25 seconds and kept the device busy. Later screenshots had to wait behind it, so "Screen capture not responding" could keep coming back. The screenshot is now stopped at the moment the scanner gives up. Settings → Preview capture still waits up to 25 seconds.
+
+### Added
+
+- **On Linux Wayland desktops, Settings → Target window now explains why some windows are missing.** Only windows running through XWayland can be listed there. Emulators with a native Wayland window, such as ika, need **Phone (ADB)** capture instead.
+
+---
+
 ## [0.4.21] — 2026-10-08
 
 ### Fixed
