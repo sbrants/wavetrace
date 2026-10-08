@@ -1,6 +1,6 @@
 [package]
 name = "wavetrace"
-version = "0.4.20"
+version = "0.4.21"
 description = "WaveTrace — automatic per-wave tracking for The Tower"
 edition = "2021"
 license = "MIT"
@@ -52,6 +52,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+webview2-com = "0.39"
 windows-future = "0.3"
 xcap = { version = "0.9.6", features = ["wgc"] }
 

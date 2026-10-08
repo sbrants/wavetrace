@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.21] — 2026-10-08
+
+### Fixed
+
+- **The window could go blank after running for a long time while the scanner kept going in the background.** After about 26 hours, the page inside the window ran out of memory and crashed, and nothing brought it back. The app now reloads the page automatically if it crashes or stops responding, and notes it in the log (`WebView2 renderer exited; reloading page`). Scanning and recording aren't interrupted. If the page crashes 3 times within 10 minutes, the app stops reloading it so it can't get stuck in a loop.
+
+### Added
+
+- **Memory use is now written to the log every 10 minutes** (`[UI:memory] JS heap …`), along with the number of elements on the page. The cause of the crash above hasn't been found yet: memory stayed small and steady in every test. These log lines will show what led up to the next crash, if there is one.
+
+---
+
 ## [0.4.20] — 2026-10-06
 
 ### Fixed

@@ -18,6 +18,7 @@ pub mod dissonance_icons;
 pub mod notifications;
 pub mod ocr;
 pub mod parser;
+pub mod renderer_recovery;
 pub mod scanner;
 pub mod settings;
 pub mod shutdown_hook;
@@ -133,6 +134,7 @@ pub fn run() {
             // on Windows/Linux, which don't gate this behind a permission.
             let _ = capture::request_screen_capture_access();
             shutdown_hook::install(app.handle());
+            renderer_recovery::install(app.handle());
             crate::adb_save::ensure_auto_pull_loop();
             Ok(())
         })

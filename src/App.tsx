@@ -127,6 +127,28 @@ export default function App() {
       window.removeEventListener("wavetrace-debug-capture", onDebugCapture);
   }, []);
 
+  // Logs the page's JS heap every 10 minutes so the scanner log shows whether a renderer
+  // OOM crash (which reloads the page) followed a slow leak or a sudden spike.
+  useEffect(() => {
+    const memory = (performance as Performance & {
+      memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
+    }).memory;
+    if (!memory) return;
+    const log = () => {
+      const mb = (n: number) => (n / 1048576).toFixed(1);
+      void api
+        .appendAppLog(
+          "memory",
+          `JS heap ${mb(memory.usedJSHeapSize)}MB / ${mb(memory.jsHeapSizeLimit)}MB, ` +
+            `${document.getElementsByTagName("*").length} DOM elements`
+        )
+        .catch(() => {});
+    };
+    log();
+    const id = window.setInterval(log, 10 * 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const refreshCanResume = useCallback(() => {
     api.hasResumableRun().then(setCanResume).catch(() => setCanResume(false));
   }, []);
