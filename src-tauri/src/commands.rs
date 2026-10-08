@@ -59,6 +59,11 @@ pub fn screen_capture_access() -> capture::ScreenCaptureAccess {
 }
 
 #[tauri::command]
+pub fn wayland_session() -> bool {
+    capture::wayland_session()
+}
+
+#[tauri::command]
 pub fn request_screen_capture_access() -> capture::ScreenCaptureAccess {
     capture::request_screen_capture_access()
 }

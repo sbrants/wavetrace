@@ -918,20 +918,16 @@ pub fn resolve_capture_device(
 /// made while the scanner is already mid-poll (e.g. Settings → Preview capture during an
 /// active run) has to wait its turn behind the scanner's own continuous capture stream
 /// rather than actually being stuck.
-const ADB_SCREENCAP_TIMEOUT: Duration = Duration::from_secs(25);
+/// The scanner passes its own, shorter deadline instead (see `TimeboxedCapture`).
+pub const ADB_SCREENCAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Grab a single screenshot from a connected device via `screencap`, as its raw
 /// (uncompressed) framebuffer dump — skipping `-p`'s on-device PNG encode, which costs
 /// real CPU time competing with the game itself. Built into the Android shell — no APK
 /// install on the device required. See [`crate::capture::decode_raw_screencap`] for the
 /// header format this returns.
-pub fn capture_screenshot(adb: &Path, serial: &str) -> Result<Vec<u8>, String> {
-    run_adb(
-        adb,
-        Some(serial),
-        &["exec-out", "screencap"],
-        ADB_SCREENCAP_TIMEOUT,
-    )
+pub fn capture_screenshot(adb: &Path, serial: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+    run_adb(adb, Some(serial), &["exec-out", "screencap"], timeout)
 }
 
 fn remote_path_exists(adb: &Path, serial: &str, remote_path: &str) -> bool {

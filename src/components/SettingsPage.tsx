@@ -109,15 +109,18 @@ function SettingsPage({
   );
   const [gameSaveDevices, setGameSaveDevices] = useState<AdbDeviceInfo[]>([]);
   const [devicesBusy, setDevicesBusy] = useState(false);
+  const [waylandSession, setWaylandSession] = useState(false);
 
   const load = async () => {
-    const [loadedSettings, listedWindows, access, dataPaths] = await Promise.all([
+    const [loadedSettings, listedWindows, access, dataPaths, wayland] = await Promise.all([
       api.getSettings(),
       api.listWindows(),
       api.screenCaptureAccess(),
       api.getAppDataInfo(),
+      api.waylandSession(),
     ]);
     setWindows(listedWindows);
+    setWaylandSession(wayland);
     setScreenAccess(access);
     setAppData(dataPaths);
     setSettings(withDefaultWindow(loadedSettings, listedWindows));
@@ -546,6 +549,14 @@ function SettingsPage({
           substring field is for flexible matching when auto-detecting (e.g. first
           run without a saved choice).
         </p>
+        {waylandSession && (
+          <p className="muted">
+            On Wayland, only windows running through XWayland appear in this
+            list. Android emulators that open a native Wayland window, such as
+            ika, won't show up here. Use <strong>Phone (ADB)</strong> above
+            to capture them.
+          </p>
+        )}
         <div className="row">
           <label htmlFor="target-title-substring">
             Title substring

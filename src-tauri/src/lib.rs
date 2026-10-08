@@ -142,6 +142,7 @@ pub fn run() {
             commands::list_windows,
             commands::screen_capture_access,
             commands::request_screen_capture_access,
+            commands::wayland_session,
             commands::open_screen_recording_settings,
             commands::open_external_url,
             commands::open_scanner_logs_folder,
