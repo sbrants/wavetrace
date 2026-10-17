@@ -1724,7 +1724,13 @@ fn extract_golden_combo_multiplier(blob: &str) -> Option<f64> {
         // Dilated OCR often drops `x` → `'(0.10!` / `(0.10!` / `'0.10!`
         .replace("'(0.", "x0.")
         .replace("(0.", "x0.")
-        .replace("'0.", "x0.");
+        .replace("'0.", "x0.")
+        // Same `x` drop on large stacks (`'(1.50!`). Quote-paren only: a bare `(1.` is
+        // too common in neighbor text to trust above x1.
+        .replace("'(1.", "x1.")
+        .replace("'(2.", "x2.")
+        .replace("'(3.", "x3.")
+        .replace("'(4.", "x4.");
     // Prefer text after `=`, but always also scan the full blob for `xo.0N`
     // (OCR often drops the equals or puts the bonus on a neighbor line).
     let mut candidates: Vec<&str> = Vec::new();
@@ -1733,8 +1739,7 @@ fn extract_golden_combo_multiplier(blob: &str) -> Option<f64> {
     }
     candidates.push(normalized.as_str());
 
-    for (ci, search) in candidates.iter().enumerate() {
-        let fractional_only = ci + 1 == candidates.len() && normalized.find('=').is_none();
+    for search in &candidates {
         let chars: Vec<char> = search.chars().collect();
         for i in 0..chars.len() {
             let c = chars[i];
@@ -1753,39 +1758,58 @@ fn extract_golden_combo_multiplier(blob: &str) -> Option<f64> {
                 j += 1;
             }
             let mut num = String::new();
-            let mut used_xo = star_as_x;
             if j < chars.len() && (chars[j] == 'o' || chars[j] == 'd') && !star_as_x {
                 num.push('0');
                 j += 1;
-                used_xo = true;
             }
             while j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == '.') {
                 num.push(chars[j]);
                 j += 1;
             }
-            if num.is_empty() || num == "." {
-                continue;
+            // `x1 44!` — OCR read the decimal point as a space.
+            if !num.is_empty() && !num.contains('.') {
+                if let Some(frac) = spaced_two_digit_fraction(&chars, j) {
+                    num.push('.');
+                    num.push_str(&frac);
+                }
             }
-            let has_frac = num.contains('.');
-            if fractional_only && !used_xo && !has_frac {
-                continue;
-            }
-            if !has_frac && !used_xo && j < chars.len() && chars[j].is_ascii_alphabetic() {
+            // The toast always prints two decimals (`x0.05`, `x1.71`). A bare integer is a
+            // truncated read (`x1�.42` → 1, `x1.8`→`x18`) or neighbor junk (`x 20`).
+            let has_frac = num
+                .split_once('.')
+                .is_some_and(|(_, f)| f.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            if !has_frac {
                 continue;
             }
             if let Ok(v) = num.parse::<f64>() {
-                // Real GC bonus is a small fractional multiplier (x0.05), not x2 / x245.
-                if used_xo || has_frac {
-                    if v > 0.0 && v < 1.0 {
-                        return Some(v);
-                    }
-                } else if v > 0.0 && v <= 20.0 {
+                // Bonus grows with stacks (~x0.05 early, ~x1.7 at ^550); x245-style
+                // values are glued coin/TV text.
+                if v > 0.0 && v < GC_MULTIPLIER_MAX {
                     return Some(v);
                 }
             }
         }
     }
     None
+}
+
+/// Upper bound for a Golden Combo bonus. Stacks cap at 999 (~x3.1), so 5 leaves margin.
+const GC_MULTIPLIER_MAX: f64 = 5.0;
+
+/// Two digits after a single space, then end / `!` / space (`x1 44!` → `44`).
+fn spaced_two_digit_fraction(chars: &[char], j: usize) -> Option<String> {
+    if chars.get(j) != Some(&' ') {
+        return None;
+    }
+    let a = *chars.get(j + 1)?;
+    let b = *chars.get(j + 2)?;
+    if !a.is_ascii_digit() || !b.is_ascii_digit() {
+        return None;
+    }
+    match chars.get(j + 3) {
+        None | Some('!') | Some(' ') => Some([a, b].iter().collect()),
+        _ => None,
+    }
 }
 
 fn is_standalone_skip_multiplier_line(lower: &str) -> bool {
@@ -2793,6 +2817,45 @@ mod tests {
         let g = parse_golden_combo(&s(&["Golden 030/0 Q77 ="]));
         assert!(g.seen);
         assert_eq!(g.caret_count, Some(77));
+    }
+
+    #[test]
+    fn golden_combo_reads_multiplier_above_one_on_large_stacks() {
+        // Live 0.4.21 toasts at ^450+ — these used to parse with multiplier None.
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.18% A555 = x1.71!"]));
+        assert_eq!(g.chance_percent, Some(0.18));
+        assert_eq!(g.caret_count, Some(555));
+        assert_eq!(g.multiplier, Some(1.71));
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.18% x2.15!"]));
+        assert_eq!(g.multiplier, Some(2.15));
+        let g = parse_golden_combo(&s(&["Golden Combo: = x1.07!"]));
+        assert_eq!(g.multiplier, Some(1.07));
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.18% A264 = xo.60!"]));
+        assert_eq!(g.multiplier, Some(0.6));
+    }
+
+    #[test]
+    fn golden_combo_multiplier_recovers_space_decimal_and_dropped_x() {
+        let g = parse_golden_combo(&s(&["40.", "Golden Combo:", "0.18% A", "= x1 44!"]));
+        assert_eq!(g.multiplier, Some(1.44));
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.18% = '(1.50!"]));
+        assert_eq!(g.multiplier, Some(1.5));
+    }
+
+    #[test]
+    fn golden_combo_rejects_bare_integer_multiplier() {
+        // Truncated / dot-dropped reads that used to latch as 1.0 / 18.0 / 20.0.
+        for line in [
+            "Golden Combo;. 0.18% A520 = x18!",
+            "Golden Combo: 0.18% A440 = x 20",
+            "Golden Combo: A492 = x1\u{fffd}.42!",
+            "Golden •376 = x06!",
+        ] {
+            let g = parse_golden_combo(&s(&[line]));
+            assert_eq!(g.multiplier, None, "{line}");
+        }
+        let g = parse_golden_combo(&s(&["Golden Combo: 0.18%", "511 = X1"]));
+        assert_eq!(g.multiplier, None);
     }
 
     #[test]

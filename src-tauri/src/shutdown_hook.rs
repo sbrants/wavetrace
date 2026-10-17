@@ -9,7 +9,7 @@ static SHUTDOWN_NOTIFIED: AtomicBool = AtomicBool::new(false);
 pub fn install(app: &AppHandle) {
     #[cfg(windows)]
     if let Err(e) = windows::install(app) {
-        eprintln!("shutdown hook (windows) failed: {e}");
+        crate::db::append_app_log(&format!("shutdown hook (windows) failed: {e}"));
     }
     #[cfg(unix)]
     unix::install(app.clone());
