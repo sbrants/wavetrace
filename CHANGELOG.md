@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.23] — 2026-10-17
+
+### Fixed
+
+- **The Golden Combo bonus was missing once it grew past x1.** The scanner expected the bonus to always be a small fraction like `x0.05`, so it threw away readings like `x1.71` that big stacks now reach. In the past week, 85% of Golden Combo popups showed a bonus of x1 or more, and almost all of them were saved without it. The bonus is now read up to x5. Chance and stack count were not affected.
+- **Some Golden Combo bonuses were saved as made-up whole numbers** such as `1`, `9` or `18`. These came from misread text, e.g. `x1.8` read without its decimal point. The bonus always shows two decimals, so a whole number is now ignored. Bonuses already saved this way stay in your history as they are.
+- **The window couldn't come back if the whole WebView2 crashed, not just the page.** After about 13 hours, WebView2 itself ran out of memory, and reloading the page (added in 0.4.21) can't recover from that. The app now closes the dead window and opens a new one in the same place and size, staying in the tray if it was minimized there. Scanning isn't interrupted. The log notes it (`WebView2 browser process exited; rebuilding the window`). Reloads and rebuilds together are still limited to 3 within 10 minutes.
+
+---
+
 ## [0.4.22] — 2026-10-08
 
 ### Fixed

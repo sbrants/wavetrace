@@ -83,8 +83,17 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         allow_exit,
     });
 
+    attach_main_window(app.handle());
+
+    Ok(())
+}
+
+/// Close-to-tray handling on the current `main` window. Split out of `setup` because the
+/// window can be rebuilt at runtime (see `renderer_recovery`), and handlers attached to
+/// the old one don't carry over.
+pub fn attach_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let app_handle = app.handle().clone();
+        let app_handle = app.clone();
         window.on_window_event(move |event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let minimize = crate::db::open()
@@ -103,12 +112,16 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-
-    Ok(())
 }
 
 pub fn on_run_event(app: &AppHandle, event: &RunEvent) {
     if let RunEvent::ExitRequested { api, .. } = event {
+        // Rebuilding the main window destroys the only window for a moment, which Tauri
+        // reports as "last window closed"; that must never end the app.
+        if crate::renderer_recovery::rebuilding_window() {
+            api.prevent_exit();
+            return;
+        }
         let exiting = app
             .try_state::<TrayController>()
             .map(|t| t.allow_exit.load(Ordering::SeqCst))
