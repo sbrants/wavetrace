@@ -1,42 +1,33 @@
 version: 2
+
+# npm and Cargo land in one PR: one CI run instead of two (plus a rerun of whichever
+# merges second), and the Tauri npm packages and crates always move together. A Cargo
+# bump merged ahead of its npm counterpart once broke release builds with
+# "Found version mismatched Tauri packages".
+multi-ecosystem-groups:
+  app-deps:
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
+    multi-ecosystem-group: app-deps
+    patterns: ["*"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    groups:
-      npm-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
 
   - package-ecosystem: cargo
     directory: /src-tauri
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
+    multi-ecosystem-group: app-deps
+    patterns: ["*"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    groups:
-      cargo-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
 
   - package-ecosystem: github-actions
     directory: /
