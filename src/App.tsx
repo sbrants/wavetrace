@@ -222,10 +222,10 @@ export default function App() {
       .then((result) => {
         if (result.written) {
           showToast(
-            `Saved playerInfo.dat (${result.bytes.toLocaleString()} bytes)`
+            `Saved tool_export.json (${result.bytes.toLocaleString()} bytes)`
           );
         } else {
-          showToast("Save unchanged — file not overwritten");
+          showToast("Export unchanged — file not overwritten");
         }
         api.gameSaveStatus().then(setGameSaveStatus).catch(() => {});
       })
@@ -287,12 +287,12 @@ export default function App() {
               disabled={savePullBusy}
               title={
                 gameSaveStatus?.deviceSerial
-                  ? `Pull playerInfo.dat from ${gameSaveStatus.deviceSerial}`
-                  : "Pull playerInfo.dat from the emulator"
+                  ? `Pull tool_export.json from ${gameSaveStatus.deviceSerial}`
+                  : "Pull tool_export.json from the emulator"
               }
               onClick={downloadGameSave}
             >
-              {savePullBusy ? "Downloading…" : "Download save"}
+              {savePullBusy ? "Downloading…" : "Download export"}
             </button>
           )}
         </nav>

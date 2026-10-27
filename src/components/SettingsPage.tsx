@@ -691,12 +691,13 @@ function SettingsPage({
       </section>
 
       <section>
-        <h3>Game save</h3>
+        <h3>Tool export</h3>
         <p className="muted">
-          Pull <code>playerInfo.dat</code> from a running Android emulator via
-          ADB. WaveTrace manages ADB tools automatically. By default the file is
-          overwritten as <code>playerInfo.dat</code>; enable timestamps to keep
-          dated copies. Auto-pull writes only when the save content changes.
+          Pull <code>tool_export.json</code> (the game's data export for
+          tools) from a running Android emulator via ADB. WaveTrace manages ADB
+          tools automatically. By default the file is overwritten as{" "}
+          <code>tool_export.json</code>; enable timestamps to keep dated copies.
+          Auto-pull writes only when the export content changes.
           With multiple emulators running, use <strong>List devices</strong> to
           pick one; WaveTrace remembers it and looks for that device first next
           time the app opens.
@@ -709,7 +710,7 @@ function SettingsPage({
               setSettings({ ...settings, save_pull_enabled: e.target.checked })
             }
           />
-          Enable game save pull
+          Enable tool export pull
         </label>
         <p className="muted" style={{ marginTop: 0 }}>
           Header/auto-pull changes apply automatically.
@@ -737,7 +738,7 @@ function SettingsPage({
             }
           />
           Append date and time to the filename (otherwise overwrite{" "}
-          <code>playerInfo.dat</code>)
+          <code>tool_export.json</code>)
         </label>
         <div className="row">
           <label htmlFor="save-pull-dir">
@@ -893,7 +894,7 @@ function SettingsPage({
           {gameSaveStatus?.detail ?? "Checking emulator…"}
           {settings.save_pull_auto
             ? " · Header button hidden while auto-pull is on."
-            : " · Header Download save appears when an emulator is ready."}
+            : " · Header Download export appears when an emulator is ready."}
         </p>
         {gameSaveStatus && !gameSaveStatus.ready && (
           <p className="muted">

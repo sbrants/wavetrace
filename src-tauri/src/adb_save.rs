@@ -1,4 +1,5 @@
-//! Pull The Tower `playerInfo.dat` from an Android emulator via host ADB.
+//! Pull The Tower's `tool_export.json` (the game's export for third-party tools) from an
+//! Android emulator via host ADB.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File};
@@ -19,7 +20,7 @@ use crate::settings::{self, Settings};
 
 const TOWER_ANDROID_PACKAGE: &str = "com.TechTreeGames.TheTower";
 const TOWER_LEGACY_ANDROID_PACKAGE: &str = "com.thetowergame";
-const TOWER_SAVE_FILENAME: &str = "playerInfo.dat";
+const TOWER_EXPORT_FILENAME: &str = "tool_export.json";
 
 const KNOWN_EMULATOR_ADB_HOSTS: &[&str] = &[
     "127.0.0.1:7555",
@@ -605,15 +606,17 @@ pub fn bytes_look_like_shell_failure(bytes: &[u8]) -> bool {
         || sample.to_lowercase().contains("is a directory")
 }
 
-/// True when bytes are plausibly playerInfo.dat (often gzip on disk), not an adb error string.
-pub fn bytes_look_like_player_info_save(bytes: &[u8]) -> bool {
-    if bytes.len() < 32 || bytes_look_like_shell_failure(bytes) {
+/// True when bytes are a complete tool_export.json: a JSON object carrying `ExportVersion`.
+/// Full parse rather than sniffing so a file the game is still mid-writing (truncated JSON)
+/// is rejected instead of being saved as a broken export.
+pub fn bytes_look_like_tool_export(bytes: &[u8]) -> bool {
+    if bytes_look_like_shell_failure(bytes) {
         return false;
     }
-    if bytes[0] == 0x1f && bytes[1] == 0x8b {
-        return true;
-    }
-    bytes.len() >= 64
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    serde_json::from_slice::<serde_json::Value>(body)
+        .map(|v| v.get("ExportVersion").is_some())
+        .unwrap_or(false)
 }
 
 pub fn emulator_pull_paths() -> Vec<String> {
@@ -626,16 +629,13 @@ pub fn emulator_pull_paths() -> Vec<String> {
     };
     for pkg in packages {
         for root in ["/storage/emulated/0", "/sdcard", "/mnt/sdcard"] {
-            add(format!("{root}/Android/data/{pkg}/files/{TOWER_SAVE_FILENAME}"));
-            add(format!("{root}/Android/data/{pkg}/files/PlayerInfo.dat"));
+            add(format!("{root}/Android/data/{pkg}/files/{TOWER_EXPORT_FILENAME}"));
         }
-        add(format!("/data/data/{pkg}/files/{TOWER_SAVE_FILENAME}"));
+        add(format!("/data/data/{pkg}/files/{TOWER_EXPORT_FILENAME}"));
     }
     for root in ["/storage/emulated/0", "/sdcard"] {
-        add(format!("{root}/Download/{TOWER_SAVE_FILENAME}"));
-        add(format!("{root}/Downloads/{TOWER_SAVE_FILENAME}"));
-        add(format!("{root}/Download/PlayerInfo.dat"));
-        add(format!("{root}/Downloads/PlayerInfo.dat"));
+        add(format!("{root}/Download/{TOWER_EXPORT_FILENAME}"));
+        add(format!("{root}/Downloads/{TOWER_EXPORT_FILENAME}"));
     }
     paths
 }
@@ -944,7 +944,7 @@ fn remote_path_exists(adb: &Path, serial: &str, remote_path: &str) -> bool {
 fn pull_remote_path(adb: &Path, serial: &str, remote_path: &str) -> Result<Vec<u8>, String> {
     let tmp_dir = std::env::temp_dir().join(format!("wavetrace-adb-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let local = tmp_dir.join(TOWER_SAVE_FILENAME);
+    let local = tmp_dir.join(TOWER_EXPORT_FILENAME);
     let result = (|| {
         run_adb(
             adb,
@@ -958,7 +958,7 @@ fn pull_remote_path(adb: &Path, serial: &str, remote_path: &str) -> Result<Vec<u
         )?;
         let bytes = fs::read(&local).map_err(|e| e.to_string())?;
         if bytes.is_empty() {
-            return Err("Pulled save file is empty.".into());
+            return Err("Pulled export file is empty.".into());
         }
         Ok(bytes)
     })();
@@ -974,7 +974,7 @@ fn read_via_shell_cat(adb: &Path, serial: &str, remote_path: &str) -> Option<Vec
         Duration::from_secs(60),
     )
     .ok()?;
-    if !bytes.is_empty() && bytes_look_like_player_info_save(&bytes) {
+    if !bytes.is_empty() && bytes_look_like_tool_export(&bytes) {
         Some(bytes)
     } else {
         None
@@ -986,7 +986,7 @@ fn try_pull_path(adb: &Path, serial: &str, remote_path: &str) -> Option<(String,
         return None;
     }
     if let Ok(bytes) = pull_remote_path(adb, serial, remote_path) {
-        if bytes_look_like_player_info_save(&bytes) {
+        if bytes_look_like_tool_export(&bytes) {
             return Some((remote_path.to_string(), bytes));
         }
     }
@@ -994,28 +994,27 @@ fn try_pull_path(adb: &Path, serial: &str, remote_path: &str) -> Option<(String,
 }
 
 fn pull_via_run_as(adb: &Path, serial: &str) -> Option<(String, Vec<u8>)> {
+    let rel = format!("files/{TOWER_EXPORT_FILENAME}");
     for pkg in [TOWER_ANDROID_PACKAGE, TOWER_LEGACY_ANDROID_PACKAGE] {
-        for rel in [format!("files/{TOWER_SAVE_FILENAME}"), "files/PlayerInfo.dat".into()] {
-            let bytes = run_adb(
-                adb,
-                Some(serial),
-                &["exec-out", "run-as", pkg, "cat", &rel],
-                Duration::from_secs(60),
-            )
-            .ok();
-            if let Some(bytes) = bytes {
-                if bytes_look_like_player_info_save(&bytes) {
-                    return Some((format!("run-as:{pkg}/{rel}"), bytes));
-                }
+        let bytes = run_adb(
+            adb,
+            Some(serial),
+            &["exec-out", "run-as", pkg, "cat", &rel],
+            Duration::from_secs(60),
+        )
+        .ok();
+        if let Some(bytes) = bytes {
+            if bytes_look_like_tool_export(&bytes) {
+                return Some((format!("run-as:{pkg}/{rel}"), bytes));
             }
         }
     }
     None
 }
 
-fn find_player_info_paths(adb: &Path, serial: &str) -> Vec<String> {
+fn find_tool_export_paths(adb: &Path, serial: &str) -> Vec<String> {
     let script =
-        "find /sdcard /storage/emulated/0 -maxdepth 8 -iname playerinfo.dat 2>/dev/null | head -n 6";
+        "find /sdcard /storage/emulated/0 -maxdepth 8 -iname tool_export.json 2>/dev/null | head -n 6";
     run_adb_text(
         adb,
         Some(serial),
@@ -1041,7 +1040,7 @@ fn discover_and_pull_on_serial(adb: &Path, serial: &str) -> Option<(String, Vec<
     if let Some(pulled) = pull_via_run_as(adb, serial) {
         return Some(pulled);
     }
-    for path in find_player_info_paths(adb, serial) {
+    for path in find_tool_export_paths(adb, serial) {
         if let Some(pulled) = try_pull_path(adb, serial, &path) {
             return Some(pulled);
         }
@@ -1101,13 +1100,13 @@ pub fn output_file_path(dir: &Path, timestamp_filename: bool) -> PathBuf {
     let _ = fs::create_dir_all(dir);
     if timestamp_filename {
         let stamp = Local::now().format("%Y%m%d-%H%M%S");
-        dir.join(format!("playerInfo-{stamp}.dat"))
+        dir.join(format!("tool_export-{stamp}.json"))
     } else {
-        dir.join(TOWER_SAVE_FILENAME)
+        dir.join(TOWER_EXPORT_FILENAME)
     }
 }
 
-/// Pull playerInfo.dat and write according to options. Skips write when hash unchanged
+/// Pull tool_export.json and write according to options. Skips write when hash unchanged
 /// and `skip_if_same_hash` is set.
 pub fn pull_game_save_with_options(
     opts: &PullWriteOptions,
@@ -1157,7 +1156,7 @@ pub fn pull_game_save_with_options(
             }
         }
         Err(format!(
-            "Save file '{TOWER_SAVE_FILENAME}' not found via ADB on {last_serial}. Open The Tower, save your progress, then try again."
+            "'{TOWER_EXPORT_FILENAME}' not found via ADB on {last_serial}. Open The Tower and export your data for tools, then try again."
         ))
     });
     result
@@ -1174,7 +1173,7 @@ pub fn pull_game_save_from_settings() -> Result<GameSavePullResult, String> {
 /// Native folder picker for the save output directory.
 pub fn pick_output_dir() -> Result<Option<String>, String> {
     let picked = rfd::FileDialog::new()
-        .set_title("Choose folder for playerInfo.dat")
+        .set_title("Choose folder for tool_export.json")
         .pick_folder();
     Ok(picked.map(|p| p.display().to_string()))
 }
@@ -1208,7 +1207,7 @@ pub fn ensure_auto_pull_loop() {
                 match pull_game_save_with_options(&opts) {
                     Ok(result) if result.written => {
                         db::append_app_log(&format!(
-                            "Auto-pulled game save ({} bytes) → {}",
+                            "Auto-pulled tool export ({} bytes) → {}",
                             result.bytes, result.path
                         ));
                     }
@@ -1292,24 +1291,32 @@ R58M123\tunauthorized
     }
 
     #[test]
-    fn gzip_magic_accepted_as_save() {
-        let mut bytes = vec![0x1f, 0x8b, 0x08];
-        bytes.resize(64, 0);
-        assert!(bytes_look_like_player_info_save(&bytes));
+    fn tool_export_json_accepted() {
+        let bytes = b"{\n  \"ExportVersion\": 1,\n  \"Coins\": 2.67E+18\n}";
+        assert!(bytes_look_like_tool_export(bytes));
+        let with_bom = [b"\xEF\xBB\xBF".as_slice(), bytes].concat();
+        assert!(bytes_look_like_tool_export(&with_bom));
+    }
+
+    #[test]
+    fn truncated_or_foreign_json_rejected() {
+        assert!(!bytes_look_like_tool_export(b"{\n  \"ExportVersion\": 1,\n  \"Coi"));
+        assert!(!bytes_look_like_tool_export(b"{\"Unrelated\": true}"));
+        assert!(!bytes_look_like_tool_export(&[0x1f, 0x8b, 0x08, 0, 0, 0]));
     }
 
     #[test]
     fn shell_failure_rejected() {
         let bytes = b"cat: /data/x: Permission denied\n";
         assert!(bytes_look_like_shell_failure(bytes));
-        assert!(!bytes_look_like_player_info_save(bytes));
+        assert!(!bytes_look_like_tool_export(bytes));
     }
 
     #[test]
     fn emulator_pull_paths_include_official_package() {
         let paths = emulator_pull_paths();
         assert!(paths.iter().any(|p| p.contains(TOWER_ANDROID_PACKAGE)
-            && p.ends_with(TOWER_SAVE_FILENAME)));
+            && p.ends_with(TOWER_EXPORT_FILENAME)));
     }
 
     #[test]
@@ -1335,11 +1342,11 @@ R58M123\tunauthorized
     fn output_file_path_overwrite_vs_timestamp() {
         let dir = std::env::temp_dir().join("wavetrace-save-path-test");
         let plain = output_file_path(&dir, false);
-        assert!(plain.ends_with(TOWER_SAVE_FILENAME));
+        assert!(plain.ends_with(TOWER_EXPORT_FILENAME));
         let stamped = output_file_path(&dir, true);
         let name = stamped.file_name().unwrap().to_string_lossy();
-        assert!(name.starts_with("playerInfo-"));
-        assert!(name.ends_with(".dat"));
+        assert!(name.starts_with("tool_export-"));
+        assert!(name.ends_with(".json"));
         let _ = fs::remove_dir_all(&dir);
     }
 }
