@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.24] — 2026-10-27
+
 ### Changed
 
 - **Game save pull now downloads `tool_export.json` instead of `playerInfo.dat`.** The game writes this JSON export for third-party tools next to its save, and it's readable without decoding the binary save. Timestamped copies are named `tool_export-YYYYMMDD-HHMMSS.json`. A pull is skipped if the file is incomplete (e.g. the game is still writing it), so a half-written export is never saved.
