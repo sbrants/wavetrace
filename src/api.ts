@@ -66,7 +66,7 @@ export interface Settings {
   save_pull_adb_port: number | null;
   /** Preferred device: stable fingerprint (aid:.../avd:...) when readable, else a raw serial; empty = try all. */
   save_pull_device_id: string;
-  /** Append date/time to filename; off overwrites playerInfo.dat. */
+  /** Append date/time to filename; off overwrites tool_export.json. */
   save_pull_timestamp_filename: boolean;
   /** Output folder; empty = Downloads. */
   save_pull_dir: string;

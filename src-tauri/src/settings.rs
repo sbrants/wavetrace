@@ -99,7 +99,7 @@ pub struct Settings {
     /// preference, try all discovered devices.
     #[serde(default)]
     pub save_pull_device_id: String,
-    /// When true, write `playerInfo-YYYYMMDD-HHMMSS.dat`; when false, overwrite `playerInfo.dat`.
+    /// When true, write `tool_export-YYYYMMDD-HHMMSS.json`; when false, overwrite `tool_export.json`.
     #[serde(default)]
     pub save_pull_timestamp_filename: bool,
     /// Output directory for pulled saves. Empty = system Downloads folder.
