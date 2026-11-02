@@ -4,7 +4,7 @@ use base64::Engine;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::backup::{self, BackupExport, BackupRestore};
-use crate::db::{self, RunFilter, RunRow, SnapshotRow, WaveSkipRow};
+use crate::db::{self, RunFilter, RunRow};
 use crate::debug_package::{self, DebugPackageExport, DebugScreenshotInput};
 use crate::export::{self, ExportFileResult};
 use crate::scanner::{ScanStartMode, Scanner};
@@ -441,75 +441,9 @@ pub fn clear_snapshot_golden_combo(snapshot_ids: Vec<String>) -> Result<usize, S
 }
 
 #[tauri::command]
-pub async fn run_snapshots(run_id: String) -> Result<Vec<SnapshotRow>, String> {
-    run_blocking("run_snapshots", move || {
-        db::run_snapshots(&conn()?, &run_id).map_err(|e| e.to_string())
-    })
-    .await
-}
-
-#[derive(Debug, Serialize)]
-pub struct DashboardRunView {
-    pub snapshot_total: usize,
-    pub chart_snapshots: Vec<SnapshotRow>,
-    pub skip_total: usize,
-    pub chart_wave_skips: Vec<WaveSkipRow>,
-    pub chart_normal_jumps: Vec<i64>,
-    pub avg_golden_combo_caret: Option<f64>,
-}
-
-fn dashboard_run_view(run_id: &str) -> Result<DashboardRunView, String> {
-    let conn = conn()?;
-    let (snapshot_total, chart_snapshots, chart_normal_jumps) = db::run_snapshot_chart_bundle(
-        &conn,
-        run_id,
-        db::CHART_SNAPSHOT_LIMIT,
-        db::CHART_SKIP_LIMIT,
-    )
-    .map_err(|e| e.to_string())?;
-    let (skip_total, chart_wave_skips) =
-        db::run_wave_skips_for_chart(&conn, run_id, db::CHART_SKIP_LIMIT)
-            .map_err(|e| e.to_string())?;
-    let avg_golden_combo_caret =
-        db::avg_golden_combo_caret(&conn, run_id).map_err(|e| e.to_string())?;
-    Ok(DashboardRunView {
-        snapshot_total,
-        chart_snapshots,
-        skip_total,
-        chart_wave_skips,
-        chart_normal_jumps,
-        avg_golden_combo_caret,
-    })
-}
-
-#[tauri::command]
-pub async fn current_run_dashboard(
-    state: State<'_, AppState>,
-) -> Result<DashboardRunView, String> {
-    let id = state.scanner.current_run_id.lock().unwrap().clone();
-    run_blocking("current_run_dashboard", move || match id {
-        Some(id) => dashboard_run_view(&id),
-        None => Ok(DashboardRunView {
-            snapshot_total: 0,
-            chart_snapshots: Vec::new(),
-            skip_total: 0,
-            chart_wave_skips: Vec::new(),
-            chart_normal_jumps: Vec::new(),
-            avg_golden_combo_caret: None,
-        }),
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn run_dashboard_data(run_id: String) -> Result<DashboardRunView, String> {
-    run_blocking("run_dashboard_data", move || dashboard_run_view(&run_id)).await
-}
-
-#[tauri::command]
-pub async fn run_wave_skips(run_id: String) -> Result<Vec<WaveSkipRow>, String> {
-    run_blocking("run_wave_skips", move || {
-        db::run_wave_skips(&conn()?, &run_id).map_err(|e| e.to_string())
+pub async fn run_rows(run_id: String, after: db::RunRowsCursor) -> Result<db::RunRowsPage, String> {
+    run_blocking("run_rows", move || {
+        db::run_rows_after(&conn()?, &run_id, after).map_err(|e| e.to_string())
     })
     .await
 }

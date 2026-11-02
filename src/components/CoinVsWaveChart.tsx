@@ -76,6 +76,11 @@ export type ChartLineConfig = {
 
 const SKIP_AXIS_MAX = 20;
 const SKIP_DOT_R = 3;
+/** Invisible click target around a dot. Dots of different series overlap on a dense run
+ *  and the top one takes the click, so this can't be much wider than a dot. */
+const DOT_HIT_R = 8;
+/** Pointer travel that turns a press into a drag; a click often moves a pixel or two. */
+const DRAG_THRESHOLD_PX = 4;
 const COIN_LINE_COLOR = "#4cc2ff";
 const GC_LINE_COLOR = "#6ec6a0";
 const SKIP_LINE_COLOR = "#e8b339";
@@ -101,9 +106,7 @@ function createSkipDot(
       <g
         style={{ cursor: clickable ? "pointer" : undefined }}
         onMouseDown={(e) => {
-          if (!clickable) return;
-          e.stopPropagation();
-          e.preventDefault();
+          if (clickable) e.preventDefault();
         }}
         onClick={(e) => {
           if (!clickable || !skipId) return;
@@ -112,8 +115,7 @@ function createSkipDot(
           onSkipClick?.(skipId, payload.wave);
         }}
       >
-        {/* Hit target above the coin line; keep large for easy select-mode clicks. */}
-        <circle cx={cx} cy={cy} r={14} fill="transparent" />
+        <circle cx={cx} cy={cy} r={DOT_HIT_R} fill="transparent" />
         <circle
           cx={cx}
           cy={cy}
@@ -154,9 +156,7 @@ function createGcDot(
       <g
         style={{ cursor: clickable ? "pointer" : undefined }}
         onMouseDown={(e) => {
-          if (!clickable) return;
-          e.stopPropagation();
-          e.preventDefault();
+          if (clickable) e.preventDefault();
         }}
         onClick={(e) => {
           if (!clickable) return;
@@ -165,7 +165,7 @@ function createGcDot(
           onGcClick?.(wave);
         }}
       >
-        <circle cx={cx} cy={cy} r={14} fill="transparent" />
+        <circle cx={cx} cy={cy} r={DOT_HIT_R} fill="transparent" />
         <circle
           cx={cx}
           cy={cy}
@@ -236,6 +236,8 @@ type PlotOffset = {
   width: number;
   height: number;
 };
+
+type InvertibleScale = { invert?: (pixel: number) => number };
 
 type SelectionBox = {
   waveMin: number;
@@ -423,7 +425,13 @@ function SingleRunChart({
   buckets,
 }: SingleProps & { buckets: number }) {
   const layoutRef = useRef<PlotOffset | null>(null);
-  const dragRef = useRef<{ wave: number; coin: number } | null>(null);
+  const scalesRef = useRef<{ wave?: InvertibleScale; coin?: InvertibleScale }>({});
+  const dragRef = useRef<{
+    wave: number;
+    coin: number;
+    chartX: number;
+    chartY: number;
+  } | null>(null);
   const draggedRef = useRef(false);
   const suppressClickRef = useRef(false);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
@@ -432,36 +440,22 @@ function SingleRunChart({
   const selectedGcSet = new Set(selectedGcWaves);
   const selectable = !!onSelectWaves;
 
-  const bounds = useMemo(() => {
-    const waves = data.map((d) => d.wave);
-    const coins = data
-      .map((d) => d.coin)
-      .filter((c): c is number => c != null && Number.isFinite(c));
-    return {
-      waveMin: Math.min(...waves),
-      waveMax: Math.max(...waves),
-      coinMin: coins.length ? Math.min(...coins) : 0,
-      coinMax: coins.length ? Math.max(...coins) : 1,
-    };
-  }, [data]);
-
+  // Through the axes' own scales: the coin axis starts at 0 and rounds up, so it isn't the
+  // data's range, and a rectangle mapped onto that range selected the wrong points.
   const pointerToData = useCallback(
     (chartX?: number, chartY?: number): { wave: number; coin: number } | null => {
       const layout = layoutRef.current;
-      if (!layout || chartX == null || chartY == null) return null;
+      const { wave, coin } = scalesRef.current;
+      if (!layout || !wave?.invert || !coin?.invert) return null;
+      if (chartX == null || chartY == null) return null;
       const { left, top, width, height: plotHeight } = layout;
       if (width <= 0 || plotHeight <= 0) return null;
-
-      const waveSpan = bounds.waveMax - bounds.waveMin || 1;
-      const coinSpan = bounds.coinMax - bounds.coinMin || 1;
-      const tx = clamp((chartX - left) / width, 0, 1);
-      const ty = clamp((chartY - top) / plotHeight, 0, 1);
       return {
-        wave: bounds.waveMin + tx * waveSpan,
-        coin: bounds.coinMax - ty * coinSpan,
+        wave: wave.invert(clamp(chartX, left, left + width)),
+        coin: coin.invert(clamp(chartY, top, top + plotHeight)),
       };
     },
-    [bounds]
+    []
   );
 
   const updateSelectionBox = useCallback(
@@ -492,30 +486,27 @@ function SingleRunChart({
     [data]
   );
 
-  const handleMouseDown = (state: ChartMouseState, event: MouseEvent) => {
-    if (!selectable) return;
-    const target = event.target as SVGElement;
-    const tag = target.tagName?.toLowerCase();
-    if (tag === "circle") return;
+  const handleMouseDown = (state: ChartMouseState) => {
+    suppressClickRef.current = false;
+    if (!selectable || state?.chartX == null || state.chartY == null) return;
     const point = pointerToData(state.chartX, state.chartY);
     if (!point) return;
-    dragRef.current = point;
+    dragRef.current = { ...point, chartX: state.chartX, chartY: state.chartY };
     draggedRef.current = false;
-    updateSelectionBox(point, point);
   };
 
   const handleMouseMove = (state: ChartMouseState) => {
     const start = dragRef.current;
-    if (!start || !selectable) return;
+    if (!start || !selectable || state?.chartX == null || state.chartY == null) return;
     const point = pointerToData(state.chartX, state.chartY);
     if (!point) return;
     if (
-      Math.abs(point.wave - start.wave) > 0.01 ||
-      Math.abs(point.coin - start.coin) > 0.01
+      Math.hypot(state.chartX - start.chartX, state.chartY - start.chartY) >=
+      DRAG_THRESHOLD_PX
     ) {
       draggedRef.current = true;
     }
-    updateSelectionBox(start, point);
+    if (draggedRef.current) updateSelectionBox(start, point);
   };
 
   const finishDrag = (additive: boolean) => {
@@ -542,9 +533,14 @@ function SingleRunChart({
   const handleChartClick = () => {
     // Selection is handled only by per-series dots. Chart-level clicks used to
     // always pick coin/min and stole GC / jump clicks in select mode.
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-    }
+    suppressClickRef.current = false;
+  };
+
+  /** True for the click a drag ends with when it's released on the dot it started on. */
+  const consumeDragClick = () => {
+    const wasDrag = suppressClickRef.current;
+    suppressClickRef.current = false;
+    return wasDrag;
   };
 
   // What gets drawn is thinned to the chart's pixel width (see `downsampleForWidth`);
@@ -618,10 +614,18 @@ function SingleRunChart({
         onClick={handleChartClick}
       >
         <Customized
-          component={(props: { offset?: PlotOffset }) => {
+          component={(props: {
+            offset?: PlotOffset;
+            xAxisMap?: Record<string, { scale?: InvertibleScale }>;
+            yAxisMap?: Record<string, { scale?: InvertibleScale }>;
+          }) => {
             if (props.offset) {
               layoutRef.current = props.offset;
             }
+            scalesRef.current = {
+              wave: Object.values(props.xAxisMap ?? {})[0]?.scale,
+              coin: props.yAxisMap?.coin?.scale,
+            };
             return null;
           }}
         />
@@ -739,18 +743,16 @@ function SingleRunChart({
                   key={wave}
                   style={{ cursor: showDots ? "pointer" : undefined }}
                   onMouseDown={(e) => {
-                    if (!showDots) return;
-                    e.stopPropagation();
-                    e.preventDefault();
+                    if (showDots) e.preventDefault();
                   }}
                   onClick={(e) => {
                     if (!showDots) return;
                     e.stopPropagation();
                     e.nativeEvent.stopImmediatePropagation();
-                    onPointClick?.(wave);
+                    if (!consumeDragClick()) onPointClick?.(wave);
                   }}
                 >
-                  <circle cx={cx} cy={cy} r={14} fill="transparent" />
+                  <circle cx={cx} cy={cy} r={DOT_HIT_R} fill="transparent" />
                   <circle
                     cx={cx}
                     cy={cy}
@@ -770,7 +772,8 @@ function SingleRunChart({
                     fill: "#e8b339",
                     stroke: "#fff",
                     strokeWidth: 2,
-                    cursor: "pointer",
+                    // Drawn over the hovered dot: without this it takes the click instead.
+                    pointerEvents: "none",
                   }
                 : false
             }
@@ -787,7 +790,9 @@ function SingleRunChart({
             isAnimationActive={false}
             dot={
               onSkipClick
-                ? createSkipDot(waveSkipColor, selectedSkipSet, onSkipClick)
+                ? createSkipDot(waveSkipColor, selectedSkipSet, (id, wave) => {
+                    if (!consumeDragClick()) onSkipClick(id, wave);
+                  })
                 : false
             }
             activeDot={false}
@@ -805,7 +810,9 @@ function SingleRunChart({
             isAnimationActive={false}
             dot={
               onGcClick
-                ? createGcDot(GC_LINE_COLOR, selectedGcSet, onGcClick)
+                ? createGcDot(GC_LINE_COLOR, selectedGcSet, (wave) => {
+                    if (!consumeDragClick()) onGcClick(wave);
+                  })
                 : false
             }
             activeDot={false}

@@ -73,12 +73,6 @@ describe("snapshotsToChartData", () => {
     const points = snapshotsToChartData(snapshots);
     expect(points.map((p) => p.wave)).toEqual([2, 3]);
   });
-
-  it("skips re-downsampling when alreadySampled is set", () => {
-    const snapshots = Array.from({ length: 6000 }, (_, i) => snapshot(i, i));
-    const points = snapshotsToChartData(snapshots, { alreadySampled: true });
-    expect(points).toHaveLength(6000);
-  });
 });
 
 describe("averageGoldenComboCaret", () => {

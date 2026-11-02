@@ -11,6 +11,7 @@ import {
   Settings,
   WindowInfo,
 } from "../api";
+import { DATA_RESTORED_EVENT } from "../runRows";
 import AccountsSettings from "./AccountsSettings";
 import ScannerLogViewer from "./ScannerLogViewer";
 import AppUpdater from "./AppUpdater";
@@ -341,6 +342,7 @@ function SettingsPage({
       }
       const result = await api.restoreBackup();
       if (!result) return;
+      window.dispatchEvent(new Event(DATA_RESTORED_EVENT));
       await load();
       const when = result.backup_created_at
         ? ` from ${new Date(result.backup_created_at).toLocaleString()}`

@@ -132,6 +132,24 @@ export interface SnapshotRow {
   recorded_at: string;
 }
 
+/** Where a reader of a run's append-only rows has got to (see `RunRowsCursor` in db.rs). */
+export interface RunRowsCursor {
+  snapshot_rowid: number;
+  wave_skip_rowid: number;
+}
+
+/** Before every row: asking for rows after this loads the whole run. */
+export const START_OF_RUN_ROWS: RunRowsCursor = {
+  snapshot_rowid: 0,
+  wave_skip_rowid: 0,
+};
+
+export interface RunRowsPage {
+  snapshots: SnapshotRow[];
+  wave_skips: WaveSkipRow[];
+  cursor: RunRowsCursor;
+}
+
 export interface WaveSkipRow {
   id: string;
   at_wave: number;
@@ -139,16 +157,6 @@ export interface WaveSkipRow {
   skip_multiplier: number | null;
   coin_per_minute: number | null;
   recorded_at: string;
-}
-
-/** Chart-safe payload (snapshots and skips downsampled independently on the Rust side). */
-export interface DashboardRunView {
-  snapshot_total: number;
-  chart_snapshots: SnapshotRow[];
-  skip_total: number;
-  chart_wave_skips: WaveSkipRow[];
-  chart_normal_jumps: number[];
-  avg_golden_combo_caret: number | null;
 }
 
 export interface RunFilter {
@@ -319,13 +327,8 @@ export const api = {
     invoke<void>("delete_wave_skip", { waveSkipId }),
   combineRuns: (runIds: string[]) =>
     invoke<string>("combine_runs", { runIds }),
-  runSnapshots: (runId: string) =>
-    invoke<SnapshotRow[]>("run_snapshots", { runId }),
-  currentRunDashboard: () => invoke<DashboardRunView>("current_run_dashboard"),
-  runDashboardData: (runId: string) =>
-    invoke<DashboardRunView>("run_dashboard_data", { runId }),
-  runWaveSkips: (runId: string) =>
-    invoke<WaveSkipRow[]>("run_wave_skips", { runId }),
+  runRows: (runId: string, after: RunRowsCursor) =>
+    invoke<RunRowsPage>("run_rows", { runId, after }),
   exportCsv: (filter: RunFilter) =>
     invoke<ExportFileResult>("export_csv", { filter }),
   exportWorkbook: (filter: RunFilter) =>

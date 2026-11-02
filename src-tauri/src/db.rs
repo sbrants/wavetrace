@@ -938,34 +938,87 @@ fn sync_run_snapshot_stats(conn: &Connection, run_id: &str) -> rusqlite::Result<
     Ok(())
 }
 
+fn snapshot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SnapshotRow> {
+    Ok(SnapshotRow {
+        id: row.get(0)?,
+        wave: row.get(1)?,
+        tier: row.get(2)?,
+        coin_per_minute: row.get(3)?,
+        golden_combo_chance: row.get(4)?,
+        golden_combo_caret: row.get(5)?,
+        golden_combo_multiplier: row.get(6)?,
+        recorded_at: row.get(7)?,
+    })
+}
+
 pub fn run_snapshots(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<SnapshotRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, wave, tier, coin_per_minute,
                 golden_combo_chance, golden_combo_caret, golden_combo_multiplier, recorded_at
          FROM snapshots WHERE run_id = ?1 ORDER BY wave ASC",
     )?;
-    let rows = stmt.query_map(params![run_id], |row| {
-        Ok(SnapshotRow {
-            id: row.get(0)?,
-            wave: row.get(1)?,
-            tier: row.get(2)?,
-            coin_per_minute: row.get(3)?,
-            golden_combo_chance: row.get(4)?,
-            golden_combo_caret: row.get(5)?,
-            golden_combo_multiplier: row.get(6)?,
-            recorded_at: row.get(7)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![run_id], snapshot_from_row)?;
     rows.collect()
 }
 
-/// Max snapshots sent to the UI chart (avoids WebView OOM on long runs).
-/// Keep in sync with `MAX_CHART_POINTS` in `src/chartData.ts`.
-pub const CHART_SNAPSHOT_LIMIT: usize = 5000;
+/// Where a reader of a run's rows has got to. The scanner only ever appends to these
+/// tables, so "rows past this point" is all a live view needs between full loads (edits
+/// and deletes are user actions, which reload in full). Rowids rather than `recorded_at`:
+/// those strings have a variable number of fractional digits, so they don't compare in
+/// time order. The default cursor is before every row.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunRowsCursor {
+    pub snapshot_rowid: i64,
+    pub wave_skip_rowid: i64,
+}
 
-/// Max skip markers sent to the UI chart (sampled independently of snapshots).
-/// Keep in sync with `MAX_CHART_SKIPS` in `src/chartData.ts`.
-pub const CHART_SKIP_LIMIT: usize = 5000;
+#[derive(Debug, Serialize)]
+pub struct RunRowsPage {
+    pub snapshots: Vec<SnapshotRow>,
+    pub wave_skips: Vec<WaveSkipRow>,
+    pub cursor: RunRowsCursor,
+}
+
+/// A run's snapshots and wave skips past `after`, each table ordered as `run_snapshots`
+/// and `run_wave_skips` order it.
+pub fn run_rows_after(
+    conn: &Connection,
+    run_id: &str,
+    after: RunRowsCursor,
+) -> rusqlite::Result<RunRowsPage> {
+    let mut cursor = after;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, wave, tier, coin_per_minute,
+                golden_combo_chance, golden_combo_caret, golden_combo_multiplier, recorded_at,
+                rowid
+         FROM snapshots WHERE run_id = ?1 AND rowid > ?2 ORDER BY wave ASC",
+    )?;
+    let mut snapshots = Vec::new();
+    let mut rows = stmt.query(params![run_id, after.snapshot_rowid])?;
+    while let Some(row) = rows.next()? {
+        snapshots.push(snapshot_from_row(row)?);
+        cursor.snapshot_rowid = cursor.snapshot_rowid.max(row.get(8)?);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at,
+                rowid
+         FROM wave_skips WHERE run_id = ?1 AND rowid > ?2 ORDER BY at_wave ASC, recorded_at ASC",
+    )?;
+    let mut wave_skips = Vec::new();
+    let mut rows = stmt.query(params![run_id, after.wave_skip_rowid])?;
+    while let Some(row) = rows.next()? {
+        wave_skips.push(wave_skip_from_row(row)?);
+        cursor.wave_skip_rowid = cursor.wave_skip_rowid.max(row.get(6)?);
+    }
+
+    Ok(RunRowsPage {
+        snapshots,
+        wave_skips,
+        cursor,
+    })
+}
 
 pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize> {
     let count: i64 = conn.query_row(
@@ -974,19 +1027,6 @@ pub fn snapshot_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usize
         |row| row.get(0),
     )?;
     Ok(count.max(0) as usize)
-}
-
-/// Mean Golden Combo activation count (^N) over snapshots that recorded it.
-pub fn avg_golden_combo_caret(
-    conn: &Connection,
-    run_id: &str,
-) -> rusqlite::Result<Option<f64>> {
-    conn.query_row(
-        "SELECT AVG(golden_combo_caret) FROM snapshots
-         WHERE run_id = ?1 AND golden_combo_caret IS NOT NULL",
-        params![run_id],
-        |row| row.get(0),
-    )
 }
 
 /// (golden_combo_chance, golden_combo_caret, golden_combo_multiplier)
@@ -1020,69 +1060,15 @@ pub fn wave_skip_count(conn: &Connection, run_id: &str) -> rusqlite::Result<usiz
     Ok(count.max(0) as usize)
 }
 
-fn downsample_slice<T: Clone>(items: &[T], max_points: usize) -> Vec<T> {
-    if items.len() <= max_points || max_points <= 1 {
-        return items.to_vec();
-    }
-    let last = items.len() - 1;
-    (0..max_points)
-        .map(|i| {
-            let idx = (i * last) / (max_points - 1);
-            items[idx].clone()
-        })
-        .collect()
-}
-
-pub fn downsample_snapshot_rows(
-    rows: &[SnapshotRow],
-    max_points: usize,
-) -> Vec<SnapshotRow> {
-    downsample_slice(rows, max_points)
-}
-
-pub fn downsample_wave_skip_rows(
-    rows: &[WaveSkipRow],
-    max_points: usize,
-) -> Vec<WaveSkipRow> {
-    downsample_slice(rows, max_points)
-}
-
-pub fn run_wave_skips_for_chart(
-    conn: &Connection,
-    run_id: &str,
-    max_points: usize,
-) -> rusqlite::Result<(usize, Vec<WaveSkipRow>)> {
-    let all = run_wave_skips(conn, run_id)?;
-    let total = all.len();
-    Ok((total, downsample_wave_skip_rows(&all, max_points)))
-}
-
-/// +1 wave jumps from an already-fetched snapshot series (no query of its own).
-fn normal_jump_waves(all: &[SnapshotRow]) -> Vec<i64> {
-    all.windows(2)
-        .filter(|w| {
-            let prev = w[0].wave;
-            let wave = w[1].wave;
-            wave > prev && wave - prev == 1
-        })
-        .map(|w| w[1].wave)
-        .collect()
-}
-
-/// Snapshot total, downsampled chart points, and downsampled +1 wave-jump waves — all
-/// from one query. The dashboard previously fetched the full snapshot series twice
-/// (once per derived value), which got more expensive every wave on a long run.
-pub fn run_snapshot_chart_bundle(
-    conn: &Connection,
-    run_id: &str,
-    max_snapshot_points: usize,
-    max_jump_points: usize,
-) -> rusqlite::Result<(usize, Vec<SnapshotRow>, Vec<i64>)> {
-    let all = run_snapshots(conn, run_id)?;
-    let total = all.len();
-    let chart_snapshots = downsample_snapshot_rows(&all, max_snapshot_points);
-    let chart_normal_jumps = downsample_slice(&normal_jump_waves(&all), max_jump_points);
-    Ok((total, chart_snapshots, chart_normal_jumps))
+fn wave_skip_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WaveSkipRow> {
+    Ok(WaveSkipRow {
+        id: row.get(0)?,
+        at_wave: row.get(1)?,
+        skipped_count: row.get(2)?,
+        skip_multiplier: row.get(3)?,
+        coin_per_minute: row.get(4)?,
+        recorded_at: row.get(5)?,
+    })
 }
 
 pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<WaveSkipRow>> {
@@ -1090,16 +1076,7 @@ pub fn run_wave_skips(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<W
         "SELECT id, at_wave, skipped_count, skip_multiplier, coin_per_minute, recorded_at
          FROM wave_skips WHERE run_id = ?1 ORDER BY at_wave ASC, recorded_at ASC",
     )?;
-    let rows = stmt.query_map(params![run_id], |row| {
-        Ok(WaveSkipRow {
-            id: row.get(0)?,
-            at_wave: row.get(1)?,
-            skipped_count: row.get(2)?,
-            skip_multiplier: row.get(3)?,
-            coin_per_minute: row.get(4)?,
-            recorded_at: row.get(5)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![run_id], wave_skip_from_row)?;
     rows.collect()
 }
 
@@ -1145,62 +1122,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn downsample_snapshot_rows_keeps_endpoints() {
-        let total = CHART_SNAPSHOT_LIMIT * 2;
-        let rows: Vec<SnapshotRow> = (0..total as i64)
-            .map(|i| SnapshotRow {
-                id: format!("s{i}"),
-                wave: i,
-                tier: Some(1),
-                coin_per_minute: Some(i as f64),
-                golden_combo_chance: None,
-                golden_combo_caret: None,
-                golden_combo_multiplier: None,
-                recorded_at: "t".into(),
-            })
-            .collect();
-        let out = downsample_snapshot_rows(&rows, CHART_SNAPSHOT_LIMIT);
-        assert_eq!(out.len(), CHART_SNAPSHOT_LIMIT);
-        assert_eq!(out.first().unwrap().wave, 0);
-        assert_eq!(out.last().unwrap().wave, total as i64 - 1);
-    }
+    fn run_rows_after_returns_only_rows_past_the_cursor() {
+        let conn = open_in_memory().unwrap();
+        let run_id = start_run(&conn, "farming").unwrap();
+        let other_run = start_run(&conn, "farming").unwrap();
+        insert_snapshot(&conn, &run_id, 1, None, None, None, None, None).unwrap();
+        insert_snapshot(&conn, &run_id, 2, None, None, None, None, None).unwrap();
+        insert_wave_skip(&conn, &run_id, 2, 1, None, None).unwrap();
+        insert_snapshot(&conn, &other_run, 9, None, None, None, None, None).unwrap();
 
-    #[test]
-    fn downsample_wave_skip_rows_keeps_endpoints() {
-        let total = CHART_SKIP_LIMIT * 2;
-        let rows: Vec<WaveSkipRow> = (0..total as i64)
-            .map(|i| WaveSkipRow {
-                id: format!("w{i}"),
-                at_wave: i * 10,
-                skipped_count: 2,
-                skip_multiplier: None,
-                coin_per_minute: None,
-                recorded_at: "t".into(),
-            })
-            .collect();
-        let out = downsample_wave_skip_rows(&rows, CHART_SKIP_LIMIT);
-        assert_eq!(out.len(), CHART_SKIP_LIMIT);
-        assert_eq!(out.first().unwrap().at_wave, 0);
-        assert_eq!(out.last().unwrap().at_wave, (total as i64 - 1) * 10);
-    }
+        let first = run_rows_after(&conn, &run_id, RunRowsCursor::default()).unwrap();
+        assert_eq!(first.snapshots.len(), 2);
+        assert_eq!(first.wave_skips.len(), 1);
 
-    #[test]
-    fn normal_jump_waves_keeps_only_consecutive_plus_one_steps() {
-        fn snap(wave: i64) -> SnapshotRow {
-            SnapshotRow {
-                id: format!("s{wave}"),
-                wave,
-                tier: None,
-                coin_per_minute: None,
-                golden_combo_chance: None,
-                golden_combo_caret: None,
-                golden_combo_multiplier: None,
-                recorded_at: "t".into(),
-            }
-        }
-        // 1->2 is a +1 jump; 2->5 is a skip, not a normal jump.
-        let rows = vec![snap(1), snap(2), snap(5)];
-        assert_eq!(normal_jump_waves(&rows), vec![2]);
+        let none_new = run_rows_after(&conn, &run_id, first.cursor).unwrap();
+        assert!(none_new.snapshots.is_empty() && none_new.wave_skips.is_empty());
+        assert_eq!(none_new.cursor, first.cursor);
+
+        insert_snapshot(&conn, &run_id, 3, None, None, None, None, None).unwrap();
+        insert_wave_skip(&conn, &run_id, 3, 1, None, None).unwrap();
+        let added = run_rows_after(&conn, &run_id, first.cursor).unwrap();
+        assert_eq!(added.snapshots.iter().map(|s| s.wave).collect::<Vec<_>>(), [3]);
+        assert_eq!(added.wave_skips.iter().map(|s| s.at_wave).collect::<Vec<_>>(), [3]);
     }
 
     #[test]
