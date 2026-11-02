@@ -4,13 +4,19 @@ import {
   formatCoin,
   formatGoldenComboMultiplier,
   ScannerEvent,
-  SnapshotRow,
-  WaveSkipRow,
 } from "../api";
 import {
+  MAX_CHART_POINTS,
   snapshotsToChartData,
-  buildChartWaveJumpMarkers,
+  buildWaveJumpMarkers,
 } from "../chartData";
+import {
+  DATA_RESTORED_EVENT,
+  EMPTY_RUN_ROWS,
+  RUN_ROWS_EDITED_EVENT,
+  RunRowsReader,
+  type RunRows,
+} from "../runRows";
 import {
   formatSkipLiveStat,
 } from "../skipDisplay";
@@ -23,11 +29,7 @@ import { CoinIcon, WaveJumpIcon, GcActivationIcon } from "./ChartToggleIcons";
 const SNAPSHOT_REFRESH_MS = 15_000;
 
 export default function Dashboard({ event }: { event: ScannerEvent | null }) {
-  const [snapshotTotal, setSnapshotTotal] = useState(0);
-  const [chartSnapshots, setChartSnapshots] = useState<SnapshotRow[]>([]);
-  const [skipTotal, setSkipTotal] = useState(0);
-  const [chartWaveSkips, setChartWaveSkips] = useState<WaveSkipRow[]>([]);
-  const [chartNormalJumps, setChartNormalJumps] = useState<number[]>([]);
+  const [rows, setRows] = useState<RunRows>(EMPTY_RUN_ROWS);
   const [showWaveJumps, setShowWaveJumps] = usePersistedBoolean(
     "dashboard.showWaveJumps",
     true
@@ -41,65 +43,57 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
     true
   );
   const chartRef = useRef<HTMLDivElement>(null);
-  const lastFetchAtRef = useRef(0);
-  const lastWaveRef = useRef<number | null>(null);
-  const liveWaveRef = useRef<number | null>(null);
-  liveWaveRef.current = event?.live?.wave ?? null;
   const live = event?.live ?? null;
+  const runId = event?.current_run_id ?? null;
 
   useEffect(() => {
-    // Guards against a new fetch starting while a previous one is still in flight — the
-    // wave-changed/staleness checks below bound how *often* a fetch is considered, but not
-    // whether the last one actually finished. Once currentRunDashboard() takes longer than
-    // the gap between scanner ticks (a growing snapshots table gets there eventually) and the
-    // wave is changing every tick anyway, calls piled up unbounded with no cap at all.
-    let inFlight = false;
-    const refresh = (force = false) => {
-      const wave = liveWaveRef.current;
-      const now = Date.now();
-      const waveChanged = wave !== null && wave !== lastWaveRef.current;
-      const stale = now - lastFetchAtRef.current >= SNAPSHOT_REFRESH_MS;
-      if (!force && !waveChanged && !stale && lastFetchAtRef.current > 0) {
-        return;
-      }
-      if (inFlight) return;
-      inFlight = true;
-      lastFetchAtRef.current = now;
-      lastWaveRef.current = wave;
-      api
-        .currentRunDashboard()
-        .then((view) => {
-          setSnapshotTotal(view.snapshot_total);
-          setChartSnapshots(view.chart_snapshots);
-          setSkipTotal(view.skip_total);
-          setChartWaveSkips(view.chart_wave_skips);
-          setChartNormalJumps(view.chart_normal_jumps);
-        })
-        .catch(() => {})
-        .finally(() => {
-          inFlight = false;
-        });
+    if (!runId) {
+      setRows(EMPTY_RUN_ROWS);
+      return;
+    }
+    let active = true;
+    const reader = new RunRowsReader(runId);
+    const show = (next: RunRows | null) => {
+      if (active && next) setRows(next);
+    };
+    const reload = () => {
+      reader.load().then(show).catch(() => {});
     };
 
-    lastFetchAtRef.current = 0;
-    lastWaveRef.current = null;
-    refresh(true);
+    let lastFetchAt = Date.now();
+    let lastWave: number | null = null;
+    const refresh = (e: ScannerEvent) => {
+      const wave = e.live?.wave ?? null;
+      const now = Date.now();
+      const waveChanged = wave !== null && wave !== lastWave;
+      if (!waveChanged && now - lastFetchAt < SNAPSHOT_REFRESH_MS) return;
+      lastFetchAt = now;
+      lastWave = wave;
+      reader.readNew().then(show).catch(() => {});
+    };
 
+    reload();
     let unlisten: (() => void) | undefined;
-    void api.onScannerUpdate(() => refresh()).then((fn) => {
-      unlisten = fn;
+    void api.onScannerUpdate(refresh).then((fn) => {
+      if (active) unlisten = fn;
+      else fn();
     });
-    return () => unlisten?.();
-  }, [event?.current_run_id]);
+    window.addEventListener(RUN_ROWS_EDITED_EVENT, reload);
+    window.addEventListener(DATA_RESTORED_EVENT, reload);
+    return () => {
+      active = false;
+      unlisten?.();
+      window.removeEventListener(RUN_ROWS_EDITED_EVENT, reload);
+      window.removeEventListener(DATA_RESTORED_EVENT, reload);
+    };
+  }, [runId]);
 
-  const chartData = useMemo(
-    () => snapshotsToChartData(chartSnapshots, { alreadySampled: true }),
-    [chartSnapshots]
-  );
+  const chartData = useMemo(() => snapshotsToChartData(rows.snapshots), [rows.snapshots]);
   const skipMarkers = useMemo(
-    () => buildChartWaveJumpMarkers(chartWaveSkips, chartNormalJumps),
-    [chartWaveSkips, chartNormalJumps]
+    () => buildWaveJumpMarkers(rows.snapshots, rows.wave_skips),
+    [rows.snapshots, rows.wave_skips]
   );
+  const snapshotTotal = rows.snapshots.length;
   const lastSkipDisplay =
     live?.last_wave_delta != null
       ? live.last_skip_multiplier != null
@@ -160,10 +154,9 @@ export default function Dashboard({ event }: { event: ScannerEvent | null }) {
             <h3>Coin/min vs Wave (current run)</h3>
             <span className="muted">
               {snapshotTotal} snapshot{snapshotTotal === 1 ? "" : "s"} this run
-              {snapshotTotal > chartSnapshots.length &&
-                ` · chart shows ${chartSnapshots.length} sampled snapshot points`}
-              {skipTotal > chartWaveSkips.length &&
-                ` · ${chartWaveSkips.length} of ${skipTotal} skips sampled for chart`}
+              {chartData.length === MAX_CHART_POINTS &&
+                snapshotTotal > MAX_CHART_POINTS &&
+                ` · chart shows ${MAX_CHART_POINTS} sampled snapshot points`}
               {" · saved automatically — every run's chart stays in History"}
             </span>
           </div>

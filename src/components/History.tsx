@@ -13,7 +13,6 @@ import {
   applyCompareChartSmoothing,
   compareNewerRunIndex,
   compareHasGoldenComboActivations,
-  buildChartWaveJumpMarkers,
   buildWaveJumpMarkers,
   mergeCompareWithSkips,
   snapshotsToChartData,
@@ -23,6 +22,14 @@ import ChartScreenshotActions from "./ChartScreenshotActions";
 import CoinVsWaveChart, { ChartLineConfig } from "./CoinVsWaveChart";
 import SkipCoinAnalytics from "./SkipCoinAnalytics";
 import SortableTh from "./SortableTh";
+import TablePager from "./TablePager";
+import { useTablePage } from "../tablePage";
+import {
+  DATA_RESTORED_EVENT,
+  RUN_ROWS_EDITED_EVENT,
+  RunRowsReader,
+  type RunRows,
+} from "../runRows";
 import { formatSkipDisplay, skipDisplayFromRow, skipChartValue } from "../skipDisplay";
 import { formatRunType, runTypeUsesBadge, RUN_TYPE_FILTER_OPTIONS } from "../runType";
 import { reportUiError } from "../uiError";
@@ -107,6 +114,20 @@ const LEAD_LAG_METRIC_LABEL: Record<LeadLagMetric, string> = {
 const PAGE_SIZES = [5, 10, 25, 50, 100] as const;
 /** Min gap between live History table refreshes on scanner-update (avoids DB thrash). */
 const LIVE_REFRESH_MIN_MS = 2500;
+
+/** A fresh, fully loaded reader per run. */
+async function loadCompareReaders(ids: string[]) {
+  const readers = new Map(ids.map((id) => [id, new RunRowsReader(id)]));
+  await Promise.all([...readers.values()].map((reader) => reader.load()));
+  return readers;
+}
+
+function toggledInSet(prev: Set<string>, id: string): Set<string> {
+  const next = new Set(prev);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
 
 function pruneSelectedIds(
   prev: Set<string>,
@@ -242,18 +263,12 @@ function History() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
   const [waveSkips, setWaveSkips] = useState<WaveSkipRow[]>([]);
-  const [liveChartSnapshots, setLiveChartSnapshots] = useState<SnapshotRow[]>([]);
-  const [liveChartWaveSkips, setLiveChartWaveSkips] = useState<WaveSkipRow[]>([]);
-  const [liveChartNormalJumps, setLiveChartNormalJumps] = useState<number[]>([]);
   const [compareRuns, setCompareRuns] = useState<RunRow[]>([]);
   const [compareSnapshots, setCompareSnapshots] = useState<
     Record<string, SnapshotRow[]>
   >({});
   const [compareWaveSkips, setCompareWaveSkips] = useState<
     Record<string, WaveSkipRow[]>
-  >({});
-  const [compareNormalJumps, setCompareNormalJumps] = useState<
-    Record<string, number[]>
   >({});
   const [compareLoading, setCompareLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -330,9 +345,11 @@ function History() {
   } | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const compareChartRef = useRef<HTMLDivElement>(null);
-  const snapshotRowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
-  const waveSkipRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
-  const gcRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  /** Reads the selected run's rows; replaced whenever the selection changes. */
+  const runReaderRef = useRef<RunRowsReader | null>(null);
+  /** Reads the compared runs' rows; replaced whole whenever the comparison is loaded, so a
+   *  refresh can tell its readers have been superseded. */
+  const compareReadersRef = useRef<Map<string, RunRowsReader>>(new Map());
   const liveRefreshAtRef = useRef(0);
   /** Same in-flight guard as compareRefreshInFlightRef, for refreshSelectedRun()'s own
    * triggers — the scanner-tick one already has a time-based throttle, but that only bounds
@@ -583,22 +600,36 @@ function History() {
     }
   }, [reload]);
 
+  const showRunRows = useCallback((reader: RunRowsReader, rows: RunRows | null) => {
+    if (!rows || runReaderRef.current !== reader) return;
+    setSnapshots(rows.snapshots);
+    setWaveSkips(rows.wave_skips);
+  }, []);
+
+  const showCompareRows = useCallback((readers: Map<string, RunRowsReader>) => {
+    compareReadersRef.current = readers;
+    const entries = [...readers.entries()];
+    setCompareSnapshots(
+      Object.fromEntries(entries.map(([id, reader]) => [id, reader.rows.snapshots]))
+    );
+    setCompareWaveSkips(
+      Object.fromEntries(entries.map(([id, reader]) => [id, reader.rows.wave_skips]))
+    );
+  }, []);
+
   useEffect(() => {
     const runId = selected?.id ?? null;
-    if (runId) {
-      Promise.all([api.runSnapshots(runId), api.runWaveSkips(runId)])
-        .then(([snaps, skips]) => {
-          setSnapshots(snaps);
-          setWaveSkips(skips);
-        })
+    const reader = runId ? new RunRowsReader(runId) : null;
+    runReaderRef.current = reader;
+    if (reader) {
+      reader
+        .load()
+        .then((rows) => showRunRows(reader, rows))
         .catch(() => {});
     } else {
       setSnapshots([]);
       setWaveSkips([]);
     }
-    setLiveChartSnapshots([]);
-    setLiveChartWaveSkips([]);
-    setLiveChartNormalJumps([]);
     setChartSelectMode(false);
     setSelectedSnapshotIds(new Set());
     setSelectedWaveSkipIds(new Set());
@@ -610,10 +641,25 @@ function History() {
     setGcOutlierAbove("");
     setSkipOutlierBelow("");
     setSkipOutlierAbove("");
-    snapshotRowRefs.current.clear();
-    waveSkipRowRefs.current.clear();
-    gcRowRefs.current.clear();
-  }, [selected?.id]);
+  }, [selected?.id, showRunRows]);
+
+  useEffect(() => {
+    const onRestored = () => {
+      const reader = runReaderRef.current;
+      reader
+        ?.load()
+        .then((rows) => showRunRows(reader, rows))
+        .catch(() => {});
+      const readers = compareReadersRef.current;
+      void Promise.all([...readers.values()].map((r) => r.load()))
+        .then(() => {
+          if (compareReadersRef.current === readers) showCompareRows(readers);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener(DATA_RESTORED_EVENT, onRestored);
+    return () => window.removeEventListener(DATA_RESTORED_EVENT, onRestored);
+  }, [showRunRows, showCompareRows]);
 
   const sorted = sortByValue(runs, (r) => runSortValue(r, sortKey), sortAsc);
 
@@ -695,25 +741,12 @@ function History() {
     const requestId = ++compareRequestRef.current;
     setCompareLoading(true);
     try {
-      const entries = await Promise.all(
-        ids.map(async (id) => {
-          const view = await api.runDashboardData(id);
-          return [id, view] as const;
-        })
-      );
+      const readers = await loadCompareReaders(ids);
       // A newer compareSelected()/refreshCompare() call started while this one
       // was in flight (e.g. re-selecting runs and clicking Compare again before
       // the first fetch finished) — its result already won, so drop this one.
       if (compareRequestRef.current !== requestId) return;
-      setCompareSnapshots(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
-      );
-      setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
-      );
-      setCompareNormalJumps(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
-      );
+      showCompareRows(readers);
       setCompareRuns(runsToCompare);
       savePersistedCompareIds(runsToCompare.map((r) => r.id));
     } catch (e) {
@@ -739,33 +772,24 @@ function History() {
     const idsAtStart = compareRunIdsKey;
     const ids = idsAtStart ? idsAtStart.split(",") : [];
     if (ids.length < 2) return;
+    const readers = compareReadersRef.current;
+    // The set of compared runs changed (new comparison started, or
+    // cleared) while this refresh was in flight — don't clobber it.
+    const superseded = () =>
+      compareRunIdsRef.current !== idsAtStart || compareReadersRef.current !== readers;
     try {
-      const [entries, tableRuns] = await Promise.all([
-        Promise.all(
-          ids.map(async (id) => {
-            const view = await api.runDashboardData(id);
-            return [id, view] as const;
-          })
-        ),
-        api.listRuns(listFilter()),
-      ]);
+      const added = await Promise.all(
+        ids.map((id) => readers.get(id)?.readNew() ?? null)
+      );
+      if (superseded()) return;
+      if (added.some((rows) => rows != null)) showCompareRows(readers);
+      const tableRuns = await api.listRuns(listFilter());
       // The compared runs must be found regardless of the table's active filter (they
       // may no longer match it) — only fetch the unfiltered list when one is missing.
       const allRuns = ids.every((id) => tableRuns.some((r) => r.id === id))
         ? tableRuns
         : await api.listRuns({});
-      // The set of compared runs changed (new comparison started, or
-      // cleared) while this refresh was in flight — don't clobber it.
-      if (compareRunIdsRef.current !== idsAtStart) return;
-      setCompareSnapshots(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
-      );
-      setCompareWaveSkips(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
-      );
-      setCompareNormalJumps(
-        Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
-      );
+      if (superseded()) return;
       const matchedRuns = ids
         .map((id) => allRuns.find((r) => r.id === id))
         .filter((r): r is RunRow => r != null);
@@ -775,7 +799,7 @@ function History() {
     } catch {
       /* keep last chart */
     }
-  }, [compareRunIdsKey, listFilter]);
+  }, [compareRunIdsKey, listFilter, showCompareRows]);
 
   const restoreCompareFromIds = useCallback(
     async (ids: string[]) => {
@@ -783,13 +807,8 @@ function History() {
       const requestId = ++compareRequestRef.current;
       setCompareLoading(true);
       try {
-        const [entries, updatedRuns] = await Promise.all([
-          Promise.all(
-            ids.map(async (id) => {
-              const view = await api.runDashboardData(id);
-              return [id, view] as const;
-            })
-          ),
+        const [readers, updatedRuns] = await Promise.all([
+          loadCompareReaders(ids),
           api.listRuns(listFilter()),
         ]);
         if (compareRequestRef.current !== requestId) return;
@@ -802,15 +821,7 @@ function History() {
           savePersistedCompareIds([]);
           return;
         }
-        setCompareSnapshots(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
-        );
-        setCompareWaveSkips(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
-        );
-        setCompareNormalJumps(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
-        );
+        showCompareRows(readers);
         setCompareRuns(matchedRuns);
         setChecked(new Set(matchedRuns.map((r) => r.id)));
       } catch {
@@ -823,7 +834,7 @@ function History() {
         setCompareLoading(false);
       }
     },
-    [listFilter]
+    [listFilter, showCompareRows]
   );
 
   useEffect(() => {
@@ -878,13 +889,8 @@ function History() {
     async (keepId: string, newRunId: string) => {
       const requestId = ++compareRequestRef.current;
       try {
-        const [entries, allRuns] = await Promise.all([
-          Promise.all(
-            [keepId, newRunId].map(async (id) => {
-              const view = await api.runDashboardData(id);
-              return [id, view] as const;
-            })
-          ),
+        const [readers, allRuns] = await Promise.all([
+          loadCompareReaders([keepId, newRunId]),
           api.listRuns({}),
         ]);
         if (compareRequestRef.current !== requestId) return;
@@ -898,15 +904,7 @@ function History() {
           // current comparison alone rather than risk clearing it.
           return;
         }
-        setCompareSnapshots(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_snapshots]))
-        );
-        setCompareWaveSkips(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_wave_skips]))
-        );
-        setCompareNormalJumps(
-          Object.fromEntries(entries.map(([id, view]) => [id, view.chart_normal_jumps]))
-        );
+        showCompareRows(readers);
         setCompareRuns(matchedRuns);
         setChecked(new Set(matchedRuns.map((r) => r.id)));
         savePersistedCompareIds(matchedRuns.map((r) => r.id));
@@ -915,7 +913,7 @@ function History() {
         // update retry.
       }
     },
-    []
+    [showCompareRows]
   );
 
   // A genuinely new pair to compare — reset which side "Follow new run" is watching so a
@@ -967,7 +965,7 @@ function History() {
     setCompareRuns([]);
     setCompareSnapshots({});
     setCompareWaveSkips({});
-    setCompareNormalJumps({});
+    compareReadersRef.current = new Map();
     savePersistedCompareIds([]);
   };
 
@@ -1100,6 +1098,22 @@ function History() {
     [waveSkips, skipSortKey, skipSortAsc]
   );
 
+  const snapshotPage = useTablePage(
+    sortedSnapshots,
+    `${selected?.id}|${coinSortKey}|${coinSortAsc}`
+  );
+  const gcPage = useTablePage(
+    sortedGcSnapshots,
+    `${selected?.id}|${gcSortKey}|${gcSortAsc}`
+  );
+  const waveSkipPage = useTablePage(
+    sortedWaveSkips,
+    `${selected?.id}|${skipSortKey}|${skipSortAsc}`
+  );
+  const revealSnapshot = snapshotPage.reveal;
+  const revealGc = gcPage.reveal;
+  const revealWaveSkip = waveSkipPage.reveal;
+
   const selectedGcWaves = useMemo(
     () =>
       gcSnapshots
@@ -1128,26 +1142,18 @@ function History() {
     snapshots.length > 0 &&
     snapshots.every((s) => selectedSnapshotIds.has(s.id));
 
-  const toggleSnapshotId = useCallback((id: string, wave: number) => {
-    setSelectedSnapshotIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        snapshotRowRefs.current.get(wave)?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      }
-      return next;
-    });
-  }, []);
+  const toggleSnapshotId = useCallback(
+    (id: string) => {
+      if (!selectedSnapshotIds.has(id)) revealSnapshot(id);
+      setSelectedSnapshotIds((prev) => toggledInSet(prev, id));
+    },
+    [selectedSnapshotIds, revealSnapshot]
+  );
 
   const toggleSnapshotWave = useCallback(
     (wave: number) => {
       const snap = snapshotByWave.get(wave);
-      if (snap) toggleSnapshotId(snap.id, wave);
+      if (snap) toggleSnapshotId(snap.id);
     },
     [snapshotByWave, toggleSnapshotId]
   );
@@ -1182,37 +1188,21 @@ function History() {
     setSelectedGcIds(new Set());
   };
 
-  const toggleWaveSkipId = useCallback((id: string) => {
-    setSelectedWaveSkipIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        waveSkipRowRefs.current.get(id)?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      }
-      return next;
-    });
-  }, []);
+  const toggleWaveSkipId = useCallback(
+    (id: string) => {
+      if (!selectedWaveSkipIds.has(id)) revealWaveSkip(id);
+      setSelectedWaveSkipIds((prev) => toggledInSet(prev, id));
+    },
+    [selectedWaveSkipIds, revealWaveSkip]
+  );
 
-  const toggleGcId = useCallback((id: string) => {
-    setSelectedGcIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        gcRowRefs.current.get(id)?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      }
-      return next;
-    });
-  }, []);
+  const toggleGcId = useCallback(
+    (id: string) => {
+      if (!selectedGcIds.has(id)) revealGc(id);
+      setSelectedGcIds((prev) => toggledInSet(prev, id));
+    },
+    [selectedGcIds, revealGc]
+  );
 
   const toggleGcWave = useCallback(
     (wave: number) => {
@@ -1359,80 +1349,45 @@ function History() {
     selected != null && !selected.ended_at && compareRuns.length < 2;
 
   const refreshSelectedRun = useCallback(async (reloadTable = false) => {
-    if (!selectedRunId) return;
+    const reader = runReaderRef.current;
+    if (!selectedRunId || reader?.runId !== selectedRunId) return;
     try {
       const activeFilter = listFilter();
       if (reloadTable || !hasOngoingSelectedRun) {
-        const [snaps, skips, updatedRuns] = await Promise.all([
-          api.runSnapshots(selectedRunId),
-          api.runWaveSkips(selectedRunId),
-          api.listRuns(activeFilter),
-        ]);
-        setSnapshots(snaps);
-        setWaveSkips(skips);
-        setLiveChartSnapshots([]);
-        setLiveChartWaveSkips([]);
-        setLiveChartNormalJumps([]);
-        setSelectedSnapshotIds((prev) =>
-          pruneSelectedIds(
-            prev,
-            snaps.map((s) => s.id)
-          )
-        );
-        setSelectedWaveSkipIds((prev) =>
-          pruneSelectedIds(
-            prev,
-            skips.map((s) => s.id)
-          )
-        );
-        setSelectedGcIds((prev) =>
-          pruneSelectedIds(
-            prev,
-            snaps.filter(snapshotHasGoldenCombo).map((s) => s.id)
-          )
-        );
-        setRuns(updatedRuns);
-        setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
-        return;
+        if (reloadTable) window.dispatchEvent(new Event(RUN_ROWS_EDITED_EVENT));
+        const rows = await reader.load();
+        showRunRows(reader, rows);
+        if (rows) {
+          setSelectedSnapshotIds((prev) =>
+            pruneSelectedIds(
+              prev,
+              rows.snapshots.map((s) => s.id)
+            )
+          );
+          setSelectedWaveSkipIds((prev) =>
+            pruneSelectedIds(
+              prev,
+              rows.wave_skips.map((s) => s.id)
+            )
+          );
+          setSelectedGcIds((prev) =>
+            pruneSelectedIds(
+              prev,
+              rows.snapshots.filter(snapshotHasGoldenCombo).map((s) => s.id)
+            )
+          );
+        }
+      } else {
+        // Ongoing run: rows are only ever added here, so selections can't go stale.
+        showRunRows(reader, await reader.readNew());
       }
-
-      // Ongoing run: keep chart on sampled dashboard payload; refresh full tables
-      // so coin/min, GC, and jump rows appear as the scanner writes them.
-      const [view, snaps, skips, updatedRuns] = await Promise.all([
-        api.runDashboardData(selectedRunId),
-        api.runSnapshots(selectedRunId),
-        api.runWaveSkips(selectedRunId),
-        api.listRuns(activeFilter),
-      ]);
-      setLiveChartSnapshots(view.chart_snapshots);
-      setLiveChartWaveSkips(view.chart_wave_skips);
-      setLiveChartNormalJumps(view.chart_normal_jumps);
-      setSnapshots(snaps);
-      setWaveSkips(skips);
-      setSelectedSnapshotIds((prev) =>
-        pruneSelectedIds(
-          prev,
-          snaps.map((s) => s.id)
-        )
-      );
-      setSelectedWaveSkipIds((prev) =>
-        pruneSelectedIds(
-          prev,
-          skips.map((s) => s.id)
-        )
-      );
-      setSelectedGcIds((prev) =>
-        pruneSelectedIds(
-          prev,
-          snaps.filter(snapshotHasGoldenCombo).map((s) => s.id)
-        )
-      );
+      const updatedRuns = await api.listRuns(activeFilter);
       setRuns(updatedRuns);
       setSelected(updatedRuns.find((r) => r.id === selectedRunId) ?? null);
     } catch {
       /* keep last chart */
     }
-  }, [selectedRunId, listFilter, hasOngoingSelectedRun]);
+  }, [selectedRunId, listFilter, hasOngoingSelectedRun, showRunRows]);
 
   const refreshSelectedRunGuarded = useCallback(() => {
     if (selectedRefreshInFlightRef.current) return;
@@ -1445,7 +1400,6 @@ function History() {
   useEffect(() => {
     if (!selectedRunId || !hasOngoingSelectedRun) return;
     liveRefreshAtRef.current = 0;
-    refreshSelectedRunGuarded();
     const id = window.setInterval(refreshSelectedRunGuarded, 15_000);
     return () => window.clearInterval(id);
   }, [selectedRunId, hasOngoingSelectedRun, refreshSelectedRunGuarded]);
@@ -1611,18 +1565,11 @@ function History() {
     }
   };
 
-  const usingLiveChart =
-    hasOngoingSelectedRun && liveChartSnapshots.length > 0;
-  const chartSnapshotsForDisplay = usingLiveChart
-    ? liveChartSnapshots
-    : snapshots;
-  const chartSkipsForDisplay = usingLiveChart ? liveChartWaveSkips : waveSkips;
-  const chartData = snapshotsToChartData(chartSnapshotsForDisplay, {
-    alreadySampled: usingLiveChart,
-  });
-  const skipMarkers = usingLiveChart
-    ? buildChartWaveJumpMarkers(liveChartWaveSkips, liveChartNormalJumps)
-    : buildWaveJumpMarkers(chartSnapshotsForDisplay, chartSkipsForDisplay);
+  const chartData = useMemo(() => snapshotsToChartData(snapshots), [snapshots]);
+  const skipMarkers = useMemo(
+    () => buildWaveJumpMarkers(snapshots, waveSkips),
+    [snapshots, waveSkips]
+  );
   const hasJumpsOnChart = skipMarkers.length > 0;
   const hasGcOnChart = chartData.some((d) => d.golden_combo_caret != null);
 
@@ -1640,12 +1587,9 @@ function History() {
   const compareSkipMarkers = useMemo(
     () =>
       (compareRunIdsKey ? compareRunIdsKey.split(",") : []).map((id) =>
-        buildChartWaveJumpMarkers(
-          compareWaveSkips[id] ?? [],
-          compareNormalJumps[id] ?? []
-        )
+        buildWaveJumpMarkers(compareSnapshots[id] ?? [], compareWaveSkips[id] ?? [])
       ),
-    [compareRunIdsKey, compareWaveSkips, compareNormalJumps]
+    [compareRunIdsKey, compareSnapshots, compareWaveSkips]
   );
   const hasCompareSkips = compareSkipMarkers.some((markers) => markers.length > 0);
   const hasCompareGc = useMemo(
@@ -2632,7 +2576,7 @@ function History() {
                 </button>
               </div>
             </div>
-            <div className="snapshot-table-wrap">
+            <div className="snapshot-table-wrap" ref={snapshotPage.wrapRef}>
               <table className="snapshot-table">
                 <thead>
                   <tr>
@@ -2672,17 +2616,14 @@ function History() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedSnapshots.map((s) => (
+                  {snapshotPage.pageRows.map((s) => (
                     <tr
                       key={s.id}
-                      ref={(el) => {
-                        if (el) snapshotRowRefs.current.set(s.wave, el);
-                        else snapshotRowRefs.current.delete(s.wave);
-                      }}
+                      ref={snapshotPage.rowRef(s.id)}
                       className={
                         selectedSnapshotIds.has(s.id) ? "snapshot-selected" : ""
                       }
-                      onClick={() => toggleSnapshotId(s.id, s.wave)}
+                      onClick={() => toggleSnapshotId(s.id)}
                     >
                       <td
                         className="check-col"
@@ -2691,7 +2632,7 @@ function History() {
                         <input
                           type="checkbox"
                           checked={selectedSnapshotIds.has(s.id)}
-                          onChange={() => toggleSnapshotId(s.id, s.wave)}
+                          onChange={() => toggleSnapshotId(s.id)}
                           aria-label={`Select wave ${s.wave}`}
                         />
                       </td>
@@ -2723,6 +2664,12 @@ function History() {
                 </tbody>
               </table>
             </div>
+            <TablePager
+              page={snapshotPage.page}
+              totalPages={snapshotPage.totalPages}
+              totalRows={snapshotPage.totalRows}
+              setPage={snapshotPage.setPage}
+            />
           </div>
 
           {gcSnapshots.length > 0 && (
@@ -2754,7 +2701,7 @@ function History() {
                   </button>
                 </div>
               </div>
-              <div className="snapshot-table-wrap">
+              <div className="snapshot-table-wrap" ref={gcPage.wrapRef}>
                 <table className="snapshot-table">
                   <thead>
                     <tr>
@@ -2800,15 +2747,12 @@ function History() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedGcSnapshots.map((s) => {
+                    {gcPage.pageRows.map((s) => {
                       const editing = editingGcId === s.id;
                       return (
                         <tr
                           key={s.id}
-                          ref={(el) => {
-                            if (el) gcRowRefs.current.set(s.id, el);
-                            else gcRowRefs.current.delete(s.id);
-                          }}
+                          ref={gcPage.rowRef(s.id)}
                           className={
                             selectedGcIds.has(s.id) ? "snapshot-selected" : ""
                           }
@@ -2926,6 +2870,12 @@ function History() {
                   </tbody>
                 </table>
               </div>
+              <TablePager
+                page={gcPage.page}
+                totalPages={gcPage.totalPages}
+                totalRows={gcPage.totalRows}
+                setPage={gcPage.setPage}
+              />
             </div>
           )}
 
@@ -2958,7 +2908,7 @@ function History() {
                   </button>
                 </div>
               </div>
-              <div className="snapshot-table-wrap">
+              <div className="snapshot-table-wrap" ref={waveSkipPage.wrapRef}>
                 <table className="snapshot-table">
                   <thead>
                     <tr>
@@ -2998,13 +2948,10 @@ function History() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedWaveSkips.map((s) => (
+                    {waveSkipPage.pageRows.map((s) => (
                       <tr
                         key={s.id}
-                        ref={(el) => {
-                          if (el) waveSkipRowRefs.current.set(s.id, el);
-                          else waveSkipRowRefs.current.delete(s.id);
-                        }}
+                        ref={waveSkipPage.rowRef(s.id)}
                         className={
                           selectedWaveSkipIds.has(s.id)
                             ? "snapshot-selected"
@@ -3044,6 +2991,12 @@ function History() {
                   </tbody>
                 </table>
               </div>
+              <TablePager
+                page={waveSkipPage.page}
+                totalPages={waveSkipPage.totalPages}
+                totalRows={waveSkipPage.totalRows}
+                setPage={waveSkipPage.setPage}
+              />
             </div>
           )}
         </>
