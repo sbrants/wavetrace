@@ -5,10 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.25] — 2026-11-02
+
 ### Fixed
 
 - **Live views got slower the longer a run lasted.** The Dashboard on every new wave, and a live run selected or compared in History every couple of seconds, reloaded every recorded row for that run. A run selected in History also redrew all of them, even after switching to another tab. They now fetch only the rows added since the last refresh.
-
 - **Clicking a coin/min point in select mode did nothing.** The highlight drawn on the point under the mouse was taking the click. Coin/min points can now be selected by clicking them.
 - **Select mode in History could look stuck on a long run.** Turning it on froze the app for several seconds before the button even changed. That's gone with the paged tables below. Clicking a point on the chart also no longer scrolls the chart off screen, and a slightly shaky click no longer counts as a drag.
 - **Dragging a rectangle on the chart could select the wrong points, or not start at all.** It worked out coin values from the run's own range rather than the chart's axis, so the selection didn't match the rectangle on any run whose coin/min stayed well above zero. Drags can now also start on top of a point.
