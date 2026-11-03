@@ -19,6 +19,7 @@ pub mod notifications;
 pub mod ocr;
 pub mod parser;
 pub mod renderer_recovery;
+pub mod webview_rendering;
 pub mod scanner;
 pub mod settings;
 pub mod shutdown_hook;
@@ -103,8 +104,10 @@ pub fn run() {
     log_panics();
     let account = accounts::current_account();
     db::append_app_log(&format!(
-        "app starting account={} ({})",
-        account.id, account.name
+        "app starting account={} ({}) software_rendering={}",
+        account.id,
+        account.name,
+        webview_rendering::active()
     ));
 
     tauri::Builder::default()
@@ -118,6 +121,7 @@ pub fn run() {
             pending_wave_milestone_ntfy: std::sync::Mutex::new(None),
         })
         .setup(|app| {
+            webview_rendering::main_window_builder(app.handle())?.build()?;
             tray::setup(app)?;
             app_icon::apply_branding(app)?;
             if let Some(notify) = app.try_state::<NotifyState>() {
@@ -152,6 +156,9 @@ pub fn run() {
             commands::quit_app,
             commands::get_settings,
             commands::save_settings,
+            commands::get_software_rendering,
+            commands::set_software_rendering,
+            commands::restart_app,
             commands::send_test_ntfy,
             commands::get_ntfy_status,
             commands::clear_ntfy_rate_limit,

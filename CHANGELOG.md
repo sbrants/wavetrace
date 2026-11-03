@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.26] — 2026-11-03
+
+### Added
+
+- **Settings > Rendering > Disable hardware acceleration (Windows).** A workaround for a stutter affecting the whole display while WaveTrace has focus, seen so far on one PC with G-SYNC on. WaveTrace may feel slower and use more CPU with it on, so it's off by default.
+
+---
+
 ## [0.4.25] — 2026-11-02
 
 ### Fixed

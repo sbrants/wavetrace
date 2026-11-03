@@ -80,6 +80,15 @@ export interface Settings {
   capture_adb_device_id: string;
 }
 
+export interface SoftwareRendering {
+  /** Whether this platform has the option at all. */
+  supported: boolean;
+  /** The choice to apply on the next start. */
+  saved: boolean;
+  /** The mode the app is running in. */
+  active: boolean;
+}
+
 export interface AdbDeviceInfo {
   serial: string;
   /** Stable fingerprint (aid:.../avd:...); null when unreadable. */
@@ -269,6 +278,10 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (newSettings: Settings) =>
     invoke<void>("save_settings", { newSettings }),
+  getSoftwareRendering: () => invoke<SoftwareRendering>("get_software_rendering"),
+  setSoftwareRendering: (enabled: boolean) =>
+    invoke<void>("set_software_rendering", { enabled }),
+  restartApp: () => invoke<void>("restart_app"),
   gameSaveStatus: () => invoke<GameSaveStatus>("game_save_status"),
   pullGameSave: () => invoke<GameSavePullResult>("pull_game_save"),
   pickSavePullDir: () => invoke<string | null>("pick_save_pull_dir"),
