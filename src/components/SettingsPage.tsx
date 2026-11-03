@@ -9,6 +9,7 @@ import {
   NtfyStatusInfo,
   ScreenCaptureAccess,
   Settings,
+  SoftwareRendering,
   WindowInfo,
 } from "../api";
 import { DATA_RESTORED_EVENT } from "../runRows";
@@ -111,6 +112,7 @@ function SettingsPage({
   const [gameSaveDevices, setGameSaveDevices] = useState<AdbDeviceInfo[]>([]);
   const [devicesBusy, setDevicesBusy] = useState(false);
   const [waylandSession, setWaylandSession] = useState(false);
+  const [softwareRendering, setSoftwareRendering] = useState<SoftwareRendering | null>(null);
 
   const load = async () => {
     const [loadedSettings, listedWindows, access, dataPaths, wayland] = await Promise.all([
@@ -202,6 +204,22 @@ function SettingsPage({
     }, 500);
     return () => window.clearInterval(id);
   }, [probing]);
+
+  useEffect(() => {
+    api
+      .getSoftwareRendering()
+      .then(setSoftwareRendering)
+      .catch((e) => reportUiError(e, "Settings.softwareRendering", { alert: false }));
+  }, []);
+
+  const toggleSoftwareRendering = async (current: SoftwareRendering, enabled: boolean) => {
+    try {
+      await api.setSoftwareRendering(enabled);
+      setSoftwareRendering({ ...current, saved: enabled });
+    } catch (e) {
+      reportUiError(e, "Settings.softwareRendering");
+    }
+  };
 
   const persistSettings = async (next: Settings) => {
     setSaveState("saving");
@@ -691,6 +709,43 @@ function SettingsPage({
           Minimize to tray when the window is closed
         </label>
       </section>
+
+      {softwareRendering?.supported && (
+        <section>
+          <h3>Rendering</h3>
+          <p className="muted">
+            Try this if your whole PC stutters while WaveTrace has focus, which can
+            happen with G-SYNC on for windowed apps. WaveTrace may feel slower and use
+            more CPU with it on. This applies to every account, and
+            view preferences such as collapsed panels are kept separately for each mode.
+          </p>
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={softwareRendering.saved}
+              onChange={(e) =>
+                void toggleSoftwareRendering(softwareRendering, e.target.checked)
+              }
+            />
+            Disable hardware acceleration
+          </label>
+          {softwareRendering.saved !== softwareRendering.active && (
+            <div className="row">
+              <span className="muted">Takes effect after WaveTrace restarts.</span>
+              <button
+                type="button"
+                disabled={scannerRunning}
+                title={scannerRunning ? "Stop the scanner before restarting" : undefined}
+                onClick={() =>
+                  api.restartApp().catch((e) => reportUiError(e, "Settings.restart"))
+                }
+              >
+                Restart now
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       <section>
         <h3>Tool export</h3>

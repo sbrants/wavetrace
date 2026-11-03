@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "WaveTrace",
         "width": 1150,
         "height": 780,

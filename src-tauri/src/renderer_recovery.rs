@@ -168,16 +168,7 @@ mod windows {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        let config = app
-            .config()
-            .app
-            .windows
-            .iter()
-            .find(|w| w.label == "main")
-            .cloned()
-            .ok_or("no \"main\" window in the app config")?;
-        let window = tauri::WebviewWindowBuilder::from_config(app, &config)
-            .map_err(|e| e.to_string())?
+        let window = crate::webview_rendering::main_window_builder(app)?
             .visible(false)
             .build()
             .map_err(|e| format!("building the new window: {e}"))?;

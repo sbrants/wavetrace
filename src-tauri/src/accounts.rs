@@ -324,6 +324,17 @@ pub fn spawn_and_replace(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Replace this process with a fresh one on the same account.
+pub fn respawn_current() -> Result<(), String> {
+    let id = current_id().ok_or("No account is open.")?;
+    release_lock();
+    if let Err(e) = spawn_with_account(&id) {
+        let _ = acquire_lock(&active_data_dir());
+        return Err(e);
+    }
+    Ok(())
+}
+
 fn release_lock() {
     if let Ok(mut slot) = INSTANCE_LOCK.lock() {
         *slot = None;

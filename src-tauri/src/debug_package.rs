@@ -325,7 +325,7 @@ pub fn build_debug_package_zip(input: &DebugPackageBuildInput) -> Result<(Vec<u8
     };
 
     let system_info = format!(
-        "WaveTrace {}\nOS: {} {}\nInstall: {}\nCreated: {}\nAccount: {} ({})\nApp data: {}\nDatabase: {}\nLog: {}\nScanner running: {}\nCurrent run: {}\n",
+        "WaveTrace {}\nOS: {} {}\nInstall: {}\nCreated: {}\nAccount: {} ({})\nApp data: {}\nDatabase: {}\nLog: {}\nScanner running: {}\nCurrent run: {}\nSoftware rendering: {}\n",
         manifest.app_version,
         manifest.os,
         manifest.arch,
@@ -341,6 +341,7 @@ pub fn build_debug_package_zip(input: &DebugPackageBuildInput) -> Result<(Vec<u8
             .current_run_id
             .as_deref()
             .unwrap_or("(none)"),
+        crate::webview_rendering::active(),
     );
 
     let mut zip_bytes = Vec::new();

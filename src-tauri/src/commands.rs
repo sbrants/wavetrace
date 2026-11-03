@@ -205,6 +205,26 @@ pub fn save_settings(new_settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_software_rendering() -> crate::webview_rendering::SoftwareRendering {
+    crate::webview_rendering::status()
+}
+
+#[tauri::command]
+pub fn set_software_rendering(enabled: bool) -> Result<(), String> {
+    crate::webview_rendering::save(enabled)
+}
+
+#[tauri::command]
+pub fn restart_app(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    if state.scanner.is_running() {
+        return Err("Stop the scanner before restarting WaveTrace.".into());
+    }
+    accounts::respawn_current()?;
+    crate::tray::exit_app(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn send_test_ntfy(app: AppHandle) -> Result<(), String> {
     crate::notifications::send_test_ntfy(&app)
 }
